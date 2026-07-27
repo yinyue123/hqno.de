@@ -128,6 +128,10 @@ release is supported.
 still boot — but nothing in them gets a security update again. Do not put
 anything on the internet from one.
 
+Your host caches these onto the machine before you can pick one, and they
+unpack under `/var/lib/hqnode/images/` there — not inside your container,
+which never sees them as files.
+
 AlmaLinux 10 and CentOS Stream 10 need a host CPU from roughly 2015 or later
 (x86-64-v3). On an older machine they fail at the first command with a glibc
 error about the CPU; that is the distro's own requirement, and your host will
