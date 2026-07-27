@@ -13,9 +13,9 @@ They are **system** images, not app images: systemd is PID 1, so a container
 built from one has `systemctl`, cron, a package manager and a working `top`.
 `/data` exists and is the path a reinstall keeps.
 
-The list lives in [`../.github/workflows/images.yml`](../.github/workflows/images.yml)
-and nowhere else. Adding a system is one row in that matrix — pick the family
-whose package manager it uses, and the release becomes the `BASE` build-arg:
+The list lives in [`systems.yml`](systems.yml) and nowhere else. Adding a
+system is one entry there — pick the family whose package manager it uses, and
+the release becomes the `BASE` build-arg:
 
 | Dockerfile | Family | Package manager |
 |---|---|---|
@@ -51,15 +51,31 @@ podman build --build-arg BASE=debian:13-slim -t hqnode:debian-13 systemd-deb
 podman build --build-arg BASE=almalinux:9    -t hqnode:almalinux-9 systemd-rpm
 ```
 
-## The panel's side
+## catalog.json — how a panel learns about all this
 
-The panel offers these under **Images → Market**, and `panel catalog seed`
-writes the starter list by resolving each tag's digest from the registry. The
-panel never hands an agent a bare tag — a tag drifts between the panel deciding
-and the host pulling — so what a container is actually built from is always
-`ghcr.io/yinyue123/hqnode@sha256:…`.
+The workflow's third job reads the digests back from the registry and writes
+[`catalog.json`](catalog.json): id, name, ref, digest, arch, size and blurb per
+system. A panel fetches that file at boot and every few hours and fills its
+market from it, so a system added here shows up in every panel without anyone
+running anything.
 
-That means the two lists have to agree by hand: a system added here is a row in
-the workflow *and* an entry in `server/cmd/panel/systems.go` over in the
-product repo. When they disagree, the seed writes the entry as `pending` with
-the resolution error on it, rather than pretending it is ready.
+```json
+{"schema": 1, "package": "ghcr.io/yinyue123/hqnode",
+ "images": [{"id": "img_debian13", "name": "Debian 13",
+             "ref": "ghcr.io/yinyue123/hqnode:debian-13",
+             "digest": "sha256:…", "arch": ["amd64","arm64"],
+             "size_bytes": 50232621, "blurb": "Trixie. …"}]}
+```
+
+Two rules it lives by:
+
+- **Every entry carries a digest.** The panel never hands an agent a bare tag —
+  a tag drifts between the panel deciding and the host pulling — so an entry
+  without one is refused, and the whole document with it.
+- **Digests are read back from the registry, not passed out of the build.** A
+  build that failed leaves its tag pointing at last week's good image, and that
+  is what the catalog should keep saying.
+
+It is committed by the workflow. The push uses `GITHUB_TOKEN`, which does not
+trigger workflows, so writing to `images/` from a job that watches `images/`
+cannot loop.

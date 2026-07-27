@@ -1,0 +1,167 @@
+# Every system hqnode publishes, in one file.
+#
+# This is the only list. The workflow builds its matrix from it, and the same
+# workflow writes catalog.json from it plus the digests it just pushed — which
+# is the file a panel fetches to fill its market. Adding a system is an entry
+# here and nothing else.
+#
+# Fields:
+#   id         permanent. A container records the image it was built from and
+#              the ids it may be reinstalled to, so changing one orphans
+#              containers that are already running.
+#   tag        the tag under ghcr.io/<owner>/hqnode, and the name people see in
+#              the URL. Also permanent, for the same reason.
+#   base       what it is built FROM.
+#   family     which Dockerfile: deb (apt) or rpm (dnf/yum).
+#   platforms  what to build. amd64-only where a distro's arm64 packages live
+#              somewhere that has moved more than once.
+#   name       what the panel shows.
+#   blurb      one line under it. Say what is true, including when it is grim.
+#
+# Order is the order the market list shows: newest first within a family.
+
+systems:
+  - id: img_debian13
+    tag: debian-13
+    base: debian:13-slim
+    family: deb
+    platforms: linux/amd64,linux/arm64
+    name: Debian 13
+    default: true
+    blurb: "Trixie. The default: small, current, and the least surprising thing to run."
+
+  - id: img_debian12
+    tag: debian-12
+    base: debian:12-slim
+    family: deb
+    platforms: linux/amd64,linux/arm64
+    name: Debian 12
+    blurb: Bookworm. The safe choice for anything that expects an older toolchain.
+
+  - id: img_debian11
+    tag: debian-11
+    base: debian:11-slim
+    family: deb
+    platforms: linux/amd64,linux/arm64
+    name: Debian 11
+    blurb: Bullseye. LTS ends in 2026 — pick 12 unless something needs this one.
+
+  - id: img_ubuntu2604
+    tag: ubuntu-26.04
+    base: ubuntu:26.04
+    family: deb
+    platforms: linux/amd64,linux/arm64
+    name: Ubuntu 26.04 LTS
+    blurb: The current LTS.
+
+  - id: img_ubuntu2404
+    tag: ubuntu-24.04
+    base: ubuntu:24.04
+    family: deb
+    platforms: linux/amd64,linux/arm64
+    name: Ubuntu 24.04 LTS
+    blurb: Noble. Still the most widely documented Ubuntu.
+
+  - id: img_ubuntu2204
+    tag: ubuntu-22.04
+    base: ubuntu:22.04
+    family: deb
+    platforms: linux/amd64,linux/arm64
+    name: Ubuntu 22.04 LTS
+    blurb: Jammy.
+
+  - id: img_ubuntu2004
+    tag: ubuntu-20.04
+    base: ubuntu:20.04
+    family: deb
+    platforms: linux/amd64,linux/arm64
+    name: Ubuntu 20.04 LTS
+    blurb: Focal. In extended maintenance.
+
+  - id: img_ubuntu1804
+    tag: ubuntu-18.04
+    base: ubuntu:18.04
+    family: deb
+    platforms: linux/amd64
+    name: Ubuntu 18.04
+    blurb: Bionic. End of life — no security updates. For old software that will not move.
+
+  - id: img_ubuntu1604
+    tag: ubuntu-16.04
+    base: ubuntu:16.04
+    family: deb
+    platforms: linux/amd64
+    name: Ubuntu 16.04
+    blurb: Xenial. End of life — no security updates. For old software that will not move.
+
+  - id: img_alma10
+    tag: almalinux-10
+    base: almalinux:10
+    family: rpm
+    platforms: linux/amd64,linux/arm64
+    name: AlmaLinux 10
+    blurb: RHEL 10 rebuild. Needs a host CPU from about 2015 or later (x86-64-v3).
+
+  - id: img_alma9
+    tag: almalinux-9
+    base: almalinux:9
+    family: rpm
+    platforms: linux/amd64,linux/arm64
+    name: AlmaLinux 9
+    blurb: RHEL 9 rebuild. The usual choice for anything that expects RHEL.
+
+  - id: img_alma8
+    tag: almalinux-8
+    base: almalinux:8
+    family: rpm
+    platforms: linux/amd64,linux/arm64
+    name: AlmaLinux 8
+    blurb: RHEL 8 rebuild.
+
+  - id: img_rocky9
+    tag: rocky-9
+    base: quay.io/rockylinux/rockylinux:9
+    family: rpm
+    platforms: linux/amd64,linux/arm64
+    name: Rocky Linux 9
+    blurb: The other RHEL 9 rebuild. Same packages, different governance.
+
+  - id: img_rocky8
+    tag: rocky-8
+    base: quay.io/rockylinux/rockylinux:8
+    family: rpm
+    platforms: linux/amd64,linux/arm64
+    name: Rocky Linux 8
+    blurb: RHEL 8 rebuild.
+
+  - id: img_centos10
+    tag: centos-10
+    base: quay.io/centos/centos:stream10
+    family: rpm
+    platforms: linux/amd64,linux/arm64
+    name: CentOS Stream 10
+    blurb: Upstream of RHEL 10, not a rebuild of it. Needs an x86-64-v3 CPU.
+
+  - id: img_centos9
+    tag: centos-9
+    base: quay.io/centos/centos:stream9
+    family: rpm
+    platforms: linux/amd64,linux/arm64
+    name: CentOS Stream 9
+    blurb: Upstream of RHEL 9 — newer packages, and they move.
+
+  - id: img_centos7
+    tag: centos-7
+    base: centos:7
+    family: rpm
+    platforms: linux/amd64
+    name: CentOS 7
+    blurb: Retired. Its mirrors are gone and nothing in it is patched again; the image builds from vault.
+
+  - id: img_fedora43
+    tag: fedora-43
+    base: fedora:43
+    family: rpm
+    platforms: linux/amd64,linux/arm64
+    name: Fedora 43
+    blurb: Current packages, short life. Good for building, poor for leaving alone.
