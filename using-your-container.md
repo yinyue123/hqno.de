@@ -103,6 +103,31 @@ also allow **your own image reference** — a `ghcr.io/you/thing:tag` the *host*
 pulls, so it has to be reachable from the machine, not from your laptop. If
 the option is not there, your host has not enabled it.
 
+### The systems on offer
+
+What your host has cached on that machine is what you can pick, and the list
+below is what hqnode publishes for them to cache. Every one boots systemd and
+behaves the same way; the difference is the package manager and how long the
+release is supported.
+
+| | Systems |
+|---|---|
+| **Debian** | 13, 12, 11 |
+| **Ubuntu** | 26.04, 24.04, 22.04, 20.04, 18.04\*, 16.04\* |
+| **AlmaLinux** | 10, 9, 8 |
+| **Rocky** | 9, 8 |
+| **CentOS** | Stream 10, Stream 9, 7\* |
+| **Fedora** | 43 |
+
+\* Past end of life. They are here because people still ask for them, and they
+still boot — but nothing in them gets a security update again. Do not put
+anything on the internet from one.
+
+AlmaLinux 10 and CentOS Stream 10 need a host CPU from roughly 2015 or later
+(x86-64-v3). On an older machine they fail at the first command with a glibc
+error about the CPU; that is the distro's own requirement, and your host will
+know whether their hardware clears it.
+
 ---
 
 ## 5. Limits, and what hitting them feels like

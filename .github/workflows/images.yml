@@ -1,0 +1,99 @@
+name: images
+
+# The system images a container is installed from. They are built here rather
+# than in the product repo because they are published: one public package,
+# ghcr.io/<owner>/hqnode, with one tag per system — so a panel anywhere can
+# pull ghcr.io/yinyue123/hqnode:debian-13 without a credential.
+#
+# Two Dockerfiles cover every entry: the release is a build-arg, and the list
+# below is the whole configuration. Adding a system is a row.
+#
+# The package is created private the first time this runs. Make it public once,
+# by hand, at Settings → Packages → hqnode → Change visibility; nothing here can
+# do it, and until it is done a host's `podman pull` asks for a login.
+
+on:
+  push:
+    branches: [main]
+    paths: ['images/**', '.github/workflows/images.yml']
+  schedule:
+    # Weekly, so a tag picks up distro security updates. Existing containers are
+    # untouched: their lower layer is immutable and everything downstream pins
+    # digests, so the new bytes only reach a holder on reinstall.
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write        # the only credential needed: GITHUB_TOKEN
+    strategy:
+      # One distro failing — an archive host down, a base tag pulled — must not
+      # take the other seventeen with it.
+      fail-fast: false
+      matrix:
+        include:
+          # Debian. 11 is in its last months of LTS; the Dockerfile follows it
+          # to archive.debian.org by itself when it moves.
+          - { system: debian-13,     base: 'debian:13-slim',                     family: deb, platforms: 'linux/amd64,linux/arm64' }
+          - { system: debian-12,     base: 'debian:12-slim',                     family: deb, platforms: 'linux/amd64,linux/arm64' }
+          - { system: debian-11,     base: 'debian:11-slim',                     family: deb, platforms: 'linux/amd64,linux/arm64' }
+          # Ubuntu. 16.04 and 18.04 are ESM-only and amd64-only here: their
+          # arm64 packages live on ports mirrors that have moved more than once,
+          # and nobody asking for xenial is asking for it on arm.
+          - { system: ubuntu-26.04,  base: 'ubuntu:26.04',                       family: deb, platforms: 'linux/amd64,linux/arm64' }
+          - { system: ubuntu-24.04,  base: 'ubuntu:24.04',                       family: deb, platforms: 'linux/amd64,linux/arm64' }
+          - { system: ubuntu-22.04,  base: 'ubuntu:22.04',                       family: deb, platforms: 'linux/amd64,linux/arm64' }
+          - { system: ubuntu-20.04,  base: 'ubuntu:20.04',                       family: deb, platforms: 'linux/amd64,linux/arm64' }
+          - { system: ubuntu-18.04,  base: 'ubuntu:18.04',                       family: deb, platforms: 'linux/amd64' }
+          - { system: ubuntu-16.04,  base: 'ubuntu:16.04',                       family: deb, platforms: 'linux/amd64' }
+          # RHEL rebuilds. 10 and Stream 10 need an x86-64-v3 CPU (roughly
+          # 2015 and later) — that is the distro's baseline, not ours.
+          - { system: almalinux-10,  base: 'almalinux:10',                       family: rpm, platforms: 'linux/amd64,linux/arm64' }
+          - { system: almalinux-9,   base: 'almalinux:9',                        family: rpm, platforms: 'linux/amd64,linux/arm64' }
+          - { system: almalinux-8,   base: 'almalinux:8',                        family: rpm, platforms: 'linux/amd64,linux/arm64' }
+          - { system: rocky-9,       base: 'quay.io/rockylinux/rockylinux:9',    family: rpm, platforms: 'linux/amd64,linux/arm64' }
+          - { system: rocky-8,       base: 'quay.io/rockylinux/rockylinux:8',    family: rpm, platforms: 'linux/amd64,linux/arm64' }
+          - { system: centos-10,     base: 'quay.io/centos/centos:stream10',     family: rpm, platforms: 'linux/amd64,linux/arm64' }
+          - { system: centos-9,      base: 'quay.io/centos/centos:stream9',      family: rpm, platforms: 'linux/amd64,linux/arm64' }
+          # CentOS 7 is retired: its mirrors are gone and the Dockerfile points
+          # yum at vault instead. amd64 only, because the altarch vault layout
+          # differs and is not worth carrying for a dead release.
+          - { system: centos-7,      base: 'centos:7',                           family: rpm, platforms: 'linux/amd64' }
+          - { system: fedora-43,     base: 'fedora:43',                          family: rpm, platforms: 'linux/amd64,linux/arm64' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: images/systemd-${{ matrix.family }}
+          build-args: BASE=${{ matrix.base }}
+          platforms: ${{ matrix.platforms }}
+          push: true
+          # Attestation manifests turn a 2-entry index into a 4-entry one where
+          # two entries have platform unknown/unknown. The agent selects by
+          # platform explicitly, but a boring manifest is one less thing that
+          # can be selected wrongly.
+          provenance: false
+          sbom: false
+          # The run-numbered tag is what an operator pins to when they want a
+          # specific week; the plain one is what the panel's catalog resolves.
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/hqnode:${{ matrix.system }}
+            ghcr.io/${{ github.repository_owner }}/hqnode:${{ matrix.system }}-${{ github.run_number }}
+      - name: record the digest
+        run: |
+          {
+            echo "| system | base | digest |"
+            echo "|---|---|---|"
+            echo "| \`${{ matrix.system }}\` | \`${{ matrix.base }}\` | \`${{ steps.build.outputs.digest }}\` |"
+          } >> $GITHUB_STEP_SUMMARY

@@ -7,6 +7,12 @@ reinstall actually take away.
 
 - [Using your container](using-your-container.md)
 
+It also builds and publishes the system images a container is installed from —
+one public package, `ghcr.io/yinyue123/hqnode`, one tag per system. See
+[`images/`](images/README.md). They live here rather than with the product
+because they are published: a panel pulls them by name, from anywhere, without
+a credential.
+
 Running the machines rather than holding a container is the other side of the
 product, and its documentation lives with the code:
 [operating the panel](https://github.com/yinyue123/hqnode/blob/main/docs/operating-the-panel.md).
