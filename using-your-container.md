@@ -13,14 +13,19 @@ instead.
 
 ## 1. Getting one
 
-A container becomes yours in one of three ways, and all of them end at the
-same place — it appears under **My containers** in the panel.
+A container becomes yours in one of two ways, and both end at the same place —
+it appears under **My containers** in the panel.
 
 | How | What you do |
 |---|---|
 | Your host binds it to your username | Nothing. Sign in and it is there. |
 | Your host gives you a **bind code** | Redeem it at **/bind**. You choose the shell login while you do. |
-| Your host gives you an **invite code** | Redeem it at **/i**. The container is created for you, inside the limits baked into the invite. |
+
+Either way the container already exists and is already running before it
+reaches you: your host picked the machine, the limits and the expiry, and
+built it from one of the images below. If that is not the system you wanted,
+reinstall it yourself — see below. Nothing about the limits changes when you
+do.
 
 **If the account was made for you**, you have a username but no password yet.
 Use **Forgot password** with the email your host gave, and the reset link turns
