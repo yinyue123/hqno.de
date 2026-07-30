@@ -146,11 +146,22 @@ you are using.
 
 | Limit | At the ceiling |
 |---|---|
-| **vCPU** | You are throttled, never killed. Everything just runs slower. |
+| **vCPU** | You are throttled, never killed. Everything just runs slower. It is a share rather than a wall: when the machine is quiet you may run faster than the number, and the number is what you are guaranteed when it is not. |
 | **Memory** | The kernel squeezes you first and then OOM-kills the largest process. A service that keeps dying without an error in its log is usually this. |
 | **Swap** | Pages you have not touched are moved out of memory rather than counted against it, up to this much. It buys you room, not speed: a container living in swap is a slow container. Zero means there is none, and memory is the whole of what you have. |
 | **Disk** | Writes fail with "no space left on device". `/` and `/data` count together. |
 | **Traffic** | See below — this one stops the container. |
+
+**Your vCPU number is a floor, not a ceiling.** Cores nobody else wants are
+yours to use, so a container sold half a core can run at two while its
+neighbours idle, and drops back to its half when they wake up. That is why a
+benchmark run twice gives two answers: the honest reading of "how fast is this
+container" is the one taken when the machine is busy.
+
+If your host sold you a **batch** container, the deal is different and simpler:
+you get whatever is left over after everybody else, and nothing you run ever
+delays them. Perfect for builds, scrapers and overnight jobs; wrong for
+anything somebody is waiting on.
 
 **Swap is not extra memory.** It is somewhere for the parts of your container
 that are sitting still, and the host usually keeps it compressed in RAM, so
