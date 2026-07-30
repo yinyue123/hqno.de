@@ -141,15 +141,24 @@ know whether their hardware clears it.
 
 ## 5. Limits, and what hitting them feels like
 
-Your host sets four numbers. The container page shows each one against what
+Your host sets five numbers. The container page shows each one against what
 you are using.
 
 | Limit | At the ceiling |
 |---|---|
 | **vCPU** | You are throttled, never killed. Everything just runs slower. |
 | **Memory** | The kernel squeezes you first and then OOM-kills the largest process. A service that keeps dying without an error in its log is usually this. |
+| **Swap** | Pages you have not touched are moved out of memory rather than counted against it, up to this much. It buys you room, not speed: a container living in swap is a slow container. Zero means there is none, and memory is the whole of what you have. |
 | **Disk** | Writes fail with "no space left on device". `/` and `/data` count together. |
 | **Traffic** | See below — this one stops the container. |
+
+**Swap is not extra memory.** It is somewhere for the parts of your container
+that are sitting still, and the host usually keeps it compressed in RAM, so
+cold pages cost a fraction of what they claim. The container page prints how
+much of yours is in swap beside the memory figure — a number that only appears
+when it is not zero. A little is healthy on a small container. A lot, on
+something that is also slow, means the working set does not fit and more swap
+will not fix it.
 
 **Traffic** is counted per month over a window that starts on a day your host
 picks (often the 1st, but not always — the container page shows the date the
