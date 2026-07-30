@@ -12,7 +12,8 @@
 #   tag        the tag under ghcr.io/<owner>/hqnode, and the name people see in
 #              the URL. Also permanent, for the same reason.
 #   base       what it is built FROM.
-#   family     which Dockerfile: deb (apt) or rpm (dnf/yum).
+#   recipe     which directory under images/ builds it — and so which init
+#              it gets: systemd-deb, systemd-rpm, or openrc-alpine.
 #   platforms  what to build. amd64-only where a distro's arm64 packages live
 #              somewhere that has moved more than once.
 #   name       what the panel shows.
@@ -21,10 +22,26 @@
 # Order is the order the market list shows: newest first within a family.
 
 systems:
+  - id: img_alpine324
+    tag: alpine-3.24
+    base: alpine:3.24
+    recipe: openrc-alpine
+    platforms: linux/amd64,linux/arm64
+    name: Alpine 3.24
+    blurb: "The cheap one: OpenRC instead of systemd, a few MB of RAM at idle. Not glibc — some prebuilt binaries will not run."
+
+  - id: img_alpine323
+    tag: alpine-3.23
+    base: alpine:3.23
+    recipe: openrc-alpine
+    platforms: linux/amd64,linux/arm64
+    name: Alpine 3.23
+    blurb: The previous Alpine, supported into 2027.
+
   - id: img_debian13
     tag: debian-13
     base: debian:13-slim
-    family: deb
+    recipe: systemd-deb
     platforms: linux/amd64,linux/arm64
     name: Debian 13
     default: true
@@ -33,7 +50,7 @@ systems:
   - id: img_debian12
     tag: debian-12
     base: debian:12-slim
-    family: deb
+    recipe: systemd-deb
     platforms: linux/amd64,linux/arm64
     name: Debian 12
     blurb: Bookworm. The safe choice for anything that expects an older toolchain.
@@ -41,7 +58,7 @@ systems:
   - id: img_debian11
     tag: debian-11
     base: debian:11-slim
-    family: deb
+    recipe: systemd-deb
     platforms: linux/amd64,linux/arm64
     name: Debian 11
     blurb: Bullseye. LTS ends in 2026 — pick 12 unless something needs this one.
@@ -49,7 +66,7 @@ systems:
   - id: img_ubuntu2604
     tag: ubuntu-26.04
     base: ubuntu:26.04
-    family: deb
+    recipe: systemd-deb
     platforms: linux/amd64,linux/arm64
     name: Ubuntu 26.04 LTS
     blurb: The current LTS.
@@ -57,7 +74,7 @@ systems:
   - id: img_ubuntu2404
     tag: ubuntu-24.04
     base: ubuntu:24.04
-    family: deb
+    recipe: systemd-deb
     platforms: linux/amd64,linux/arm64
     name: Ubuntu 24.04 LTS
     blurb: Noble. Still the most widely documented Ubuntu.
@@ -65,7 +82,7 @@ systems:
   - id: img_ubuntu2204
     tag: ubuntu-22.04
     base: ubuntu:22.04
-    family: deb
+    recipe: systemd-deb
     platforms: linux/amd64,linux/arm64
     name: Ubuntu 22.04 LTS
     blurb: Jammy.
@@ -73,7 +90,7 @@ systems:
   - id: img_ubuntu2004
     tag: ubuntu-20.04
     base: ubuntu:20.04
-    family: deb
+    recipe: systemd-deb
     platforms: linux/amd64,linux/arm64
     name: Ubuntu 20.04 LTS
     blurb: Focal. In extended maintenance.
@@ -81,7 +98,7 @@ systems:
   - id: img_ubuntu1804
     tag: ubuntu-18.04
     base: ubuntu:18.04
-    family: deb
+    recipe: systemd-deb
     platforms: linux/amd64
     name: Ubuntu 18.04
     blurb: Bionic. End of life — no security updates. For old software that will not move.
@@ -89,7 +106,7 @@ systems:
   - id: img_ubuntu1604
     tag: ubuntu-16.04
     base: ubuntu:16.04
-    family: deb
+    recipe: systemd-deb
     platforms: linux/amd64
     name: Ubuntu 16.04
     blurb: Xenial. End of life — no security updates. For old software that will not move.
@@ -97,7 +114,7 @@ systems:
   - id: img_alma10
     tag: almalinux-10
     base: almalinux:10
-    family: rpm
+    recipe: systemd-rpm
     platforms: linux/amd64,linux/arm64
     name: AlmaLinux 10
     blurb: RHEL 10 rebuild. Needs a host CPU from about 2015 or later (x86-64-v3).
@@ -105,7 +122,7 @@ systems:
   - id: img_alma9
     tag: almalinux-9
     base: almalinux:9
-    family: rpm
+    recipe: systemd-rpm
     platforms: linux/amd64,linux/arm64
     name: AlmaLinux 9
     blurb: RHEL 9 rebuild. The usual choice for anything that expects RHEL.
@@ -113,7 +130,7 @@ systems:
   - id: img_alma8
     tag: almalinux-8
     base: almalinux:8
-    family: rpm
+    recipe: systemd-rpm
     platforms: linux/amd64,linux/arm64
     name: AlmaLinux 8
     blurb: RHEL 8 rebuild.
@@ -121,7 +138,7 @@ systems:
   - id: img_rocky9
     tag: rocky-9
     base: quay.io/rockylinux/rockylinux:9
-    family: rpm
+    recipe: systemd-rpm
     platforms: linux/amd64,linux/arm64
     name: Rocky Linux 9
     blurb: The other RHEL 9 rebuild. Same packages, different governance.
@@ -129,7 +146,7 @@ systems:
   - id: img_rocky8
     tag: rocky-8
     base: quay.io/rockylinux/rockylinux:8
-    family: rpm
+    recipe: systemd-rpm
     platforms: linux/amd64,linux/arm64
     name: Rocky Linux 8
     blurb: RHEL 8 rebuild.
@@ -137,7 +154,7 @@ systems:
   - id: img_centos10
     tag: centos-10
     base: quay.io/centos/centos:stream10
-    family: rpm
+    recipe: systemd-rpm
     platforms: linux/amd64,linux/arm64
     name: CentOS Stream 10
     blurb: Upstream of RHEL 10, not a rebuild of it. Needs an x86-64-v3 CPU.
@@ -145,7 +162,7 @@ systems:
   - id: img_centos9
     tag: centos-9
     base: quay.io/centos/centos:stream9
-    family: rpm
+    recipe: systemd-rpm
     platforms: linux/amd64,linux/arm64
     name: CentOS Stream 9
     blurb: Upstream of RHEL 9 — newer packages, and they move.
@@ -153,7 +170,7 @@ systems:
   - id: img_centos7
     tag: centos-7
     base: centos:7
-    family: rpm
+    recipe: systemd-rpm
     platforms: linux/amd64
     name: CentOS 7
     blurb: Retired. Its mirrors are gone and nothing in it is patched again; the image builds from vault.
@@ -161,7 +178,7 @@ systems:
   - id: img_fedora43
     tag: fedora-43
     base: fedora:43
-    family: rpm
+    recipe: systemd-rpm
     platforms: linux/amd64,linux/arm64
     name: Fedora 43
     blurb: Current packages, short life. Good for building, poor for leaving alone.

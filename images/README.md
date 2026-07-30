@@ -1,6 +1,6 @@
 # The system images
 
-Eighteen systems, two Dockerfiles, one public package:
+Twenty systems, three Dockerfiles, one public package:
 
 ```
 ghcr.io/yinyue123/hqnode:debian-13
@@ -9,20 +9,73 @@ ghcr.io/yinyue123/hqnode:ubuntu-24.04
 …
 ```
 
-They are **system** images, not app images: systemd is PID 1, so a container
-built from one has `systemctl`, cron, a package manager and a working `top`.
-`/data` exists and is the path a reinstall keeps.
+They are **system** images, not app images: an init runs as PID 1, so a
+container built from one has services, cron, a package manager and a working
+`top`. `/data` exists and is the path a reinstall keeps.
 
 The list lives in [`systems.yml`](systems.yml) and nowhere else. Adding a
-system is one entry there — pick the family whose package manager it uses, and
-the release becomes the `BASE` build-arg:
+system is one entry there — pick the recipe whose package manager and init it
+uses, and the release becomes the `BASE` build-arg:
 
-| Dockerfile | Family | Package manager |
-|---|---|---|
-| `systemd-deb/` | Debian, Ubuntu | apt |
-| `systemd-rpm/` | AlmaLinux, Rocky, CentOS, Fedora | dnf, or yum on CentOS 7 |
+| Recipe | Systems | Package manager | PID 1 |
+|---|---|---|---|
+| `systemd-deb/` | Debian, Ubuntu | apt | systemd |
+| `systemd-rpm/` | AlmaLinux, Rocky, CentOS, Fedora | dnf, or yum on CentOS 7 | systemd |
+| `openrc-alpine/` | Alpine | apk | busybox init + OpenRC |
+
+## What an image must actually carry
+
+Short, and worth knowing before writing a fourth recipe. The agent needs:
+
+- **an entrypoint in the image config** — `CMD ["/sbin/init"]`. A container
+  whose config carries neither entrypoint nor cmd is refused at start.
+- **`/bin/sh`** — every SSH session is `sh -c` inside the namespace, and a
+  login shell is `command -v bash || command -v sh`.
+- **`su`**, only for containers given a non-root user: the gateway uses it so
+  the login gets that user's shell, groups and environment from the
+  container's own `/etc/passwd`.
+- **something called `sftp-server` on PATH** — the gateway falls back to
+  Debian's `/usr/lib/openssh/sftp-server`, so anything that puts it elsewhere
+  needs a symlink or SFTP is a dead subsystem.
+- **the right `STOPSIGNAL`** — see below. This is the one that silently
+  turns "stop" into something else.
+
+It does *not* need a running sshd: the gateway authenticates on the host and
+enters the namespace, so nothing inside has to be in sync with it. `openssh`
+is shipped for the holder's own use. It does not need a `/etc/resolv.conf`
+either — the agent binds one in, creating the target if the image has none.
 
 ## Things that bit, and how they are handled
+
+- **`STOPSIGNAL` is not a detail on the Alpine side.** busybox init reads
+  SIGTERM as *reboot*: it runs the shutdown scripts and then
+  `reboot(RB_AUTOBOOT)`, which the kernel delivers to the agent as SIGHUP —
+  and SIGHUP is exactly how the agent recognises "this container rebooted
+  itself", so it starts it again. Every stop would be a restart. `SIGUSR2` is
+  poweroff: same shutdown, then `RB_POWER_OFF`, which arrives as SIGINT and
+  ends the container. Measured on 3.24, one container per signal:
+
+  | signal | what happened | exit |
+  |---|---|---|
+  | `SIGUSR2` | clean shutdown, gone in 4s | 130 (SIGINT) |
+  | `SIGTERM` | clean shutdown, gone in 4s — but as a *reboot* | 129 (SIGHUP) |
+  | `SIGRTMIN+3` | ignored; would be SIGKILLed at the timeout | still running |
+
+  systemd images are the mirror image of this and declare `SIGRTMIN+3`, which
+  is also what the agent defaults to for a system container when an image
+  declares nothing — so an Alpine image that forgets `STOPSIGNAL` hangs for
+  thirty seconds on every stop.
+- **OpenRC needs to be told it is in a container.** `rc_sys="lxc"` in
+  `/etc/rc.conf` stops it starting the hardware services that cannot work
+  here, and `rc_provide="loopback net"` stops the services that want a network
+  from waiting for a network script we deliberately do not run — pasta has
+  already configured the interface before the container's first instruction.
+  The getty lines come out of `/etc/inittab` for the same reason: there are no
+  consoles, and busybox would respawn six failing processes forever.
+- **Alpine is musl, not glibc.** Anything shipped as a prebuilt glibc binary —
+  some vendor agents, some language runtimes, a good deal of proprietary
+  software — will not run. That is the trade for the small idle footprint, and
+  the blurb in `systems.yml` says so.
 
 - **End of life moves the mirrors, and the date is not knowable in advance.**
   16.04 and 18.04 are still on `archive.ubuntu.com` under ESM; Debian 11 leaves

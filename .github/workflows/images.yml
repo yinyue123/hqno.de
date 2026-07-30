@@ -62,7 +62,9 @@ jobs:
       - id: build
         uses: docker/build-push-action@v6
         with:
-          context: images/systemd-${{ matrix.system.family }}
+          # The recipe names the directory, because they are no longer all
+          # systemd: Alpine boots OpenRC under busybox init from its own.
+          context: images/${{ matrix.system.recipe }}
           build-args: BASE=${{ matrix.system.base }}
           platforms: ${{ matrix.system.platforms }}
           push: true
