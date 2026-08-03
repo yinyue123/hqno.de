@@ -103,10 +103,31 @@ package you installed, every service you configured, every file outside
 container's name. Your shell login and password survive it, and so does the
 address you SSH to.
 
-You pick the image from the list your host offers on that machine. Some hosts
-also allow **your own image reference** — a `ghcr.io/you/thing:tag` the *host*
-pulls, so it has to be reachable from the machine, not from your laptop. If
-the option is not there, your host has not enabled it.
+There are two places the new image can come from, and the dialog keeps them
+apart because they behave differently.
+
+**From this host** is the list your host has cached on that machine. Those
+images are already unpacked there and shared by every container built from
+one, so installing one downloads nothing, takes seconds, and costs you no
+traffic. This is the ordinary case.
+
+**My own image** is a full registry reference — `ghcr.io/you/thing:tag` — that
+the *host* downloads, so it has to be reachable from the machine and not from
+your laptop. It is unpacked into your container's own disk, which has three
+consequences worth knowing before you pick it:
+
+- it is yours alone; nobody else on that machine is offered it, and the host
+  keeps no copy of it;
+- because no copy is kept, it is downloaded again on **every** reinstall;
+- **the download counts against your container's traffic**, every time.
+
+If your host happens to already have that exact image, it uses its own copy
+instead: nothing is downloaded and nothing is charged.
+
+Two things can hide the second option. Your host may not have enabled it at
+all, and a container with no disk size of its own has nowhere to keep an image
+only it can see — the dialog says which of the two it is. See
+[building your own image](building-your-own-image.md).
 
 ### The systems on offer
 
