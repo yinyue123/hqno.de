@@ -22,6 +22,18 @@ RUN set -eux; \
     $PM -y install \
       systemd dbus cronie rsyslog procps-ng iproute iputils \
       openssh-server sudo ca-certificates less nano tzdata; \
+    # The gateway's SFTP subsystem execs whatever `command -v sftp-server`
+    # finds, falling back to Debian's /usr/lib/openssh/sftp-server. This family
+    # puts it in /usr/libexec/openssh, which is neither — so SFTP was a dead
+    # subsystem on every image built here: the client got "subsystem request
+    # failed" while the shell worked perfectly, which is the shape of a bug
+    # nobody reports. /usr/local/bin is on the PATH the gateway hands a
+    # session, so one symlink is the whole fix.
+    ln -sf /usr/libexec/openssh/sftp-server /usr/local/bin/sftp-server; \
+    # No index to prime, unlike apt and apk: dnf and yum both fetch repository
+    # metadata the first time an install needs it, and expire it on their own
+    # schedule after that. A `dnf install nginx` in a fresh container works
+    # with nothing run beforehand — measured, not assumed.
     $PM clean all; \
     rm -rf /var/cache/dnf /var/cache/yum
 

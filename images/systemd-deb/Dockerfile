@@ -32,7 +32,7 @@ RUN set -eux; \
     if ! apt-get install -s systemd >/dev/null 2>&1; then to_archive; apt-get update || true; fi; \
     apt-get install -y --no-install-recommends \
       systemd systemd-sysv dbus cron rsyslog procps iproute2 iputils-ping \
-      openssh-server sudo ca-certificates curl less nano tzdata; \
+      openssh-server sudo ca-certificates curl less nano tzdata logrotate; \
     rm -rf /var/lib/apt/lists/*
 
 # Hardware-facing units are meaningless in a container and fail loudly at boot,
@@ -55,6 +55,37 @@ RUN systemctl mask systemd-udevd.service systemd-udevd-kernel.socket \
 # their own sshd on a port they own should get it with one command:
 # `systemctl enable --now ssh`. Masking would make that two.
 RUN systemctl disable ssh.service ssh.socket
+
+# A holder who logs in and types `apt install nginx` should get nginx. On a
+# fresh container they got *Unable to locate package*, because the layer above
+# deletes the package lists — and an image that shipped them instead would ship
+# something worse: Debian's InRelease is valid for **seven days**, so a
+# container started from a month-old image would answer `apt install` with
+# *Release file is expired*, which is a harder thing to act on than an empty
+# index. dnf and yum need none of this; they fetch metadata when an install
+# first asks for it. apt and apk do not.
+#
+# So the index is fetched at boot, where it is always current. It costs about
+# 10 MB the first time a container starts and nothing on any boot after that:
+# apt revalidates with If-Modified-Since, so a second `update` against unchanged
+# lists is a handful of `Hit:` lines. Failure is not an error — a container
+# with no route out still boots, and Debian's own apt-daily.timer (already
+# enabled in this image) comes round again later.
+RUN set -eux; \
+    printf '%s\n' \
+      '[Unit]' \
+      'Description=Fetch the package index, so a login can install things straight away' \
+      'After=network.target' \
+      '' \
+      '[Service]' \
+      'Type=oneshot' \
+      'ExecStart=-/usr/bin/apt-get update -qq' \
+      'TimeoutStartSec=180' \
+      '' \
+      '[Install]' \
+      'WantedBy=multi-user.target' \
+      > /etc/systemd/system/hqnode-package-index.service; \
+    systemctl enable hqnode-package-index.service
 
 # /data is the one path that survives a reinstall (frame.md §7.1). Shipping the
 # mountpoint and a README in the image is what makes the panel's reinstall

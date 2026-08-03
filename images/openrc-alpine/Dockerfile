@@ -72,6 +72,23 @@ RUN set -eux; \
     chmod +x /etc/init.d/sshd-keygen; \
     rc-update add sshd-keygen default
 
+# A holder who logs in and types `apk add nginx` should get nginx. With no
+# index they got *nginx (no such package)*, which reads like the package does
+# not exist rather than like nothing has been fetched yet. Shipping an index in
+# the image would only move the problem: it is a snapshot of a mirror, and the
+# versions it names are the ones that get superseded first.
+#
+# So it is fetched at boot, where it is current. It is a couple of MB and a
+# second or two, and it is silent about failing: a container with no route out
+# still boots, and `apk update` is one command away for whoever wants to retry.
+# (dnf and yum need no equivalent — they fetch metadata when an install first
+# asks for it. apt and apk do not.)
+RUN set -eux; \
+    printf '#!/sbin/openrc-run\ndescription="fetch the package index so a login can install things"\ndepend() { after net; }\nstart() { ebegin "Fetching the package index"; apk update >/dev/null 2>&1; eend 0; }\n' \
+      > /etc/init.d/hqnode-package-index; \
+    chmod +x /etc/init.d/hqnode-package-index; \
+    rc-update add hqnode-package-index default
+
 # /data is the one path that survives a reinstall (frame.md §7.1). Shipping the
 # mountpoint and a README in the image is what makes the panel's reinstall
 # dialog true rather than aspirational.
