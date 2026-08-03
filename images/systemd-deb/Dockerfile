@@ -65,13 +65,40 @@ RUN systemctl disable ssh.service ssh.socket
 # index. dnf and yum need none of this; they fetch metadata when an install
 # first asks for it. apt and apk do not.
 #
-# So the index is fetched at boot, where it is always current. It costs about
-# 10 MB the first time a container starts and nothing on any boot after that:
-# apt revalidates with If-Modified-Since, so a second `update` against unchanged
-# lists is a handful of `Hit:` lines. Failure is not an error — a container
-# with no route out still boots, and Debian's own apt-daily.timer (already
-# enabled in this image) comes round again later.
+# So the index is fetched at boot instead, where it is always current — but
+# *not on every boot*. A container that restarts twenty times an hour, or a
+# host that reboots and brings thirty of them up at once, must not be thirty
+# machines hitting deb.debian.org in the same second. So there is a stamp, and
+# a window: run if the stamp is missing, and run if it is older than the window.
+#
+# The stamp has to be its own file. The obvious shortcut — look at how old the
+# index is — does not work, because apt writes the *archive's* publish time onto
+# the InRelease files it fetches, not the time it fetched them. A container that
+# updated a minute ago carries files dated four hours earlier, and one that
+# never updated at all would be indistinguishable from one that did.
+#
+# One day, not the week that a reading of "it barely changes" would suggest.
+# InRelease is valid for seven days from its Date, so a seven-day window can
+# leave a container carrying an index that expired minutes ago — and then
+# `apt install` answers with *Release file is expired*, which is the exact
+# failure this whole arrangement exists to avoid. One day is also what Debian's
+# own apt-daily.timer uses. It is one number below if that judgement is wrong.
+#
+# Failure is not an error: a container with no route out still has to boot, and
+# an update that half-failed leaves no stamp, so the next boot tries again.
 RUN set -eux; \
+    printf '%s\n' \
+      '#!/bin/sh' \
+      '# Refresh the package index, at most once per window. See the Dockerfile.' \
+      'window_days=1' \
+      'stamp=/var/lib/hqnode/package-index' \
+      'if [ -e "$stamp" ] && [ -n "$(find "$stamp" -mtime -$window_days 2>/dev/null)" ]; then' \
+      '    exit 0' \
+      'fi' \
+      'apt-get update -qq || exit 0' \
+      'mkdir -p /var/lib/hqnode && touch "$stamp"' \
+      > /usr/local/sbin/hqnode-package-index; \
+    chmod +x /usr/local/sbin/hqnode-package-index; \
     printf '%s\n' \
       '[Unit]' \
       'Description=Fetch the package index, so a login can install things straight away' \
@@ -79,7 +106,7 @@ RUN set -eux; \
       '' \
       '[Service]' \
       'Type=oneshot' \
-      'ExecStart=-/usr/bin/apt-get update -qq' \
+      'ExecStart=/usr/local/sbin/hqnode-package-index' \
       'TimeoutStartSec=180' \
       '' \
       '[Install]' \

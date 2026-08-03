@@ -78,13 +78,33 @@ RUN set -eux; \
 # the image would only move the problem: it is a snapshot of a mirror, and the
 # versions it names are the ones that get superseded first.
 #
-# So it is fetched at boot, where it is current. It is a couple of MB and a
-# second or two, and it is silent about failing: a container with no route out
-# still boots, and `apk update` is one command away for whoever wants to retry.
-# (dnf and yum need no equivalent — they fetch metadata when an install first
-# asks for it. apt and apk do not.)
+# So it is fetched at boot, where it is current — but *not on every boot*. A
+# container that restarts twenty times an hour, or a host that reboots and
+# brings thirty of them up at once, must not be thirty machines hitting the
+# Alpine mirror in the same second. A stamp file records the last run; the
+# index is refreshed only if there is no stamp, or the stamp is older than the
+# window. One day, the same number the systemd recipes use, and there is more
+# reason for it there — see that Dockerfile.
+#
+# Silent about failing: a container with no route out still has to boot, and a
+# failed update leaves no stamp, so the next boot tries again. (dnf and yum
+# need no equivalent — they fetch metadata when an install first asks for it.
+# apt and apk do not.)
 RUN set -eux; \
-    printf '#!/sbin/openrc-run\ndescription="fetch the package index so a login can install things"\ndepend() { after net; }\nstart() { ebegin "Fetching the package index"; apk update >/dev/null 2>&1; eend 0; }\n' \
+    mkdir -p /usr/local/sbin; \
+    printf '%s\n' \
+      '#!/bin/sh' \
+      '# Refresh the package index, at most once per window. See the Dockerfile.' \
+      'window_days=1' \
+      'stamp=/var/lib/hqnode/package-index' \
+      'if [ -e "$stamp" ] && [ -n "$(find "$stamp" -mtime -$window_days 2>/dev/null)" ]; then' \
+      '    exit 0' \
+      'fi' \
+      'apk update >/dev/null 2>&1 || exit 0' \
+      'mkdir -p /var/lib/hqnode && touch "$stamp"' \
+      > /usr/local/sbin/hqnode-package-index; \
+    chmod +x /usr/local/sbin/hqnode-package-index; \
+    printf '#!/sbin/openrc-run\ndescription="fetch the package index so a login can install things"\ndepend() { after net; }\nstart() { ebegin "Fetching the package index"; /usr/local/sbin/hqnode-package-index; eend 0; }\n' \
       > /etc/init.d/hqnode-package-index; \
     chmod +x /etc/init.d/hqnode-package-index; \
     rc-update add hqnode-package-index default
