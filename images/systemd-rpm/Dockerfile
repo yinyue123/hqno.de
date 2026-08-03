@@ -21,14 +21,29 @@ RUN set -eux; \
     fi; \
     $PM -y install \
       systemd dbus cronie rsyslog procps-ng iproute iputils \
-      openssh-server sudo ca-certificates less nano tzdata; \
-    # The gateway's SFTP subsystem execs whatever `command -v sftp-server`
-    # finds, falling back to Debian's /usr/lib/openssh/sftp-server. This family
-    # puts it in /usr/libexec/openssh, which is neither — so SFTP was a dead
-    # subsystem on every image built here: the client got "subsystem request
-    # failed" while the shell worked perfectly, which is the shape of a bug
-    # nobody reports. /usr/local/bin is on the PATH the gateway hands a
-    # session, so one symlink is the whole fix.
+      openssh-server openssh-clients sudo ca-certificates less nano tzdata; \
+    # openssh-clients is a separate package on this side of the family and
+    # openssh-server does not require it, so these images shipped with no
+    # `ssh`, no `scp` and no `sftp` at all. That is the outbound direction and
+    # nothing to do with logging in: `git clone git@…`, `rsync -e ssh`, copying
+    # a file to another box — none of which a holder could do here while a
+    # Debian or Alpine container could. Both of those get the client without
+    # asking, which is exactly why the gap went unnoticed. 3 MB.
+    #
+    # openssh-server stays only because this family will not let it go: the
+    # sftp-server the gateway needs lives *inside* that package, where Debian
+    # and Alpine split it out. So the daemon is installed and switched off
+    # below rather than absent — the one place the three recipes differ on
+    # this, and not by choice.
+    #
+    # The gateway's SFTP subsystem is the other half, and had its own problem:
+    # it execs whatever `command -v sftp-server` finds, falling back to
+    # Debian's /usr/lib/openssh/sftp-server. This family puts it in
+    # /usr/libexec/openssh, which is neither — so SFTP was a dead subsystem on
+    # every image built here: the client got "subsystem request failed" while
+    # the shell worked perfectly, which is the shape of a bug nobody reports.
+    # /usr/local/bin is on the PATH the gateway hands a session, so one symlink
+    # is the whole fix.
     ln -sf /usr/libexec/openssh/sftp-server /usr/local/bin/sftp-server; \
     # No index to prime, unlike apt and apk: dnf and yum both fetch repository
     # metadata the first time an install needs it, and expire it on their own
@@ -44,18 +59,20 @@ RUN systemctl mask systemd-udevd.service systemd-udevd-kernel.socket \
       sys-kernel-debug.mount sys-kernel-config.mount \
       systemd-journald-audit.socket
 
-# openssh-server enables itself — the distribution's systemd preset does it,
-# nobody here chose it — and an hqnode login never goes near it. The gateway is
-# one SSH server on the host: it authenticates there and enters the container's
-# namespaces (agent/internal/sshgw), so there is no network hop, no port, and
-# nothing inside to keep in sync. What was left running was a few MB of a box
-# sold with 128 and a listening socket the holder did not ask for.
+# The Debian and Alpine recipes have no sshd at all; this one cannot do that,
+# because `sftp-server` lives inside openssh-server here. So the daemon is
+# present and switched off — which is not the same promise, and is worth
+# knowing when comparing a RHEL container to the other two.
 #
-# Disabled, not removed, and not masked. The package stays because the
-# gateway's SFTP subsystem runs this image's `sftp-server`, and on this side of
-# the family that file lives *inside* openssh-server — there is no separate
-# package to keep. A holder who wants their own sshd on a port they own gets it
-# with `systemctl enable --now sshd`; masking would make that two commands.
+# It enables itself on install (the distribution's systemd preset does it,
+# nobody here chose it), and an hqnode login never goes near it: the gateway is
+# one SSH server on the *host*, authenticating there and entering the
+# container's namespaces (agent/internal/sshgw). What was left running was a
+# few MB of a box sold with 128 and a socket listening for a login that does
+# not arrive that way.
+#
+# Disabled rather than masked, so a holder who does want a listening sshd on a
+# port they own gets it with one command: `systemctl enable --now sshd`.
 RUN systemctl disable sshd.service sshd.socket
 
 # /data is the one path that survives a reinstall (frame.md §7.1). Shipping the

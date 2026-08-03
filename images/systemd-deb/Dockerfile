@@ -32,7 +32,8 @@ RUN set -eux; \
     if ! apt-get install -s systemd >/dev/null 2>&1; then to_archive; apt-get update || true; fi; \
     apt-get install -y --no-install-recommends \
       systemd systemd-sysv dbus cron rsyslog procps iproute2 iputils-ping \
-      openssh-server sudo ca-certificates curl less nano tzdata logrotate; \
+      openssh-client openssh-sftp-server \
+      sudo ca-certificates curl less nano tzdata logrotate; \
     rm -rf /var/lib/apt/lists/*
 
 # Hardware-facing units are meaningless in a container and fail loudly at boot,
@@ -42,19 +43,32 @@ RUN systemctl mask systemd-udevd.service systemd-udevd-kernel.socket \
       sys-kernel-debug.mount sys-kernel-config.mount \
       systemd-journald-audit.socket
 
-# openssh-server enables itself — Debian's postinst does it, nobody here chose
-# it — and an hqnode login never goes near it. The gateway is one SSH server on
-# the host: it authenticates there and enters the container's namespaces
+# There is no sshd here, and that is the whole of it: an hqnode login never
+# goes near one. The gateway is a single SSH server on the *host* — it
+# authenticates there and enters the container's namespaces
 # (agent/internal/sshgw), so there is no network hop, no port, and nothing
-# inside to keep in sync. What was left running was a few MB of a box sold with
-# 128 and a listening socket the holder did not ask for.
+# inside to keep in sync. openssh-server was only ever here because it is what
+# people install without thinking, and Debian's postinst then enabled it: a few
+# MB of a box sold with 128, and a socket listening for a login that does not
+# arrive that way.
 #
-# Disabled, not removed, and not masked. The package stays because the
-# gateway's SFTP subsystem runs this image's `sftp-server` — on the RPM side
-# that file is inside openssh-server itself — and because a holder who wants
-# their own sshd on a port they own should get it with one command:
-# `systemctl enable --now ssh`. Masking would make that two.
-RUN systemctl disable ssh.service ssh.socket
+# What is kept is the two halves that are actually used, and they are separate
+# Debian packages, which is what makes dropping the daemon possible here:
+#
+#   openssh-sftp-server  the gateway execs this image's own `sftp-server` for
+#                        the SFTP subsystem, which is also what `scp` speaks
+#                        since OpenSSH 9.0. Without it, `sftp` and `scp` both
+#                        fail with "subsystem request failed" while the shell
+#                        works perfectly.
+#   openssh-client       the outbound direction, which has nothing to do with
+#                        logging in: `git clone git@…`, `rsync -e ssh`, and the
+#                        remote half of a legacy `scp -O`, which runs `scp -t`
+#                        inside the container rather than the subsystem.
+#
+# A holder who does want a listening sshd on a port they own installs
+# openssh-server themselves. That is one command more than it used to be, and
+# it is the right way round: nobody should pay for a daemon they did not ask
+# for so that the few who want one are saved a step.
 
 # A holder who logs in and types `apt install nginx` should get nginx. On a
 # fresh container they got *Unable to locate package*, because the layer above

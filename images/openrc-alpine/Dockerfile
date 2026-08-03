@@ -16,12 +16,27 @@ FROM ${BASE}
 # this list is the difference between "a container" and "a machine someone was
 # handed": openrc for services, procps-ng so `top` and `free` print what a
 # person expects rather than busybox's terser applets, shadow for useradd and
-# real passwd files, openssh so a holder can run their own sshd on a port they
-# own, and bash because a login shell that is not bash surprises people.
+# real passwd files, and bash because a login shell that is not bash surprises
+# people.
+#
+# The two openssh halves are named individually rather than taken as the
+# `openssh` meta-package, because that one drags in a daemon nothing here uses:
+# an hqnode login is the host's gateway entering this container's namespaces
+# (agent/internal/sshgw), never a connection to an sshd inside it.
+#
+#   openssh-sftp-server     what the gateway execs for the SFTP subsystem —
+#                           which is also what `scp` speaks since OpenSSH 9.0.
+#   openssh-client-default  the outbound direction, nothing to do with logging
+#                           in: `git clone git@…`, `rsync -e ssh`, and the
+#                           remote half of a legacy `scp -O`, which runs
+#                           `scp -t` in the container rather than a subsystem.
+#
+# A holder who wants a listening sshd on a port they own runs `apk add openssh`
+# themselves.
 RUN set -eux; \
     apk add --no-cache \
       openrc busybox-openrc busybox-suid \
-      openssh openssh-sftp-server \
+      openssh-client-default openssh-sftp-server \
       bash shadow sudo procps-ng \
       iproute2 iputils curl ca-certificates less nano tzdata logrotate; \
     # The gateway looks for `sftp-server` on PATH and falls back to Debian's
@@ -49,28 +64,11 @@ RUN set -eux; \
     rc-update add crond default; \
     rc-update add syslog boot
 
-# sshd is installed and *not* started, which is the one thing about it worth
-# writing down: an hqnode login never goes near it. The gateway is one SSH
-# server on the host — it authenticates there and enters the container's
-# namespaces (agent/internal/sshgw), so there is no network hop, no port, and
-# nothing inside to keep in sync. A booted sshd here is a few MB of a box sold
-# with 128, and a listening socket the holder did not ask for.
-#
-# The package stays: the gateway's SFTP subsystem runs this image's
-# `sftp-server`, and a holder who wants their own sshd on a port they own is a
-# `rc-update add sshd default` away from having one. Which is why the key
-# generation below stays in the default runlevel — `ssh-keygen -A` only makes
-# what is missing, so it costs one boot, and it means turning sshd on is that
-# one command and not two.
-
-# sshd needs host keys and a place to chroot the privilege-separated child;
-# generating the keys at build time would ship every container the same ones.
-RUN set -eux; \
-    mkdir -p /var/empty /run/sshd; \
-    printf '#!/sbin/openrc-run\ndescription="one-time host key generation"\ndepend() { before sshd; }\nstart() { ssh-keygen -A; }\n' \
-      > /etc/init.d/sshd-keygen; \
-    chmod +x /etc/init.d/sshd-keygen; \
-    rc-update add sshd-keygen default
+# There is no sshd here, so there is nothing to generate host keys for and no
+# `sshd-keygen` service any more. Both went with it, and this comment is what
+# is left of them: a container that grows one later (`apk add openssh`) gets
+# Alpine's own init script, which is the distribution's problem to get right
+# rather than a script written here.
 
 # A holder who logs in and types `apk add nginx` should get nginx. With no
 # index they got *nginx (no such package)*, which reads like the package does
