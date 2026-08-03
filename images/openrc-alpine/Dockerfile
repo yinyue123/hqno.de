@@ -46,9 +46,22 @@ RUN set -eux; \
     # cgroups are the host's business here: the container is already inside the
     # one it was sold, and OpenRC mounting its own would fight the agent for it.
     sed -i 's/^rc_cgroup_mode=.*/rc_cgroup_mode="none"/' /etc/rc.conf 2>/dev/null || true; \
-    rc-update add sshd default; \
     rc-update add crond default; \
     rc-update add syslog boot
+
+# sshd is installed and *not* started, which is the one thing about it worth
+# writing down: an hqnode login never goes near it. The gateway is one SSH
+# server on the host — it authenticates there and enters the container's
+# namespaces (agent/internal/sshgw), so there is no network hop, no port, and
+# nothing inside to keep in sync. A booted sshd here is a few MB of a box sold
+# with 128, and a listening socket the holder did not ask for.
+#
+# The package stays: the gateway's SFTP subsystem runs this image's
+# `sftp-server`, and a holder who wants their own sshd on a port they own is a
+# `rc-update add sshd default` away from having one. Which is why the key
+# generation below stays in the default runlevel — `ssh-keygen -A` only makes
+# what is missing, so it costs one boot, and it means turning sshd on is that
+# one command and not two.
 
 # sshd needs host keys and a place to chroot the privilege-separated child;
 # generating the keys at build time would ship every container the same ones.

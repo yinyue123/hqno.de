@@ -32,6 +32,20 @@ RUN systemctl mask systemd-udevd.service systemd-udevd-kernel.socket \
       sys-kernel-debug.mount sys-kernel-config.mount \
       systemd-journald-audit.socket
 
+# openssh-server enables itself — the distribution's systemd preset does it,
+# nobody here chose it — and an hqnode login never goes near it. The gateway is
+# one SSH server on the host: it authenticates there and enters the container's
+# namespaces (agent/internal/sshgw), so there is no network hop, no port, and
+# nothing inside to keep in sync. What was left running was a few MB of a box
+# sold with 128 and a listening socket the holder did not ask for.
+#
+# Disabled, not removed, and not masked. The package stays because the
+# gateway's SFTP subsystem runs this image's `sftp-server`, and on this side of
+# the family that file lives *inside* openssh-server — there is no separate
+# package to keep. A holder who wants their own sshd on a port they own gets it
+# with `systemctl enable --now sshd`; masking would make that two commands.
+RUN systemctl disable sshd.service sshd.socket
+
 # /data is the one path that survives a reinstall (frame.md §7.1). Shipping the
 # mountpoint and a README in the image is what makes the panel's reinstall
 # dialog true rather than aspirational.

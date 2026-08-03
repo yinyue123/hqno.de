@@ -41,9 +41,29 @@ Short, and worth knowing before writing a fourth recipe. The agent needs:
   turns "stop" into something else.
 
 It does *not* need a running sshd: the gateway authenticates on the host and
-enters the namespace, so nothing inside has to be in sync with it. `openssh`
-is shipped for the holder's own use. It does not need a `/etc/resolv.conf`
-either — the agent binds one in, creating the target if the image has none.
+enters the namespace, so nothing inside has to be in sync with it. It does not
+need a `/etc/resolv.conf` either — the agent binds one in, creating the target
+if the image has none.
+
+**sshd is installed and switched off**, in all three recipes. Every one of them
+used to boot with it running, and on the systemd two that was nobody's
+decision: Debian's `openssh-server` postinst and the RPM family's systemd
+preset both enable the unit on install. It was a few MB of a box sold with 128
+and a socket listening for a login that never arrives that way. The package
+stays — the gateway's SFTP subsystem runs the image's own `sftp-server`, and on
+the RPM side that file is inside `openssh-server` itself — and a holder who
+wants their own sshd on a port they own turns it on with one command:
+
+| | |
+|---|---|
+| Debian, Ubuntu | `systemctl enable --now ssh` |
+| AlmaLinux, Rocky, CentOS, Fedora | `systemctl enable --now sshd` |
+| Alpine | `rc-update add sshd default && rc-service sshd start` |
+
+Disabled rather than masked, so that stays one command. On Alpine the host-key
+service is left in the default runlevel for the same reason: `ssh-keygen -A`
+only makes what is missing, so it costs one boot and saves the holder a second
+step.
 
 ## Things that bit, and how they are handled
 
