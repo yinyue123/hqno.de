@@ -29,8 +29,13 @@ version_line() {
 }
 
 mysql_root() {
-	# Prefer the socket: root gets in without a password on a fresh install,
-	# and /root/.my.cnf carries it afterwards.
+	# Prefer the socket: root gets in without a password on a fresh install.
+	# Once this recipe has written $MY_CNF, that file is named explicitly —
+	# `mysql` would only find it by way of HOME, which is not root's home under
+	# sudo, under cron, or in a systemd unit.
+	if [ -r "$MY_CNF" ]; then
+		mysql --defaults-file="$MY_CNF" "$@" 2>/dev/null && return 0
+	fi
 	mysql --protocol=socket -uroot "$@" 2>/dev/null || mysql -uroot "$@"
 }
 

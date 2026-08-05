@@ -53,6 +53,16 @@ die()  { err "$*"; exit 1; }
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# app-setup exports its own language to every recipe it runs, which is what
+# lets a download pick a mirror rather than making somebody in Shanghai wait
+# on a US host for 60MB of WordPress.
+lang_zh() {
+	case "${APP_SETUP_LANG:-${LC_ALL:-${LANG:-}}}" in
+		zh*|*zh_CN*|*zh_TW*|*ZH*) return 0 ;;
+	esac
+	return 1
+}
+
 need_root() {
 	[ "$(id -u)" = 0 ] || die "this needs root. Run app-setup as root, or with sudo."
 }
@@ -115,6 +125,7 @@ in_container() {
 #   PKGS="python3"  PKGS_apk="python3 py3-pip"  PKGS_centos="python3"
 #   $(pmv PKGS)
 pmv() {
+	local _n _v
 	_n="$1"
 	eval "_v=\${${_n}_${OS_KEY}-}"
 	[ -n "$_v" ] || eval "_v=\${${_n}_${PM}-}"
@@ -124,34 +135,96 @@ pmv() {
 }
 
 # --------------------------------------------------------------- packages --
+# DPkg::Lock::Timeout covers dpkg's own lock, which is the one an *install*
+# contends for. It does not cover /var/lib/apt/lists/lock, which is what
+# `apt-get update` takes — so it is necessary but not sufficient; see
+# pm_wait_unlocked. Releases too old to have the option (16.04, 18.04) ignore
+# an unknown -o key rather than failing on it.
+apt_get() {
+	DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=180 "$@"
+}
+
+# Is another package operation running right now?
+pm_busy() {
+	have pgrep || return 1        # cannot tell; do not pretend to wait
+	case "$PM" in
+		apt)     pgrep -x 'apt|apt-get|dpkg|unattended-upgr' >/dev/null 2>&1 ;;
+		dnf|yum) pgrep -x 'dnf|dnf5|yum|rpm' >/dev/null 2>&1 ;;
+		apk)     pgrep -x 'apk' >/dev/null 2>&1 ;;
+		zypper)  pgrep -x 'zypper|rpm' >/dev/null 2>&1 ;;
+		pacman)  pgrep -x 'pacman' >/dev/null 2>&1 ;;
+		*)       return 1 ;;
+	esac
+}
+
+# Every image fetches the package index at boot, so a container a minute old
+# has an apt-get holding the lock — and somebody who logs in and immediately
+# types `app-setup` lands exactly there. apt's answer to a lock it cannot take
+# during `update` is to fail, and the *next* command then reports "Unable to
+# locate package wget", which reads like the package does not exist rather than
+# like the index was never fetched. unattended-upgrades does the same thing at
+# random for the rest of the machine's life.
+#
+# So: wait for the other operation rather than collide with it. Three minutes
+# is longer than a boot-time index fetch and shorter than somebody's patience.
+# Waiting on a process rather than retrying the command means a genuine
+# failure — no route out, a dead mirror — still fails immediately.
+pm_wait_unlocked() {
+	local _n
+	pm_busy || return 0
+	step "another package operation is running; waiting for it to finish"
+	_n=0
+	while pm_busy && [ "$_n" -lt 90 ]; do
+		sleep 2
+		_n=$((_n + 1))
+	done
+	[ "$_n" -lt 90 ] || warn "it is still running after three minutes; carrying on anyway"
+	return 0
+}
+
 # One refresh per hour, not one per recipe: installing LNMP is four recipes
 # deep and `apt-get update` four times is three minutes of nothing.
 pm_refresh() {
+	local _age _fresh _stamp
 	_stamp="$APP_SETUP_STATE/pm-refreshed"
 	mkdir -p "$APP_SETUP_STATE"
 	if [ -f "$_stamp" ]; then
 		_age=$(( $(date +%s) - $(stat -c %Y "$_stamp" 2>/dev/null || echo 0) ))
 		[ "$_age" -lt 3600 ] && return 0
 	fi
+	pm_wait_unlocked
 	step "refreshing the package index"
+	_fresh=1
 	case "$PM" in
-		apt)    apt-get update -qq || warn "apt-get update reported a problem; carrying on" ;;
-		dnf)    dnf -q makecache   || true ;;
-		yum)    yum -q makecache   || true ;;
-		apk)    apk update -q      || true ;;
-		zypper) zypper -q refresh  || true ;;
-		pacman) pacman -Sy --noconfirm >/dev/null || true ;;
+		apt)    apt_get update -qq || _fresh=0 ;;
+		dnf)    dnf -q makecache   || _fresh=0 ;;
+		yum)    yum -q makecache   || _fresh=0 ;;
+		apk)    apk update -q      || _fresh=0 ;;
+		zypper) zypper -q refresh  || _fresh=0 ;;
+		pacman) pacman -Sy --noconfirm >/dev/null || _fresh=0 ;;
 	esac
-	: > "$_stamp"
+	# Only a refresh that worked gets stamped. Stamping a failed one suppresses
+	# the retry for an hour, and every install in that hour then fails with
+	# "Unable to locate package" — which reads like the package does not exist
+	# rather than like the index was never fetched. On a container created a
+	# minute ago that is the difference between app-setup working and app-setup
+	# looking broken on first use.
+	if [ "$_fresh" = 1 ]; then
+		: > "$_stamp"
+	else
+		warn "could not refresh the package index; will try again on the next install"
+	fi
+	return 0
 }
 
 pkg_install() {
 	[ $# -gt 0 ] || return 0
 	need_root
 	pm_refresh
+	pm_wait_unlocked
 	step "installing: $*"
 	case "$PM" in
-		apt)    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@" ;;
+		apt)    apt_get install -y --no-install-recommends "$@" ;;
 		dnf)    dnf install -y "$@" ;;
 		yum)    yum install -y "$@" ;;
 		apk)    apk add --no-cache "$@" ;;
@@ -164,10 +237,11 @@ pkg_install() {
 pkg_remove() {
 	[ $# -gt 0 ] || return 0
 	need_root
+	pm_wait_unlocked
 	step "removing: $*"
 	case "$PM" in
-		apt)    DEBIAN_FRONTEND=noninteractive apt-get purge -y "$@" || true
-		        DEBIAN_FRONTEND=noninteractive apt-get autoremove -y || true ;;
+		apt)    apt_get purge -y "$@" || true
+		        apt_get autoremove -y || true ;;
 		dnf)    dnf remove -y "$@" || true ;;
 		yum)    yum remove -y "$@" || true ;;
 		apk)    apk del "$@" || true ;;
@@ -202,6 +276,7 @@ pkg_exists() {          # is this name offered by the configured repos?
 # between releases far more than anything else in a recipe — php8.2-fpm on
 # Debian 12, php8.4-fpm on 13, php-fpm on Alma.
 pkg_install_first() {
+	local _p
 	pm_refresh
 	for _p in "$@"; do
 		if pkg_exists "$_p"; then pkg_install "$_p"; return 0; fi
@@ -212,6 +287,7 @@ pkg_install_first() {
 # Best effort: extras that only some distros carry, and whose absence must not
 # fail the install.
 pkg_install_optional() {
+	local _p
 	for _p in "$@"; do
 		pkg_exists "$_p" 2>/dev/null || continue
 		pkg_install "$_p" || warn "could not install $_p; carrying on"
@@ -349,6 +425,7 @@ svc() { pmv SERVICE; }
 #
 #   make_service gitea "Gitea" "/usr/local/bin/gitea web" git /var/lib/gitea
 make_service() {
+	local _args _bin _desc _dir _exec _name _user
 	_name="$1"; _desc="$2"; _exec="$3"; _user="${4:-root}"; _dir="${5:-/}"
 	case "$INIT" in
 	systemd)
@@ -415,16 +492,29 @@ remove_service() {
 
 # ---------------------------------------------------------------- network --
 fetch() {          # fetch <url> <dest>
+	local _dst _url
 	_url="$1"; _dst="$2"
 	ensure_downloader
-	if have curl; then curl -fsSL --retry 3 --connect-timeout 20 -o "$_dst" "$_url"
-	else wget -q -t 3 -T 20 -O "$_dst" "$_url"; fi
+	if have curl; then
+		curl -fsSL --retry 3 --connect-timeout 20 -o "$_dst" "$_url" && return 0
+		# curl error 16, "Error in the HTTP2 framing layer": Ubuntu 22.04's
+		# curl against GitHub's CDN, reproducibly. --retry does not cover it
+		# because curl treats it as fatal rather than transient, and HTTP/1.1
+		# fetches the identical bytes.
+		curl -fsSL --http1.1 --retry 3 --connect-timeout 20 -o "$_dst" "$_url"
+	else
+		wget -q -t 3 -T 20 -O "$_dst" "$_url"
+	fi
 }
 
 fetch_stdout() {
 	ensure_downloader
-	if have curl; then curl -fsSL --retry 3 --connect-timeout 20 "$1"
-	else wget -q -t 3 -T 20 -O - "$1"; fi
+	if have curl; then
+		curl -fsSL --retry 3 --connect-timeout 20 "$1" ||
+			curl -fsSL --http1.1 --retry 3 --connect-timeout 20 "$1"
+	else
+		wget -q -t 3 -T 20 -O - "$1"
+	fi
 }
 
 ensure_downloader() {
@@ -445,6 +535,7 @@ port_busy() {      # is anything already listening on this TCP port?
 }
 
 require_ports() {
+	local _p
 	for _p in "$@"; do
 		if port_busy "$_p"; then
 			warn "port $_p is already in use — whatever holds it will have to move"
@@ -493,6 +584,15 @@ nginx_drop_default() {
 nginx_test_reload() {
 	if nginx -t 2>&1 | grep -q 'test is successful'; then
 		svc_reload nginx 2>/dev/null || svc_start nginx
+		# A reload is asynchronous: SIGHUP returns immediately and the old
+		# workers keep answering until they drain. That is invisible on a
+		# running site and very visible here, because the recipe's last line
+		# is "finish the setup at http://…/install.php" — and a person who
+		# clicks it in the next half second gets one 404 from a worker still
+		# using the previous document root. A second is nothing next to the
+		# install that just ran, and it makes that link true when it is
+		# printed.
+		sleep 1
 		return 0
 	fi
 	err "the nginx config does not parse; nothing was reloaded:"
@@ -503,6 +603,7 @@ nginx_test_reload() {
 # php-fpm's package name, service name and listening socket all differ per
 # distro *and* per release, so all three are discovered rather than assumed.
 php_service() {
+	local _b _s _u
 	case "$PMF" in rpm) printf 'php-fpm'; return 0 ;; esac
 	for _u in /lib/systemd/system/php*-fpm.service /usr/lib/systemd/system/php*-fpm.service; do
 		[ -f "$_u" ] || continue
@@ -516,6 +617,7 @@ php_service() {
 }
 
 php_fpm_listen() {
+	local _f _v
 	for _f in /etc/php/*/fpm/pool.d/www.conf /etc/php-fpm.d/www.conf \
 	          /etc/php*/php-fpm.d/www.conf /etc/php*/php-fpm.conf; do
 		[ -f "$_f" ] || continue
@@ -526,6 +628,7 @@ php_fpm_listen() {
 }
 
 php_fastcgi_pass() {
+	local _l
 	_l="$(php_fpm_listen)"
 	case "$_l" in
 		/*) printf 'unix:%s' "$_l" ;;
@@ -539,6 +642,7 @@ php_fastcgi_pass() {
 #
 #   php_nginx_site [document-root] > "$(nginx_conf_dir)/app-setup.conf"
 php_nginx_site() {
+	local _root
 	_root="${1:-$WEBROOT}"
 	cat <<EOF
 # written by app-setup. Your own sites go in files next to this one; this is
@@ -579,6 +683,7 @@ EOF
 # authority when PHP is installed — it is the process that has to write uploads
 # — and the guess list is ordered by how each distro names its web account.
 web_user() {
+	local _f _u
 	for _f in /etc/php/*/fpm/pool.d/www.conf /etc/php-fpm.d/www.conf /etc/php*/php-fpm.d/www.conf; do
 		[ -f "$_f" ] || continue
 		_u="$(awk -F= '/^[[:space:]]*user[[:space:]]*=/ {gsub(/[[:space:]]/,"",$2); print $2; exit}' "$_f")"
@@ -591,11 +696,13 @@ web_user() {
 }
 
 web_group() {
+	local _u
 	_u="$(web_user)"
 	id -gn "$_u" 2>/dev/null || printf '%s' "$_u"
 }
 
 php_bin() {
+	local _p
 	have php && { printf 'php'; return 0; }
 	for _p in /usr/bin/php8* /usr/bin/php7*; do
 		[ -x "$_p" ] && { printf '%s' "$_p"; return 0; }
@@ -608,6 +715,7 @@ php_bin() {
 # than repeating them is what stops LNMP and LAMP from disagreeing with the
 # nginx and MariaDB cards about what is installed.
 recipe() {         # recipe <id> <verb>
+	local _d _found _verb _want
 	_want="$1"; _verb="$2"; _found=""
 	for _d in $(printf '%s' "${APP_SETUP_PATH:-/etc/app-setup:/usr/local/etc/app-setup}" | tr ':' ' '); do
 		[ -f "$_d/$_want.sh" ] && _found="$_d/$_want.sh"
@@ -618,6 +726,7 @@ recipe() {         # recipe <id> <verb>
 }
 
 recipe_status() {  # 0 running, 1 stopped, 2 absent — same codes as the verb
+	local _d _found _want
 	_want="$1"; _found=""
 	for _d in $(printf '%s' "${APP_SETUP_PATH:-/etc/app-setup:/usr/local/etc/app-setup}" | tr ':' ' '); do
 		[ -f "$_d/$_want.sh" ] && _found="$_d/$_want.sh"
@@ -626,8 +735,85 @@ recipe_status() {  # 0 running, 1 stopped, 2 absent — same codes as the verb
 	sh "$_found" status >/dev/null 2>&1
 }
 
+# Install a part only if it is missing. An application suite laid on top of a
+# machine that already runs LNMP must not reinstall nginx underneath a site
+# that is currently serving — and `recipe nginx install` rewrites the default
+# server, so calling it unconditionally would take that site down.
+recipe_ensure() {
+	local _rc
+	_rc=0
+	recipe_status "$1" || _rc=$?
+	if [ "$_rc" = 2 ]; then recipe "$1" install
+	else info "$1 is already here"; fi
+	return 0
+}
+
+# -------------------------------------------------------------- databases --
+# WordPress, Typecho and Nextcloud all want the same four statements, and
+# writing them out three times is how one of them ends up on `utf8` — the
+# MySQL encoding that is not UTF-8 and truncates a row at the first emoji.
+# Where the mysql recipe put root's password. It is named explicitly rather
+# than left to `mysql` finding ~/.my.cnf, because HOME is not reliably root's
+# home in any of the ways this actually runs: `sudo` keeps the *invoking*
+# user's HOME, cron sets none at all, and neither does a systemd unit. The
+# symptom when it is wrong is "Access denied for user 'root'@'localhost'
+# (using password: NO)" — which reads like the password is wrong rather than
+# like the file was never opened.
+MY_CNF=/root/.my.cnf
+
+mysql_root() {
+	if [ -r "$MY_CNF" ]; then
+		# Authoritative once it exists: an error from here is a real error and
+		# should be seen, not masked by a retry that gets access denied.
+		mysql --defaults-file="$MY_CNF" "$@"
+	else
+		# A fresh install lets root in over the unix socket with no password.
+		mysql --protocol=socket -uroot "$@" 2>/dev/null || mysql -uroot "$@"
+	fi
+}
+
+mysql_wait() {     # the service is up before the socket is
+	local _n
+	_n=0
+	while [ "$_n" -lt 30 ]; do
+		if [ -r "$MY_CNF" ]; then
+			mysqladmin --defaults-file="$MY_CNF" ping >/dev/null 2>&1 && return 0
+		fi
+		mysqladmin --protocol=socket ping >/dev/null 2>&1 && return 0
+		mysqladmin ping >/dev/null 2>&1 && return 0
+		_n=$((_n + 1)); sleep 1
+	done
+	return 1
+}
+
+db_mysql_create() {   # db_mysql_create <database> <user> <password>
+	local _db _dp _du
+	_db="$1"; _du="$2"; _dp="$3"
+	mysql_root -e "CREATE DATABASE IF NOT EXISTS \`$_db\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" ||
+		return 1
+	# Three ways to say the same thing, because the syntax changed twice and
+	# we publish images from CentOS 7 (MariaDB 5.5, none of the modern forms)
+	# to Fedora 43. Whichever one this server understands wins; the last is
+	# 5.5's own idiom, where GRANT ... IDENTIFIED BY creates the user.
+	mysql_root -e "CREATE USER IF NOT EXISTS '$_du'@'localhost' IDENTIFIED BY '$_dp';" 2>/dev/null ||
+	mysql_root -e "CREATE USER '$_du'@'localhost' IDENTIFIED BY '$_dp';" 2>/dev/null ||
+	mysql_root -e "GRANT USAGE ON *.* TO '$_du'@'localhost' IDENTIFIED BY '$_dp';" 2>/dev/null ||
+		true
+	# The user may have existed already with a password nobody wrote down.
+	mysql_root -e "ALTER USER '$_du'@'localhost' IDENTIFIED BY '$_dp';" 2>/dev/null ||
+	mysql_root -e "SET PASSWORD FOR '$_du'@'localhost' = PASSWORD('$_dp');" 2>/dev/null ||
+		true
+	mysql_root -e "GRANT ALL PRIVILEGES ON \`$_db\`.* TO '$_du'@'localhost'; FLUSH PRIVILEGES;"
+}
+
+db_mysql_drop() {     # db_mysql_drop <database> <user>
+	mysql_root -e "DROP DATABASE IF EXISTS \`$1\`;" 2>/dev/null || true
+	mysql_root -e "DROP USER '$2'@'localhost';" 2>/dev/null || true
+}
+
 # ---------------------------------------------------------------- secrets --
 rand_pass() {
+	local _n
 	_n="${1:-20}"
 	if [ -r /dev/urandom ]; then
 		LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom 2>/dev/null | head -c "$_n"
@@ -661,6 +847,7 @@ drop_note() { rm -f "$APP_SETUP_SECRETS/$1.txt"; }
 # address is the host's, which we cannot know, so say so rather than print a
 # 172.x that will not work from their laptop.
 guess_host() {
+	local _ip
 	_ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')"
 	[ -n "$_ip" ] || _ip="$(hostname -i 2>/dev/null | awk '{print $1}')"
 	[ -n "$_ip" ] || _ip="127.0.0.1"
@@ -680,6 +867,7 @@ restore_backup() {
 }
 
 tmp_dir() {
+	local _d
 	_d="$(mktemp -d 2>/dev/null || echo "/tmp/app-setup.$$")"
 	mkdir -p "$_d"
 	printf '%s' "$_d"
@@ -690,6 +878,7 @@ tmp_dir() {
 # sourcing this file; the later definition wins.
 
 is_installed() {
+	local _bin _file _p _pkgs
 	_bin="$(pmv CHECK_BIN)"
 	if [ -n "$_bin" ]; then have "$_bin" && return 0 || return 1; fi
 	_file="$(pmv CHECK_FILE)"
@@ -724,6 +913,7 @@ do_help()      { echo "This source ships no documentation."; }
 # `enabled=` fills the boot tick. It must be fast; app-setup kills it at eight
 # seconds and shows the package as broken.
 do_status() {
+	local _s _v
 	is_installed || exit 2
 	_v="$(version_line 2>/dev/null || true)"
 	[ -n "$_v" ] && echo "detail=$_v"
@@ -734,6 +924,7 @@ do_status() {
 }
 
 app_main() {
+	local _verb
 	_verb="${1:-help}"
 	case "$_verb" in
 		install)            need_root; do_install ;;

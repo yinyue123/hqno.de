@@ -53,7 +53,21 @@ do_install() {
 		            "$_p-phar" "$_p-openssl" "$_p-fileinfo" "$_p-dom"
 		pkg_install_optional "$_p-zip" "$_p-tokenizer" "$_p-simplexml" "$_p-xmlwriter" \
 		                     "$_p-xmlreader" "$_p-iconv" "$_p-bcmath" "$_p-intl" "$_p-ctype"
-		ln -sf "/usr/bin/$_p" /usr/bin/php 2>/dev/null || true
+
+		# Alpine installs the binary as php84 and ships no plain `php`, so the
+		# link is what makes every instruction on the internet true here.
+		#
+		# It is re-derived rather than reusing $_p from above, and then
+		# checked: a link pointing at something that is not there is silent —
+		# `have php` says yes, running it says "not found", and the failure
+		# surfaces three recipes later as LNMP claiming PHP is missing.
+		_php="/usr/bin/$(alpine_php)"
+		if [ -x "$_php" ]; then
+			ln -sf "$_php" /usr/bin/php
+		else
+			warn "no PHP binary at $_php; leaving /usr/bin/php alone"
+		fi
+		[ -x /usr/bin/php ] || die "/usr/bin/php does not run. apk info -L $(alpine_php) shows what was installed."
 		;;
 	*)
 		die "no PHP packages for this system"

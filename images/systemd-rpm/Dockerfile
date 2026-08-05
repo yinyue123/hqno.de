@@ -3,6 +3,25 @@
 # AlmaLinux, Rocky, CentOS Stream, CentOS 7 and Fedora — the release is the
 # BASE build-arg, and .github/workflows/images.yml is the list.
 ARG BASE=almalinux:9
+
+# app-setup, the software manager a holder gets by typing `app-setup`. It is
+# compiled here rather than committed as a binary, and compiled against musl in
+# an Alpine stage rather than against this image's own libc, because one
+# `cc -static` then produces a binary with no interpreter and no NSS lookups
+# that runs unchanged on CentOS 7, AlmaLinux 10 and Alpine alike. It also keeps
+# a compiler out of twenty shipped images, and off CentOS 7 in particular,
+# where installing one now means talking to vault.centos.org.
+#
+# The stage inherits the *target* platform, so an arm64 build produces an arm64
+# binary under emulation. It is one file, so that costs seconds.
+#
+# The build context is images/, not this directory: three Dockerfiles share the
+# one app-setup tree. See .github/workflows/images.yml.
+FROM alpine:3 AS app-setup-build
+RUN apk add --no-cache gcc musl-dev
+COPY app-setup/app-setup.c /app-setup.c
+RUN cc -static -O2 -s -o /app-setup /app-setup.c && /app-setup --version
+
 FROM ${BASE}
 
 # curl is deliberately absent: these bases ship curl-minimal, and asking for
@@ -74,6 +93,45 @@ RUN systemctl mask systemd-udevd.service systemd-udevd-kernel.socket \
 # Disabled rather than masked, so a holder who does want a listening sshd on a
 # port they own gets it with one command: `systemctl enable --now sshd`.
 RUN systemctl disable sshd.service sshd.socket
+
+# The software manager. Three parts, and the split is the point: the binary
+# knows nothing about nginx, and adding software is dropping a file into
+# /etc/app-setup rather than rebuilding anything.
+#
+#   /bin/app-setup              the picker
+#   /usr/lib/app-setup/         the helpers every recipe sources
+#   /etc/app-setup/*.sh         one file per package — a holder may edit these,
+#                               and their own go here too
+#
+# Last, and in its own layer, because a wording fix in one recipe should not
+# invalidate the package installs above it.
+COPY --from=app-setup-build /app-setup /bin/app-setup
+COPY app-setup/lib/     /usr/lib/app-setup/
+COPY app-setup/recipes/ /etc/app-setup/
+RUN set -eux; \
+    chmod 0755 /bin/app-setup /etc/app-setup/*.sh; \
+    chmod 0644 /usr/lib/app-setup/*.sh; \
+    mkdir -p /var/log/app-setup /var/lib/app-setup; \
+    app-setup doctor >/dev/null
+
+# How anybody finds out it exists. The gateway starts a login shell, so
+# /etc/profile.d is read on every interactive login — and only on interactive
+# ones, which is what the $- test is for: a line printed here would otherwise
+# land in the middle of an `ssh host command` and corrupt whatever is reading
+# it.
+RUN printf '%s\n' \
+      '# One line, so somebody who has just been handed a container knows what' \
+      '# to type. Delete this file if you would rather it stayed quiet.' \
+      'case $- in' \
+      '  *i*)' \
+      '    case "${LANG-}${LC_ALL-}" in' \
+      '      zh*|*zh_CN*) printf "\033[2m输入 \033[0m\033[1mapp-setup\033[0m\033[2m 安装软件（LNMP、WordPress、数据库、开发环境）\033[0m\n" ;;' \
+      '      *)           printf "\033[2mType \033[0m\033[1mapp-setup\033[0m\033[2m to install software — web servers, databases, WordPress, dev tools.\033[0m\n" ;;' \
+      '    esac' \
+      '    ;;' \
+      'esac' \
+      > /etc/profile.d/app-setup.sh; \
+    chmod 0644 /etc/profile.d/app-setup.sh
 
 # /data is the one path that survives a reinstall (frame.md §7.1). Shipping the
 # mountpoint and a README in the image is what makes the panel's reinstall

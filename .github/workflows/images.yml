@@ -64,7 +64,13 @@ jobs:
         with:
           # The recipe names the directory, because they are no longer all
           # systemd: Alpine boots OpenRC under busybox init from its own.
-          context: images/${{ matrix.system.recipe }}
+          #
+          # The context is images/ rather than that directory, because all
+          # three recipes COPY the same app-setup tree — the software manager,
+          # its helper library and the one script per package — and a context
+          # cannot reach above itself.
+          context: images
+          file: images/${{ matrix.system.recipe }}/Dockerfile
           build-args: BASE=${{ matrix.system.base }}
           platforms: ${{ matrix.system.platforms }}
           push: true

@@ -35,10 +35,18 @@ do_install() {
 	[ -e /usr/bin/python ] || ln -sf "$(command -v python3)" /usr/bin/python 2>/dev/null || true
 
 	ok "$(version_line)"
-	if python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)' 2>/dev/null &&
-	   [ -f /usr/lib/python3*/EXTERNALLY-MANAGED ] 2>/dev/null; then
+	# PEP 668. The marker file is what makes `pip install` outside a venv
+	# refuse, and telling somebody that now is much kinder than letting them
+	# meet "error: externally-managed-environment" on their own.
+	#
+	# The glob has to be walked rather than tested: `[ -f /usr/lib/python3*/X ]`
+	# is a syntax error the moment two Python versions are installed, because
+	# the shell expands it into two arguments before `[` ever runs.
+	for _m in /usr/lib/python3*/EXTERNALLY-MANAGED /usr/lib/python3/EXTERNALLY-MANAGED; do
+		[ -f "$_m" ] || continue
 		info "this Python refuses system-wide pip installs; use a venv — see the docs button"
-	fi
+		break
+	done
 }
 
 do_uninstall() {

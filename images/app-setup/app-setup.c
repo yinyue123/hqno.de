@@ -844,10 +844,24 @@ static void grid_clear(void)
 	}
 }
 
+/* Rows outside this band are dropped. Cards scroll, so the one at the bottom
+ * of the list is usually half off the viewport — and drawing all of it would
+ * put its lower border and its last row of buttons on top of the footer.
+ * Clipping here rather than refusing to draw the card is what keeps a partly
+ * visible card partly visible. -1 means no clipping, which is every caller
+ * outside the card loop. Bounds are inclusive. */
+static int g_clip_top = -1, g_clip_bot = -1;
+
+static int row_visible(int row)
+{
+	return g_clip_top < 0 || (row >= g_clip_top && row <= g_clip_bot);
+}
+
 /* Writes up to `maxw` columns and returns how many it used. */
 static int gput(int row, int col, const char *s, int attr, int maxw)
 {
 	if (row < 0 || row >= g_gh) return 0;
+	if (!row_visible(row)) return 0;
 	int used = 0;
 	unsigned int c;
 	while (*s && used < maxw) {
@@ -1330,7 +1344,9 @@ static void draw_card(int row, int col, Pkg *p, int selected)
 		gput(br, x + bx + 2, " ", attr, 1);
 		int lw = gput(br, x + bx + 3, b[i].label, attr, inner - bx - 4);
 		gput(br, x + bx + 3 + lw, "]", attr, 1);
-		if (g_nhits < (int)(sizeof g_hits / sizeof g_hits[0])) {
+		/* A button scrolled off the bottom is not clickable. Without this a
+		 * click on the footer would press whatever the clipped row held. */
+		if (row_visible(br) && g_nhits < (int)(sizeof g_hits / sizeof g_hits[0])) {
 			g_hits[g_nhits].row = br; g_hits[g_nhits].col = x + bx;
 			g_hits[g_nhits].w = w; g_hits[g_nhits].act = b[i].act;
 			g_hits[g_nhits].arg = (int)(p - g_pkg);
@@ -1449,6 +1465,8 @@ static void render(void)
 	if (g_scroll > maxscroll) g_scroll = maxscroll;
 	if (g_scroll < 0) g_scroll = 0;
 
+	g_clip_top = g_top;
+	g_clip_bot = g_top + g_viewh - 1;
 	for (int i = 0; i < g_nview; i++) {
 		int r = (i / g_cols) * pitch - g_scroll;
 		int c = 1 + (i % g_cols) * (g_cardw + GAP);
@@ -1461,6 +1479,7 @@ static void render(void)
 			g_nhits++;
 		}
 	}
+	g_clip_top = g_clip_bot = -1;
 
 	if (maxscroll > 0) {
 		char sb[32];
@@ -1885,10 +1904,18 @@ static int cli_status(int argc, char **argv)
 	int rc = 0;
 	for (int i = 0; i < argc; i++) {
 		Pkg *p = find_pkg(argv[i]);
-		if (!p) { fprintf(stderr, "app-setup: no such software: %s\n", argv[i]); rc = 1; continue; }
+		if (!p) { fprintf(stderr, "app-setup: no such software: %s\n", argv[i]); rc = 4; continue; }
 		probe_pkg(p);
 		printf("%s %s%s%s\n", p->id, state_word(p), p->detail[0] ? " — " : "", p->detail);
-		if (p->status == ST_ABSENT) rc = rc ? rc : 2;
+		/* The same four codes a recipe's own `status` verb returns, so that
+		 * `app-setup status nginx` and `sh /etc/app-setup/nginx.sh status`
+		 * can be used interchangeably in a script. Asked about several at
+		 * once, the worst one wins — a caller checking "is all of this up"
+		 * wants a non-zero exit if any of it is not. */
+		int one = p->status == ST_RUNNING || p->status == ST_INSTALLED ? 0 :
+		          p->status == ST_STOPPED ? 1 :
+		          p->status == ST_ABSENT  ? 2 : 3;
+		if (one > rc) rc = one;
 	}
 	return rc;
 }
@@ -1927,7 +1954,8 @@ static void usage(FILE *f)
 	  "  app-setup                    the full-screen picker (this is the one you want)\n"
 	  "  app-setup list [category]    everything, or one of: stack web db dev system\n"
 	  "  app-setup info <id>          one package in detail\n"
-	  "  app-setup status [id...]     state only; exit 2 when absent\n"
+	  "  app-setup status [id...]     state only. Exit: 0 running, 1 stopped,\n"
+	  "                               2 not installed, 3 broken, 4 no such id\n"
 	  "  app-setup install <id>...\n"
 	  "  app-setup remove <id>...\n"
 	  "  app-setup start|stop|restart <id>...\n"
@@ -2037,12 +2065,15 @@ int main(int argc, char **argv)
 		draw_nav();
 		draw_footer();
 		int pitch = g_cardh + 1;
+		g_clip_top = g_top;
+		g_clip_bot = g_top + g_viewh - 1;
 		for (int i = 0; i < g_nview; i++) {
 			int r = (i / g_cols) * pitch;
 			int c = 1 + (i % g_cols) * (g_cardw + GAP);
 			if (r >= g_viewh) break;
 			draw_card(g_top + r, c, &g_pkg[g_view[i]], i == g_sel);
 		}
+		g_clip_top = g_clip_bot = -1;
 		grid_dump(stdout);
 		printf("\n[%d columns, card %d wide, %d of %d shown]\n",
 		       g_cols, g_cardw, g_nview, g_npkg);

@@ -117,11 +117,40 @@ step.
   CentOS 7, Ubuntu 16.04 and 18.04 are amd64-only on purpose: their arm64
   packages live on ports mirrors that have moved more than once.
 
+## app-setup — the software manager every image carries
+
+[`app-setup/`](app-setup/) is the fourth thing in this directory and it is not
+a recipe: it is one C file, a shell library and one script per package, and all
+three image recipes install the same copy.
+
+```
+app-setup/app-setup.c     the picker. C with libc only, so it links static
+app-setup/lib/common.sh   what a recipe sources: pkg_install, svc_start, pmv…
+app-setup/recipes/*.sh    one file per package — nginx, LNMP, WordPress, vim…
+```
+
+Each Dockerfile compiles it in an `alpine:3` stage against musl, which is what
+makes one binary run on CentOS 7 and Alpine 3.24 alike, and then copies it to
+`/bin/app-setup`, `/usr/lib/app-setup/` and `/etc/app-setup/`. The build runs
+`app-setup doctor`, so a recipe with a broken header fails the image build
+rather than shipping.
+
+**This is why the build context is `images/` and not the recipe directory** — a
+context cannot reach above itself, and all three recipes need this tree.
+
+Adding software to the menu is adding one file to `app-setup/recipes/`; the
+contract is [docs/app-setup-sources.md](../docs/app-setup-sources.md), and the
+design and test plan are in [the product repo](https://github.com/yinyue123/hqnode/blob/main/docs/app-setup.md).
+
 ## Building one by hand
 
+Note the context: `images/`, with `-f` naming the recipe.
+
 ```sh
-podman build --build-arg BASE=debian:13-slim -t hqnode:debian-13 systemd-deb
-podman build --build-arg BASE=almalinux:9    -t hqnode:almalinux-9 systemd-rpm
+cd images
+podman build --build-arg BASE=debian:13-slim -f systemd-deb/Dockerfile    -t hqnode:debian-13 .
+podman build --build-arg BASE=almalinux:9    -f systemd-rpm/Dockerfile    -t hqnode:almalinux-9 .
+podman build --build-arg BASE=alpine:3.24    -f openrc-alpine/Dockerfile  -t hqnode:alpine-3.24 .
 ```
 
 ## catalog.json — how a panel learns about all this

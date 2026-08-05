@@ -6,6 +6,7 @@ how to get in, what the limits do when they are reached, and what expiry and
 reinstall actually take away.
 
 - [Using your container](using-your-container.md)
+- [Adding your own software to app-setup](docs/app-setup-sources.md)
 
 It also builds and publishes the system images a container is installed from —
 one public package, `ghcr.io/yinyue123/hqnode`, one tag per system. See

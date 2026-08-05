@@ -83,6 +83,55 @@ systemd is PID 1. `systemctl reboot` works and restarts the container in
 place. If it is wedged badly enough that you cannot reach it at all, use
 **Restart** in the panel, which does the same thing from outside.
 
+### Installing software without reading four blog posts
+
+Type `app-setup`.
+
+```
+ ┌──────────────────────────────────────┐  ┌──────────────────────────────────────┐
+ │ LNMP                    · installed  │  │ WordPress               · running     │
+ │ nginx, MariaDB, PHP-FPM              │  │ WordPress, nginx, PHP-FPM, MariaDB   │
+ │ Nginx + MariaDB + PHP, installed and │  │ The blog and site software four sites│
+ │ wired together.                      │  │ in ten run on.                       │
+ │ Disk 600M RAM 768M Port 80, 3306     │  │ Disk 800M RAM 768M Port 80           │
+ │ [i Install] [x Remove] [s Start]     │  │ [i Install] [x Remove] [s Stop]      │
+ │ [b ✓Boot] [d Docs]                   │  │ [b ✓Boot] [d Docs]                   │
+ └──────────────────────────────────────┘  └──────────────────────────────────────┘
+```
+
+A full-screen picker, arranged in five tabs — Suites, Web servers, Databases,
+Dev tools, System. Arrow keys move, `i` installs, `x` removes, `s` starts or
+stops, `b` toggles whether it comes back at boot, `d` opens that package's own
+documentation, `/` searches, `L` switches between English and 中文, `q` quits.
+The mouse works too.
+
+Each card says how much disk and memory the thing needs, **and turns that line
+red when this container is too small for it** — which is the number nobody
+tells you before an install dies four minutes in.
+
+It works from the command line as well, which is what you want in a script:
+
+```sh
+app-setup list                # everything, with sizes and current state
+app-setup install lnmp        # nginx + MariaDB + PHP, wired together
+app-setup install wordpress   # ...and WordPress on top of it, database and all
+app-setup docs wordpress      # what that recipe knows about itself
+app-setup status nginx        # exit 0 running, 1 stopped, 2 not installed
+```
+
+It installs your distribution's own packages into your distribution's own
+paths. Nothing here is a private build, so the next set of instructions you
+read still applies, and security updates arrive through `apt` or `dnf` the
+usual way. Generated passwords go to `/root/.app-setup/`, mode 600, rather than
+scrolling past in the install log.
+
+Uninstalling never deletes your data. Removing WordPress drops its database and
+its files but moves your uploads to `/root/` first, and says so.
+
+Adding your own software to the menu is writing one shell script and dropping
+it into `/etc/app-setup/` — see
+[adding your own software](docs/app-setup-sources.md).
+
 **`/data` is the part that survives.** Everything else is the image plus your
 changes to it, and a reinstall replaces exactly that. Databases, uploads,
 anything you would be upset to lose: put it under `/data` and point your

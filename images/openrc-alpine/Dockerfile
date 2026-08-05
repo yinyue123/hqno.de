@@ -8,6 +8,24 @@
 # MB of RSS against ~40 for a systemd one, which on an oversold host is the
 # difference between twelve tenants and thirty.
 ARG BASE=alpine:3.24
+
+# app-setup, the software manager a holder gets by typing `app-setup`. It is
+# compiled here rather than committed as a binary. The stage is a fixed
+# alpine:3 rather than ${BASE} so that this block is byte-identical in all
+# three image recipes — the binary it produces is static and has no libc to
+# match, so building it against the release we are about to ship would buy
+# nothing and would mean three subtly different Dockerfiles.
+#
+# The stage inherits the *target* platform, so an arm64 build produces an arm64
+# binary under emulation. It is one file, so that costs seconds.
+#
+# The build context is images/, not this directory: three Dockerfiles share the
+# one app-setup tree. See .github/workflows/images.yml.
+FROM alpine:3 AS app-setup-build
+RUN apk add --no-cache gcc musl-dev
+COPY app-setup/app-setup.c /app-setup.c
+RUN cc -static -O2 -s -o /app-setup /app-setup.c && /app-setup --version
+
 FROM ${BASE}
 
 # What the agent actually requires of an image is short: an entrypoint, a
@@ -106,6 +124,44 @@ RUN set -eux; \
       > /etc/init.d/hqnode-package-index; \
     chmod +x /etc/init.d/hqnode-package-index; \
     rc-update add hqnode-package-index default
+
+# The software manager. Three parts, and the split is the point: the binary
+# knows nothing about nginx, and adding software is dropping a file into
+# /etc/app-setup rather than rebuilding anything.
+#
+#   /bin/app-setup              the picker
+#   /usr/lib/app-setup/         the helpers every recipe sources
+#   /etc/app-setup/*.sh         one file per package — a holder may edit these,
+#                               and their own go here too
+#
+# Last, and in its own layer, because a wording fix in one recipe should not
+# invalidate the package installs above it.
+COPY --from=app-setup-build /app-setup /bin/app-setup
+COPY app-setup/lib/     /usr/lib/app-setup/
+COPY app-setup/recipes/ /etc/app-setup/
+RUN set -eux; \
+    chmod 0755 /bin/app-setup /etc/app-setup/*.sh; \
+    chmod 0644 /usr/lib/app-setup/*.sh; \
+    mkdir -p /var/log/app-setup /var/lib/app-setup; \
+    app-setup doctor >/dev/null
+
+# How anybody finds out it exists. The gateway starts a login shell, and
+# Alpine's /etc/profile sources /etc/profile.d/*.sh the same way Debian's does.
+# The $- test keeps the line off non-interactive sessions, where it would land
+# in the middle of an `ssh host command` and corrupt whatever is reading it.
+RUN mkdir -p /etc/profile.d && printf '%s\n' \
+      '# One line, so somebody who has just been handed a container knows what' \
+      '# to type. Delete this file if you would rather it stayed quiet.' \
+      'case $- in' \
+      '  *i*)' \
+      '    case "${LANG-}${LC_ALL-}" in' \
+      '      zh*|*zh_CN*) printf "\033[2m输入 \033[0m\033[1mapp-setup\033[0m\033[2m 安装软件（LNMP、WordPress、数据库、开发环境）\033[0m\n" ;;' \
+      '      *)           printf "\033[2mType \033[0m\033[1mapp-setup\033[0m\033[2m to install software — web servers, databases, WordPress, dev tools.\033[0m\n" ;;' \
+      '    esac' \
+      '    ;;' \
+      'esac' \
+      > /etc/profile.d/app-setup.sh; \
+    chmod 0644 /etc/profile.d/app-setup.sh
 
 # /data is the one path that survives a reinstall (frame.md §7.1). Shipping the
 # mountpoint and a README in the image is what makes the panel's reinstall
