@@ -1,0 +1,173 @@
+#!/bin/sh
+# app-setup: 1
+# id: lamp
+# name: LAMP
+# name.zh: LAMP 一键环境
+# category: stack
+# order: 2
+# summary: Apache + MariaDB + PHP. Pick this over LNMP when your software needs .htaccess.
+# summary.zh: Apache + MariaDB + PHP。软件需要 .htaccess 的时候选这个，不选 LNMP。
+# includes: apache with mod_rewrite, MariaDB, PHP, a working default site
+# includes.zh: 带 mod_rewrite 的 Apache、MariaDB、PHP，以及可用的默认站点
+# disk: 620M
+# memory: 768M
+# ports: 80, 3306
+# service: apache2
+. /usr/lib/app-setup/common.sh
+
+SERVICE="apache2"
+SERVICE_rpm="httpd"
+
+version_line() {
+	_php="$(php -r 'echo PHP_VERSION;' 2>/dev/null || echo '?')"
+	printf 'Apache + PHP %s + MariaDB' "$_php"
+}
+
+is_installed() {
+	{ have apache2 || have httpd; } || return 1
+	have php || return 1
+	have mysqld || have mariadbd || [ -x /usr/libexec/mysqld ] || return 1
+	return 0
+}
+
+do_install() {
+	if have nginx && svc_running nginx; then
+		warn "nginx is running and holds port 80. Apache will not start until it stops."
+		warn "Stop nginx first, or install the 'lnmp' suite instead of this one."
+	fi
+
+	recipe apache install
+	recipe mysql  install
+	recipe php    install
+
+	# Apache runs PHP through its own module or through php-fpm; which one
+	# depends on the distro, and getting the wrong one is a page that offers
+	# to download the .php file instead of running it.
+	step "connecting Apache to PHP"
+	case "$PMF" in
+	deb)
+		pkg_install_optional libapache2-mod-php php-fpm libapache2-mod-fcgid
+		if a2enconf "php$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null)-fpm" >/dev/null 2>&1; then
+			a2enmod proxy_fcgi setenvif >/dev/null 2>&1 || true
+		fi
+		a2enmod rewrite >/dev/null 2>&1 || true
+		;;
+	rpm)
+		# The php package on the RPM images already drops a conf file into
+		# /etc/httpd/conf.d that hands .php to php-fpm over a socket.
+		pkg_install_optional php
+		;;
+	apk)
+		_p="$(apk info 2>/dev/null | grep -m1 -oE '^php[0-9]+')"
+		[ -n "$_p" ] && pkg_install_optional "${_p}-apache2"
+		sed -i 's|^#LoadModule rewrite_module|LoadModule rewrite_module|' /etc/apache2/httpd.conf 2>/dev/null || true
+		;;
+	esac
+
+	rm -f "$WEBROOT/index.html"
+	cat > "$WEBROOT/index.php" <<'EOF'
+<?php ?><!doctype html>
+<meta charset="utf-8">
+<title>LAMP is running</title>
+<style>body{font:16px/1.7 system-ui,sans-serif;max-width:36rem;margin:12vh auto;padding:0 1rem}
+code{background:#f4f4f5;padding:.1em .35em;border-radius:3px}</style>
+<h1>LAMP is running</h1>
+<ul>
+  <li>Apache is serving this page</li>
+  <li>PHP <?= PHP_VERSION ?> rendered it</li>
+  <li>.htaccess is enabled for this directory</li>
+</ul>
+<p>This file is <code><?= __FILE__ ?></code>. Replace it with your site.</p>
+<p>Your database password is in <code>/root/.app-setup/mysql.txt</code>.</p>
+EOF
+	chown -R "$(web_user)":"$(web_group)" "$WEBROOT" 2>/dev/null || true
+
+	svc_restart "$(svc)" || die "apache would not restart after adding PHP"
+	ok "LAMP is up"
+	info "check it: curl http://127.0.0.1/"
+	show_note mysql
+}
+
+do_uninstall() {
+	warn "removing Apache, PHP and MariaDB. Databases and $WEBROOT stay."
+	recipe php    uninstall
+	recipe mysql  uninstall
+	recipe apache uninstall
+	rm -f "$WEBROOT/index.php"
+}
+
+do_start()   { svc_start "$(svc)" || true; svc_start "$(php_service)" 2>/dev/null || true; svc_start mariadb || true; ok "started"; }
+do_stop()    { svc_stop "$(svc)"; svc_stop "$(php_service)" 2>/dev/null || true; svc_stop mariadb; ok "stopped"; }
+do_enable()  { svc_enable "$(svc)"; svc_enable mariadb; ok "Apache and MariaDB start at boot"; }
+do_disable() { svc_disable "$(svc)"; svc_disable mariadb; ok "neither starts at boot"; }
+
+do_status() {
+	is_installed || exit 2
+	_up=0
+	_down=""
+	if svc_running "$(svc)"; then _up=$((_up + 1)); else _down="$_down apache"; fi
+	if svc_running mariadb;  then _up=$((_up + 1)); else _down="$_down mariadb"; fi
+
+	if [ "$_up" = 2 ]; then echo "detail=Apache + PHP + MariaDB, all running"
+	else                    echo "detail=down:$_down"; fi
+	if svc_enabled "$(svc)"; then echo "enabled=1"; else echo "enabled=0"; fi
+
+	[ "$_up" = 2 ] && exit 0
+	[ "$_up" = 0 ] && exit 1
+	exit 3
+}
+
+do_help() { cat <<'EOF'
+LAMP — Linux, Apache, MariaDB, PHP
+
+  Why this and not LNMP
+    One reason: .htaccess. A great deal of older PHP software ships its URL
+    rewriting rules in .htaccess files and has no nginx equivalent. If your
+    software's install instructions mention .htaccess, use this. Otherwise
+    LNMP is lighter and faster.
+
+  What you have now
+    Apache   serving /var/www/html on port 80, mod_rewrite on,
+             AllowOverride All so .htaccess works
+    PHP      through the Apache module or php-fpm, depending on the distro
+    MariaDB  on 127.0.0.1:3306, password in /root/.app-setup/mysql.txt
+
+  Names, by distro
+    Debian, Ubuntu, Alpine      the service is apache2
+    AlmaLinux, Rocky, CentOS    the service is httpd
+
+  After editing any config
+    apachectl configtest
+    systemctl reload apache2        (or httpd, or rc-service apache2 reload)
+
+  A second site (Debian and Ubuntu)
+    /etc/apache2/sites-available/shop.conf:
+
+      <VirtualHost *:80>
+          ServerName shop.example.com
+          DocumentRoot /var/www/shop
+          <Directory /var/www/shop>
+              AllowOverride All
+              Require all granted
+          </Directory>
+      </VirtualHost>
+
+    a2ensite shop && systemctl reload apache2
+    On AlmaLinux drop the same block into /etc/httpd/conf.d/shop.conf.
+
+  It cannot start
+    Almost always port 80 is taken by nginx. One of them has to go:
+      ss -ltnp | grep :80
+      systemctl stop nginx && systemctl disable nginx
+
+  The .php file downloads instead of running
+    PHP is not connected to Apache. Run this install again — it is the step
+    it exists to get right.
+
+  Small containers
+    Apache's prefork worker uses noticeably more memory than php-fpm behind
+    nginx. Under 512MB, prefer LNMP.
+EOF
+}
+
+app_main "$@"
