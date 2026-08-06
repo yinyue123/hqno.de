@@ -32,6 +32,7 @@ do_install() {
 	if [ ! -f "$WEBROOT/index.html" ] && [ ! -f "$WEBROOT/index.php" ]; then
 		cat > "$WEBROOT/index.html" <<EOF
 <!doctype html>
+<!-- app-setup placeholder -->
 <meta charset="utf-8">
 <title>nginx is running</title>
 <style>body{font:16px/1.6 system-ui,sans-serif;max-width:34rem;margin:15vh auto;padding:0 1rem}
