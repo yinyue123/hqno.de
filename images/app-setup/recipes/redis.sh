@@ -45,8 +45,20 @@ do_install() {
 		# An open Redis with no password is the single most reliably exploited
 		# thing on the internet: it will write an SSH key into your
 		# authorized_keys through the CONFIG SET trick within hours.
-		sed -i 's/^[[:space:]]*bind .*/bind 127.0.0.1 -::1/' "$_conf"
-		grep -q '^bind ' "$_conf" || echo 'bind 127.0.0.1 -::1' >> "$_conf"
+		# `bind 127.0.0.1 -::1` — the leading dash meaning "bind this as well,
+		# but do not refuse to start if it is unavailable" — arrived in Redis
+		# 6.2. Ubuntu 22.04 and Debian 11 ship 6.0, where the dash is not
+		# special: redis looks for a host literally called `-::1`, cannot find
+		# it, and exits. The whole install failed on those, which is a large
+		# part of the apt fleet.
+		#
+		#   Could not create server TCP listening socket -::1:6379:
+		#   Name or service not known
+		_rv="$(redis-server --version 2>/dev/null | sed 's/.*v=//;s/ .*//')"
+		if version_ge "${_rv:-0}" 6.2; then _bind='bind 127.0.0.1 -::1'
+		else                                _bind='bind 127.0.0.1'; fi
+		sed -i "s/^[[:space:]]*bind .*/$_bind/" "$_conf"
+		grep -q '^bind ' "$_conf" || echo "$_bind" >> "$_conf"
 		sed -i 's/^[[:space:]]*protected-mode .*/protected-mode yes/' "$_conf"
 
 		if ! grep -q '^requirepass ' "$_conf"; then

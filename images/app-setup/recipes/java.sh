@@ -30,11 +30,21 @@ do_install() {
 }
 
 do_uninstall() {
+	local _p
 	case "$PMF" in
-		deb) pkg_remove "$(dpkg-query -W -f='${Package}\n' 'openjdk-*-jdk-headless' 2>/dev/null | head -1)" ;;
-		rpm) pkg_remove "$(rpm -qa 'java-*-openjdk-devel' | head -1)" ;;
-		apk) pkg_remove "$(apk info 2>/dev/null | grep -m1 '^openjdk')" ;;
+		# `dpkg-query -W 'glob'` lists every package the database *knows*,
+		# installed or not, so `| head -1` picked openjdk-11-jdk-headless —
+		# which was not installed — while the openjdk-21 this recipe actually
+		# put on the machine stayed. The remove reported success and Java was
+		# still there. Filter by status, and take all of them: "remove Java"
+		# does not mean "remove one of the two Javas".
+		deb) _p="$(dpkg-query -W -f='${Package} ${Status}\n' 'openjdk-*-jdk-headless' 2>/dev/null |
+		           awk '/ok installed/{print $1}')" ;;
+		rpm) _p="$(rpm -qa 'java-*-openjdk-devel' 2>/dev/null)" ;;
+		apk) _p="$(apk info 2>/dev/null | grep '^openjdk')" ;;
 	esac
+	[ -n "$_p" ] || { info "no JDK installed by app-setup was found"; return 0; }
+	pkg_remove $_p
 }
 
 do_help() { cat <<'EOF'

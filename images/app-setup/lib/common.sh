@@ -767,6 +767,26 @@ server {
 EOF
 }
 
+# version_ge <have> <want> — true when <have> is at least <want>.
+#
+# Compares dotted numbers field by field, so 6.10 is correctly newer than 6.9
+# (a string compare says otherwise, and that is the trap). Non-numeric tails
+# like "6.0.16-1ubuntu1" are cut at the first field that is not a number.
+version_ge() {
+	local _h _w _hp _wp
+	_h="$1"; _w="$2"
+	while [ -n "$_h" ] || [ -n "$_w" ]; do
+		_hp="${_h%%.*}"; _wp="${_w%%.*}"
+		_hp="$(printf '%s' "${_hp:-0}" | tr -cd '0-9')"
+		_wp="$(printf '%s' "${_wp:-0}" | tr -cd '0-9')"
+		[ "${_hp:-0}" -gt "${_wp:-0}" ] && return 0
+		[ "${_hp:-0}" -lt "${_wp:-0}" ] && return 1
+		case "$_h" in *.*) _h="${_h#*.}" ;; *) _h="" ;; esac
+		case "$_w" in *.*) _w="${_w#*.}" ;; *) _w="" ;; esac
+	done
+	return 0
+}
+
 # --------------------------------------------------- the placeholder page --
 # Every web recipe drops a "it works" page into an empty document root, and
 # takes it away again on uninstall. Both halves were unconditional: `install

@@ -92,7 +92,16 @@ EOF
 do_uninstall() {
 	svc_stop "$(svc)"
 	svc_disable "$(svc)"
-	pkg_remove $(pmv PKGS)
+	# On Debian and Ubuntu `postgresql` and `postgresql-client` are version
+	# meta-packages: purging them leaves postgresql-14 — the actual server and
+	# the actual psql — installed and the card still reading "installed". Take
+	# the versioned packages the meta-package pulled in as well.
+	case "$PMF" in
+		deb) pkg_remove $(pmv PKGS) $(dpkg-query -W -f='${Package} ${Status}\n' \
+		         'postgresql-[0-9]*' 'postgresql-client-[0-9]*' 2>/dev/null |
+		         awk '/ok installed/{print $1}') ;;
+		*)   pkg_remove $(pmv PKGS) ;;
+	esac
 	drop_note postgresql
 	warn "the data directory was NOT deleted — your databases are still there."
 	warn "Remove it yourself if you mean it:  rm -rf /var/lib/postgresql /var/lib/pgsql"
