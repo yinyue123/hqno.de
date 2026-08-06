@@ -16,7 +16,15 @@
 CHECK_BIN="python3"
 
 version_line() {
-	printf '%s, pip %s' "$(python3 -V 2>&1)" "$(python3 -m pip --version 2>/dev/null | cut -d' ' -f2 || echo '-')"
+	local _py _pip
+	_py="$(python3 -V 2>&1)"
+	# `... | cut -f2 || echo -` is a fallback that can never fire: when pip is
+	# missing the pipeline's *last* command is cut, which succeeds on empty
+	# input and exits 0. The card read "Python 3.9.25, pip" on a machine where
+	# `remove python` had just taken pip away. Test the value, not the pipe.
+	_pip="$(python3 -m pip --version 2>/dev/null | cut -d' ' -f2)"
+	if [ -n "$_pip" ]; then printf '%s, pip %s' "$_py" "$_pip"
+	else                    printf '%s, no pip' "$_py"; fi
 }
 
 do_install() {
