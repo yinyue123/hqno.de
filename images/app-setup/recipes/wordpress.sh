@@ -29,6 +29,8 @@ version_line() {
 is_installed() { [ -f "$WP_ROOT/wp-config.php" ] || [ -f "$WP_ROOT/wp-load.php" ]; }
 
 do_install() {
+	web_claim_default wordpress
+
 	if [ "$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')" -lt 700 ] 2>/dev/null; then
 		warn "under 700MB of memory here. WordPress runs, but MariaDB will be the"
 		warn "first thing killed under load — the docs button has the small-box settings."

@@ -33,6 +33,8 @@ version_line() {
 is_installed() { [ -f "$TY_ROOT/install.php" ] || [ -f "$TY_ROOT/config.inc.php" ]; }
 
 do_install() {
+	web_claim_default typecho
+
 	recipe_ensure nginx
 	recipe_ensure php
 

@@ -45,6 +45,8 @@ version_line() {
 is_installed() { [ -f "$NC_ROOT/occ" ]; }
 
 do_install() {
+	web_claim_default nextcloud
+
 	_mem="$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')"
 	if [ "${_mem:-9999}" -lt 900 ] 2>/dev/null; then
 		warn "this machine has ${_mem}MB of memory. Nextcloud plus MariaDB wants about 1GB;"

@@ -649,6 +649,38 @@ nginx_conf_dir() {
 # Every distro ships a default server on port 80, and a second one is either a
 # duplicate-default error or a conflicting-server-name warning. Take the
 # shipped one out of the way before writing ours.
+# web_claim_default <my-id> — refuse if another suite already holds port 80.
+#
+# WordPress, Typecho and Nextcloud each write app-setup-<id>.conf with
+# `listen 80 default_server`, and each clears the distro's default site and the
+# generic LNMP one before doing it. None of them looked for a *sibling*. nginx
+# allows exactly one default server per address, so installing a second suite
+# produced `a duplicate default server for 0.0.0.0:80` and the reload failed —
+# at the very end, after a 280MB download and a completed database install, with
+# the new site on disk and nothing serving it.
+#
+# Refuse at the top of do_install instead, and say who has the address. Evicting
+# somebody's WordPress to make room would be worse than not installing.
+web_claim_default() {
+	local _me _f _other _ids
+	_me="$1"
+	_ids=""
+	for _f in "$(nginx_conf_dir)"/app-setup-*.conf; do
+		[ -f "$_f" ] || continue
+		_other="${_f##*/app-setup-}"; _other="${_other%.conf}"
+		[ "$_other" = "$_me" ] && continue
+		grep -q 'default_server' "$_f" 2>/dev/null || continue
+		_ids="$_ids $_other"
+	done
+	[ -n "$_ids" ] || return 0
+	err "another site is already serving this container's address:$_ids"
+	err "nginx allows one default site on port 80, so $_me cannot take it too."
+	err "Remove the other one first, then install this:"
+	for _other in $_ids; do err "  app-setup remove $_other"; done
+	err "Nothing was downloaded or changed."
+	exit 1
+}
+
 nginx_drop_default() {
 	rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
 	rm -f "$(nginx_conf_dir)/default.conf" 2>/dev/null || true
