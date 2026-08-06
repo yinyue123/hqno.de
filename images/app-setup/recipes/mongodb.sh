@@ -68,6 +68,60 @@ deb_codename() {
 	esac
 }
 
+MARK='# --- app-setup sizing ---'
+
+# WiredTiger's cache defaults to half of RAM minus 1GB, or 256MB, whichever is
+# larger — so on any machine under about 2.5G the default *is* 256MB, and that
+# is already a floor MongoDB will not go below: cacheSizeGB has a documented
+# minimum of 0.25. There is no configuration that makes MongoDB small.
+#
+# What this can do is stop it reading the *host's* RAM and sizing the cache
+# for a machine it is not running on — inside a container without lxcfs,
+# "half of RAM" is half of the host's, which is how mongod ends up asking for
+# 8GB on a box that has 512MB. Pinning the number is the whole fix.
+mongo_tune() {
+	local _conf _gb
+	_conf=/etc/mongod.conf
+	[ -f "$_conf" ] || return 0
+	backup_once "$_conf"
+
+	if grep -qF "$MARK" "$_conf" 2>/dev/null; then
+		if awk -v m="$MARK" 'index($0, m) { exit } { print }' "$_conf" > "$_conf.new"; then
+			mv -f "$_conf.new" "$_conf"
+		else
+			rm -f "$_conf.new"
+			warn "could not rewrite $_conf; leaving MongoDB's own settings alone"
+			return 0
+		fi
+	fi
+	[ "$(mem_profile)" = normal ] && return 0
+
+	# A quarter of the machine, but never under the 0.25GB MongoDB enforces.
+	# Below about 1G that floor is larger than the share, and MongoDB is
+	# simply the wrong database for the box — which the recipe's declared
+	# `memory: 1G` already says, and the panel warns about before we get here.
+	_gb="$(awk -v m="$(mem_total_mb)" 'BEGIN{ v = m/4/1024; if (v < 0.25) v = 0.25; printf "%.2f", v }')"
+
+	step "pinning WiredTiger's cache to ${_gb}G for a $(mem_total_mb)MB machine"
+	cat >> "$_conf" <<EOF
+$MARK
+$(tuning_header)
+# Written as an explicit number because the default is computed from what
+# MongoDB believes the machine's RAM to be, and in a container without lxcfs
+# that is the host's RAM rather than this container's limit.
+storage:
+  wiredTiger:
+    engineConfig:
+      cacheSizeGB: $_gb
+EOF
+	info "MongoDB: wiredTiger cache ${_gb}G"
+	if [ "$(mem_total_mb)" -lt 1024 ]; then
+		warn "MongoDB will not go below a 0.25G cache no matter what is set here."
+		warn "On a ${_gb}G cache and $(mem_total_mb)MB of RAM it will start and then be killed"
+		warn "under any real load. There is no configuration that fixes that."
+	fi
+}
+
 do_install() {
 	refuse_musl
 	refuse_no_avx
@@ -112,6 +166,8 @@ EOF
 	mkdir -p /var/lib/mongo /var/log/mongodb
 	chown -R mongod:mongod /var/lib/mongo /var/log/mongodb 2>/dev/null ||
 		chown -R mongodb:mongodb /var/lib/mongo /var/log/mongodb 2>/dev/null || true
+
+	mongo_tune
 
 	svc_enable "$(svc)"
 	svc_start "$(svc)" || die "mongod started and then stopped. Check /var/log/mongodb/mongod.log and \`journalctl -u mongod\` — on a small container this is usually memory, and \`signal=ILL\` there means the CPU is too old for this MongoDB."

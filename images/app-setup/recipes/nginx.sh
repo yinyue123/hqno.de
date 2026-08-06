@@ -24,9 +24,34 @@ version_line() {
 	printf 'nginx %s, root %s' "$_v" "$WEBROOT"
 }
 
+# nginx is not what makes a small machine small — a master and one worker come
+# to well under a megabyte resident, and none of the buffers it keeps by
+# default are worth touching. There is exactly one thing here worth fixing:
+# `worker_processes auto` counts the host's cores rather than the share this
+# container was sold, so a 128MB box on a 16-core host starts sixteen workers
+# to serve a blog.
+nginx_tune() {
+	local _conf _want
+	_conf=/etc/nginx/nginx.conf
+	[ -f "$_conf" ] || return 0
+	grep -qE '^[[:space:]]*worker_processes[[:space:]]' "$_conf" || return 0
+
+	if [ "$(mem_profile)" = normal ]; then _want='auto'; else _want='1'; fi
+	grep -qE "^[[:space:]]*worker_processes[[:space:]]+$_want;" "$_conf" && return 0
+
+	backup_once "$_conf"
+	if sed -i "s|^[[:space:]]*worker_processes[[:space:]].*|worker_processes $_want;|" "$_conf"; then
+		info "nginx: worker_processes $_want"
+	else
+		warn "could not set worker_processes; leaving nginx.conf alone"
+	fi
+	return 0
+}
+
 do_install() {
 	enable_epel                 # CentOS 7 keeps nginx in EPEL
 	pkg_install $(pmv PKGS)
+	nginx_tune
 
 	mkdir -p "$WEBROOT"
 	if [ ! -f "$WEBROOT/index.html" ] && [ ! -f "$WEBROOT/index.php" ]; then

@@ -26,11 +26,103 @@ version_line() {
 	printf 'PostgreSQL %s' "$_v"
 }
 
+# The major version, as the paths spell it: 18, 16, 15.
+pg_major() {
+	local _v
+	_v="$(postgres --version 2>/dev/null || psql --version 2>/dev/null)"
+	_v="${_v##* }"
+	printf '%s' "${_v%%.*}"
+}
+
+# Where the cluster the *service* will start actually lives.
+#
+# Order matters, and getting it wrong is silent. Alpine's package keeps its
+# cluster under a version directory and its init script starts that one; the
+# unversioned /var/lib/postgresql/data is a path this recipe used to initdb
+# into itself, producing a second cluster nothing ever ran. Tuning written
+# there took effect on nothing — the server came up on the other cluster with
+# every default intact, and the only way to catch it was asking the running
+# server rather than reading the file we had just written.
+#
+# So: versioned layouts first, bare ones last.
 pg_data() {
-	for _d in /var/lib/postgresql/data /var/lib/pgsql/data /var/lib/postgresql/*/main; do
+	local _d
+	for _d in /var/lib/postgresql/*/data /var/lib/postgresql/*/main \
+	          /var/lib/pgsql/*/data /var/lib/pgsql/data /var/lib/postgresql/data; do
 		[ -f "$_d/PG_VERSION" ] && { printf '%s' "$_d"; return 0; }
 	done
 	printf ''
+}
+
+MARK='# --- app-setup sizing ---'
+
+# PostgreSQL's defaults are the most conservative of any database here, and
+# still too big for a small container: shared_buffers is 128MB before anything
+# connects, and every backend is a process rather than a thread — so
+# max_connections is a memory setting, not just a limit.
+#
+# The two that matter are shared_buffers (charged once, up front) and work_mem
+# (charged per sort, per connection, and more than once per query — a plan
+# with three sorts in it can take three times work_mem for one backend).
+#
+# postgresql.conf takes the *last* value for a setting, so this appends a
+# block rather than editing what the package shipped.
+pg_tune() {
+	local _d _conf _sb _wm _mw _conn _ecs
+	_d="$(pg_data)"
+	[ -n "$_d" ] || return 0
+	_conf="$_d/postgresql.conf"
+	# Debian keeps the config away from the data directory and symlinks it.
+	[ -f "$_conf" ] || _conf="$(ls /etc/postgresql/*/main/postgresql.conf 2>/dev/null | head -1)"
+	[ -n "$_conf" ] && [ -f "$_conf" ] || {
+		warn "no postgresql.conf found; leaving its settings alone"
+		return 0
+	}
+	backup_once "$_conf"
+
+	if grep -qF "$MARK" "$_conf" 2>/dev/null; then
+		if awk -v m="$MARK" 'index($0, m) { exit } { print }' "$_conf" > "$_conf.new"; then
+			mv -f "$_conf.new" "$_conf"
+			chown --reference="$_conf" "$_conf" 2>/dev/null || chown postgres:postgres "$_conf" 2>/dev/null || true
+		else
+			rm -f "$_conf.new"
+			warn "could not rewrite $_conf; leaving its settings alone"
+			return 0
+		fi
+	fi
+	[ "$(mem_profile)" = normal ] && return 0
+
+	_sb="$(mem_share 8 8 128)"      # shared_buffers: charged once, at startup
+	_mw="$(mem_share 16 8 64)"      # maintenance_work_mem: VACUUM, CREATE INDEX
+	_conn="$(mem_share 8 10 100)"   # every connection is a process
+	_ecs="$(mem_share 2 32 512)"    # a hint to the planner, not an allocation
+	if [ "$(mem_profile)" = tiny ]; then _wm=1; else _wm=2; fi
+
+	step "sizing PostgreSQL for $(mem_total_mb)MB of memory"
+	cat >> "$_conf" <<EOF
+$MARK
+$(tuning_header)
+shared_buffers = ${_sb}MB
+# per sort, per connection, and more than once per query — the real ceiling
+# is this times the number of sorts in flight, which is why it stays small.
+work_mem = ${_wm}MB
+maintenance_work_mem = ${_mw}MB
+max_connections = $_conn
+
+# not an allocation: what the planner assumes the OS is caching for it.
+effective_cache_size = ${_ecs}MB
+
+# every parallel worker is another process with another backend's memory.
+# On a machine this size the parallelism costs more than it returns.
+max_parallel_workers_per_gather = 0
+max_parallel_workers = 0
+max_parallel_maintenance_workers = 0
+autovacuum_max_workers = 1
+
+wal_buffers = 512kB
+EOF
+	chown postgres:postgres "$_conf" 2>/dev/null || true
+	info "PostgreSQL: shared_buffers ${_sb}MB, max_connections $_conn"
 }
 
 do_install() {
@@ -47,21 +139,51 @@ do_install() {
 			fi
 			;;
 		apk)
-			mkdir -p /var/lib/postgresql/data /run/postgresql
+			# Into the versioned directory, because that is the one Alpine's
+			# init script starts. Initialising the bare /var/lib/postgresql/data
+			# instead leaves a cluster the service never opens — and everything
+			# afterwards, tuning included, is applied to the wrong one.
+			_pgd="/var/lib/postgresql/$(pg_major)/data"
+			mkdir -p "$_pgd" /run/postgresql
 			chown -R postgres:postgres /var/lib/postgresql /run/postgresql
-			su postgres -c "initdb -D /var/lib/postgresql/data --encoding=UTF8 --locale=C" >/dev/null 2>&1 || true
+			su postgres -c "initdb -D '$_pgd' --encoding=UTF8 --locale=C" >/dev/null 2>&1 || true
 			;;
 		esac
 	fi
 
+	# After the cluster exists — pg_data has to find a postgresql.conf before
+	# there is anything to append to — and before the first start, so the
+	# sizes are what it comes up with.
+	pg_tune
+
 	svc_enable "$(svc)"
-	svc_start "$(svc)" || die "postgres would not start; see: journalctl -u postgresql"
+	if svc_running "$(svc)"; then
+		svc_restart "$(svc)" || die "postgres would not come back up; see its log"
+	else
+		svc_start "$(svc)" || die "postgres would not start; see: journalctl -u postgresql"
+	fi
 
 	_n=0
 	while [ "$_n" -lt 30 ]; do
 		su postgres -c "psql -c 'SELECT 1'" >/dev/null 2>&1 && break
 		_n=$((_n + 1)); sleep 1
 	done
+
+	# Ask the server, not the file. Writing a correct postgresql.conf into a
+	# cluster the service does not start is silent, survives a restart, and
+	# looks right in every way except the one that matters — which is exactly
+	# what this recipe used to do on Alpine.
+	if [ "$(mem_profile)" != normal ]; then
+		_want="$(mem_share 8 8 128)"
+		_got="$(su postgres -c "psql -tAc \"SELECT setting::bigint*8/1024 FROM pg_settings WHERE name='shared_buffers'\"" 2>/dev/null | tr -dc '0-9')"
+		if [ -n "$_got" ] && [ "$_got" = "$_want" ]; then
+			info "shared_buffers is ${_got}MB, as asked"
+		else
+			warn "sizing did not take: shared_buffers is ${_got:-unknown}MB, not ${_want}MB."
+			warn "The server is reading a different postgresql.conf than the one written."
+			warn "  su postgres -c 'psql -c \"SHOW config_file\"'   says which."
+		fi
+	fi
 
 	if [ ! -f "$APP_SETUP_SECRETS/postgresql.txt" ]; then
 		_pw="$(rand_pass 24)"

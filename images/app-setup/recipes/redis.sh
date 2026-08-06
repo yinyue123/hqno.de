@@ -35,6 +35,61 @@ version_line() {
 	printf 'Redis %s, localhost only' "$_v"
 }
 
+MARK='# --- app-setup sizing ---'
+
+# Redis ships with **no maxmemory at all**. The default is not "a sensible
+# fraction of the machine", it is "keep accepting writes until something
+# dies", and on a small container the something is usually not Redis — it is
+# whichever neighbour the kernel picks. A cache with no ceiling is the single
+# most common way one of these boxes falls over.
+#
+# The other half is BGSAVE. Saving forks, and the fork's copy-on-write can
+# briefly cost as much again as the dataset, so the snapshot schedule is
+# stretched out here rather than left at the default's five overlapping rules.
+redis_tune() {   # redis_tune <conf>
+	local _conf _max
+	_conf="$1"
+	[ -n "$_conf" ] && [ -f "$_conf" ] || return 0
+
+	# Ours is a block at the end: redis takes the last value for a key, so
+	# appending overrides the shipped line without editing it. Strip the
+	# previous block first or reinstalling stacks them up.
+	if grep -qF "$MARK" "$_conf" 2>/dev/null; then
+		if awk -v m="$MARK" 'index($0, m) { exit } { print }' "$_conf" > "$_conf.new"; then
+			mv -f "$_conf.new" "$_conf"
+		else
+			rm -f "$_conf.new"
+			warn "could not rewrite $_conf; leaving redis's own settings alone"
+			return 0
+		fi
+	fi
+	[ "$(mem_profile)" = normal ] && return 0
+
+	# An eighth of the machine. Redis holds more than the values themselves —
+	# key overhead, the expiry table, client buffers — so the process is
+	# reliably larger than maxmemory, not equal to it.
+	_max="$(mem_share 8 8 512)"
+
+	step "sizing Redis for $(mem_total_mb)MB of memory"
+	cat >> "$_conf" <<EOF
+$MARK
+$(tuning_header)
+# Without this Redis has no ceiling and will grow until the kernel intervenes.
+maxmemory ${_max}mb
+# What to throw away when it reaches that. allkeys-lru treats Redis as a
+# cache, which is what it is here; if you are using it as a durable store
+# instead, change this to noeviction and give the machine more memory.
+maxmemory-policy allkeys-lru
+
+# One snapshot rule rather than the default's three overlapping ones: BGSAVE
+# forks, and the copy-on-write during a save is the memory spike that kills a
+# small box. \`save ""\` on its own line would turn snapshots off entirely.
+save 900 1
+stop-writes-on-bgsave-error no
+EOF
+	info "Redis: maxmemory ${_max}mb, allkeys-lru"
+}
+
 do_install() {
 	enable_epel
 	pkg_install $(pmv PKGS)
@@ -77,12 +132,17 @@ Redis
     redis://:$_pw@127.0.0.1:6379/0
 EOF
 		fi
+		redis_tune "$_conf"
 	else
 		warn "no redis.conf found; it is running with the package defaults"
 	fi
 
 	svc_enable "$(svc)"
-	svc_start "$(svc)" || die "redis would not start; check its log"
+	if svc_running "$(svc)"; then
+		svc_restart "$(svc)" || die "redis would not come back up; check its log"
+	else
+		svc_start "$(svc)" || die "redis would not start; check its log"
+	fi
 	ok "Redis is running on 127.0.0.1:6379"
 	show_note redis
 }

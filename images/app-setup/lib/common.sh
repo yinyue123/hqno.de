@@ -134,6 +134,99 @@ pmv() {
 	printf '%s' "$_v"
 }
 
+# ----------------------------------------------------------------- sizing --
+# How much memory this machine really has, in MB.
+#
+# /proc/meminfo is the *host's* number inside a container unless lxcfs is
+# mounted, and half the machines we run on do not have it — which is how a
+# 128MB container talks itself into sizing MariaDB for 2G. The cgroup limit is
+# the figure that is true either way, so read that first and fall back.
+mem_total_mb() {
+	local _f _v _m
+	_m=""
+	for _f in /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory/memory.limit_in_bytes; do
+		[ -r "$_f" ] || continue
+		_v="$(cat "$_f" 2>/dev/null)"
+		# "max" is cgroup v2 for no limit. v1 says the same thing with a number
+		# so large it is really PAGE_COUNTER_MAX, and dividing it gives nonsense.
+		case "$_v" in ''|*[!0-9]*) continue ;; esac
+		[ "$_v" -gt 0 ] 2>/dev/null || continue
+		[ "$_v" -gt 1099511627776 ] 2>/dev/null && continue
+		_m=$((_v / 1024 / 1024))
+		break
+	done
+	if [ -z "$_m" ] || ! [ "$_m" -gt 0 ] 2>/dev/null; then
+		_m="$(awk '/^MemTotal:/{print int($2/1024); exit}' /proc/meminfo 2>/dev/null)"
+	fi
+	[ -n "$_m" ] && [ "$_m" -gt 0 ] 2>/dev/null || _m=1024
+	printf '%s' "$_m"
+}
+
+# Which set of buffer sizes a service should give itself.
+#
+#   tiny    under 512MB — every default is wrong and has to be cut
+#   small   512MB to under 1G — trim the worst of them
+#   normal  1G and up — the distro's defaults are what they were tuned for
+#
+# Every recipe asks this one question rather than reading `free` its own way,
+# which is what stops LNMP and LAMP from disagreeing about what "small" means.
+# APP_SETUP_PROFILE overrides it, for a person who knows better than we do and
+# for the test rig, which has to exercise all three on one machine.
+mem_profile() {
+	local _t
+	case "${APP_SETUP_PROFILE:-}" in
+		tiny|small|normal) printf '%s' "$APP_SETUP_PROFILE"; return 0 ;;
+	esac
+	_t="$(mem_total_mb)"
+	if   [ "$_t" -lt 512  ]; then printf 'tiny'
+	elif [ "$_t" -lt 1024 ]; then printf 'small'
+	else                          printf 'normal'
+	fi
+}
+
+# Scale a setting to this machine: one <divisor>th of RAM, held between a
+# floor and a ceiling. Every tuned number in every recipe comes from here, so
+# they are all the same shape and all move together when the box changes size.
+#
+#   mem_share 8 8 192      # an eighth of RAM, at least 8MB, at most 192MB
+mem_share() {
+	local _v
+	_v=$(( $(mem_total_mb) / $1 ))
+	[ "$_v" -lt "$2" ] && _v="$2"
+	[ "$_v" -gt "$3" ] && _v="$3"
+	printf '%s' "$_v"
+}
+
+# Write a tuning fragment. Every one goes through here so that uninstall has a
+# single thing to delete, and so a fragment is never left half-written when
+# the disk fills in the middle of it.
+tuning_write() {   # tuning_write <path> <<'EOF' ... EOF
+	local _p
+	_p="$1"
+	mkdir -p "$(dirname "$_p")" 2>/dev/null || true
+	cat > "$_p.tmp" || { rm -f "$_p.tmp"; warn "could not write $_p"; return 1; }
+	mv -f "$_p.tmp" "$_p"
+	chmod 644 "$_p"
+	info "sized for this machine: $_p"
+}
+
+tuning_drop() { rm -f "$1" "$1.tmp"; }
+
+# The header every tuning file carries, so the next person to open one knows
+# what wrote it, why, and how to get rid of it.
+tuning_header() {
+	cat <<EOF
+# written by app-setup for a machine with $(mem_total_mb)MB of memory.
+# profile: $(mem_profile)
+#
+# These are ceilings chosen to keep the service alive on a small box, not
+# performance settings. Give this machine more memory and run the app-setup
+# install again and this file is rewritten to match — above 1G it is removed
+# and the distro's own defaults are used, because by then they are right.
+# Delete it and restart the service to go back to those defaults now.
+EOF
+}
+
 # --------------------------------------------------------------- packages --
 # DPkg::Lock::Timeout covers dpkg's own lock, which is the one an *install*
 # contends for. It does not cover /var/lib/apt/lists/lock, which is what
@@ -791,6 +884,40 @@ php_fpm_listen() {
 	printf '127.0.0.1:9000'
 }
 
+# Where an Apache fragment goes. Debian's convention is a file in
+# conf-available plus a symlink that a2enconf makes; the RPM images and Alpine
+# just scan a directory. Debian reads conf-enabled directly too, so writing
+# there works on all three without shelling out to a2enconf.
+apache_conf_dir() {
+	local _d
+	for _d in /etc/apache2/conf-enabled /etc/httpd/conf.d /etc/apache2/conf.d; do
+		[ -d "$_d" ] && { printf '%s' "$_d"; return 0; }
+	done
+	return 1
+}
+
+# The pool file — how many workers, which user, which socket. Same three
+# layouts as php_fpm_listen, and the first one that exists wins.
+php_pool_file() {
+	local _f
+	for _f in /etc/php/*/fpm/pool.d/www.conf /etc/php-fpm.d/www.conf \
+	          /etc/php*/php-fpm.d/www.conf; do
+		[ -f "$_f" ] && { printf '%s' "$_f"; return 0; }
+	done
+	return 1
+}
+
+# Where a .ini drop-in is read from. Every layout scans a directory next to
+# php.ini — it is how the extension packages add themselves — so a file we put
+# there is read the same way, and php.ini itself is never edited.
+php_ini_dir() {
+	local _d
+	for _d in /etc/php/*/fpm/conf.d /etc/php.d /etc/php*/conf.d; do
+		[ -d "$_d" ] && { printf '%s' "$_d"; return 0; }
+	done
+	return 1
+}
+
 php_fastcgi_pass() {
 	local _l
 	_l="$(php_fpm_listen)"
@@ -975,6 +1102,24 @@ recipe_ensure() {
 # (using password: NO)" — which reads like the password is wrong rather than
 # like the file was never opened.
 MY_CNF=/root/.my.cnf
+
+# Where a .cnf fragment goes. Debian keeps two of these directories and reads
+# both; the RPM images and Alpine keep one. Ours is a file in the directory
+# rather than an edit to my.cnf, so the package can upgrade its own config
+# freely and `apt` never stops to ask about a modified conffile.
+mysql_conf_dir() {
+	local _d
+	for _d in /etc/mysql/conf.d /etc/my.cnf.d /etc/mysql/mariadb.conf.d; do
+		[ -d "$_d" ] && { printf '%s' "$_d"; return 0; }
+	done
+	# Nothing to drop into: make the one my.cnf already says it will include.
+	for _d in /etc/mysql/conf.d /etc/my.cnf.d; do
+		if grep -rqs "includedir.*${_d#/etc/}" /etc/my.cnf /etc/mysql/my.cnf 2>/dev/null; then
+			mkdir -p "$_d" && { printf '%s' "$_d"; return 0; }
+		fi
+	done
+	return 1
+}
 
 mysql_root() {
 	if [ -r "$MY_CNF" ]; then

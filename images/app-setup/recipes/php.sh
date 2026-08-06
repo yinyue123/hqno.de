@@ -33,6 +33,112 @@ alpine_php() {
 	printf 'php83'
 }
 
+TUNE_INI=99-app-setup.ini
+MARK_BEGIN='; --- app-setup sizing: begin (edit above this line) ---'
+MARK_END='; --- app-setup sizing: end ---'
+
+# PHP costs memory in two places, and both default to numbers chosen for a
+# machine whose only job is serving pages.
+#
+#   pm = dynamic, 5 children       five copies of the interpreter, resident,
+#                                  whether or not anything is asking for a page
+#   opcache.memory_consumption     128M. One shared mapping, charged once —
+#                                  and on a 128MB container that is all of it
+#
+# `ondemand` fixes the first properly: no request, no worker, no memory. It is
+# usually described as a latency trade, and with opcache it mostly is not — the
+# cache is in shared memory and survives the worker, so a freshly forked child
+# is not a cold one.
+php_tune() {
+	local _prof _d _f _pool _oc _is _ml _af _kids _idle
+	_prof="$(mem_profile)"
+
+	# ---- php.ini drop-in: opcache, and the ceiling one request may reach ----
+	if _d="$(php_ini_dir)"; then
+		_f="$_d/$TUNE_INI"
+		if [ "$_prof" = normal ]; then
+			if [ -f "$_f" ]; then
+				tuning_drop "$_f"
+				info "this machine is big enough now; removed $_f"
+			fi
+		else
+			_oc="$(mem_share 8 16 128)"
+			_is="$(mem_share 64 1 8)"
+			_ml="$(mem_share 2 48 256)"
+			_af=$(( $(mem_total_mb) * 40 ))
+			[ "$_af" -lt 2000 ]  && _af=2000
+			[ "$_af" -gt 10000 ] && _af=10000
+			step "sizing PHP for $(mem_total_mb)MB of memory"
+			tuning_write "$_f" <<EOF
+$(tuning_header)
+; opcache is one shared mapping for the whole pool rather than a per-worker
+; cost, so this is charged once — but it defaults to 128M, which on a small
+; box is the entire machine.
+opcache.enable                  = 1
+opcache.memory_consumption      = ${_oc}
+opcache.interned_strings_buffer = ${_is}
+opcache.max_accelerated_files   = ${_af}
+opcache.validate_timestamps     = 1
+opcache.revalidate_freq         = 2
+
+; not an allocation: the ceiling a single request may reach before PHP kills
+; it. What it buys on a small machine is that a runaway script dies instead of
+; taking MariaDB down with it.
+memory_limit                    = ${_ml}M
+realpath_cache_size             = 256K
+EOF
+		fi
+	else
+		warn "no php conf.d directory found; leaving php.ini alone"
+	fi
+
+	# ---- pool: how many interpreters may exist at once ----
+	_pool="$(php_pool_file)" || {
+		warn "no php-fpm pool file found; leaving the pool alone"
+		return 0
+	}
+	backup_once "$_pool"
+
+	# Ours is a block appended to the end rather than an edit in place:
+	# php-fpm takes the last assignment of a key, so this overrides whatever
+	# the distro shipped without touching the line it shipped. Strip the
+	# previous block first or reinstalling stacks them up. Truncating at a
+	# fixed string with awk rather than sed keeps the marker — which has
+	# dashes and brackets in it — out of regex-escaping territory.
+	if grep -qF "$MARK_BEGIN" "$_pool" 2>/dev/null; then
+		if awk -v m="$MARK_BEGIN" 'index($0, m) { exit } { print }' "$_pool" > "$_pool.new"; then
+			mv -f "$_pool.new" "$_pool"
+		else
+			rm -f "$_pool.new"
+			warn "could not rewrite $_pool; leaving the pool alone"
+			return 0
+		fi
+	fi
+
+	if [ "$_prof" = normal ]; then
+		info "this machine is big enough; php-fpm keeps its own pool settings"
+		return 0
+	fi
+
+	# One worker per 40MB is what a PHP application costs in practice once
+	# opcache is shared: WordPress serving a page sits around 25-35MB.
+	_kids="$(mem_share 40 2 16)"
+	if [ "$_prof" = tiny ]; then _idle=10; else _idle=30; fi
+
+	cat >> "$_pool" <<EOF
+$MARK_BEGIN
+; $(mem_total_mb)MB of memory: at most $_kids interpreters, and none at all
+; while nothing is being served. Delete from this line down for the defaults.
+pm = ondemand
+pm.max_children = $_kids
+pm.process_idle_timeout = ${_idle}s
+pm.max_requests = 500
+$MARK_END
+EOF
+	info "php-fpm pool: ondemand, at most $_kids workers"
+	return 0
+}
+
 do_install() {
 	case "$PMF" in
 	deb)
@@ -88,8 +194,17 @@ echo "extensions: ", implode(', ', array_slice(get_loaded_extensions(), 0, 40)),
 echo "\nDelete this file when you are done: ", __FILE__, "\n";
 EOF
 
+	php_tune
+
 	svc_enable "$_svc"
-	svc_start "$_svc" || warn "php-fpm did not start; check its log"
+	# Restart rather than start when it is already up: svc_start on a running
+	# service is a no-op, and the sizes just written would sit unread until
+	# something else happened to bounce it.
+	if svc_running "$_svc"; then
+		svc_restart "$_svc" || warn "php-fpm did not come back; check its log"
+	else
+		svc_start "$_svc" || warn "php-fpm did not start; check its log"
+	fi
 
 	# If nginx is here, teach it to hand .php files over. The whole default
 	# site is rewritten rather than patched: editing a config file with sed
@@ -113,9 +228,11 @@ EOF
 }
 
 do_uninstall() {
+	local _d
 	_svc="$(php_service)"
 	svc_stop "$_svc"
 	svc_disable "$_svc"
+	_d="$(php_ini_dir)" && tuning_drop "$_d/$TUNE_INI"
 	rm -f "$WEBROOT/app-setup-php.php"
 	case "$PMF" in
 		deb) pkg_remove php-fpm php-cli php-mysql php-curl php-gd php-mbstring php-xml php-zip ;;

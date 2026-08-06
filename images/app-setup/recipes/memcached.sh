@@ -21,28 +21,82 @@ CHECK_BIN="memcached"
 
 version_line() { printf 'memcached %s' "$(memcached --version 2>/dev/null | sed 's/memcached //')"; }
 
+# KEY="value" in a shell-sourced conf file: replace the line if it is there,
+# add it if it is not. Never append blindly — these files are sourced, so a
+# second assignment silently wins over the first and the file stops saying
+# what the daemon is doing.
+mc_var() {   # mc_var <file> <key> <value>
+	if grep -qE "^[[:space:]]*$2=" "$1"; then
+		sed -i "s|^[[:space:]]*$2=.*|$2=\"$3\"|" "$1"
+	else
+		printf '%s="%s"\n' "$2" "$3" >> "$1"
+	fi
+}
+
+# `-flag value` on its own line, which is Debian's memcached.conf format.
+mc_flag() {  # mc_flag <file> <flag> <value>
+	if grep -qE "^[[:space:]]*\\$2[[:space:]]" "$1"; then
+		sed -i "s|^[[:space:]]*\\$2[[:space:]].*|$2 $3|" "$1"
+	else
+		printf '%s %s\n' "$2" "$3" >> "$1"
+	fi
+}
+
 do_install() {
 	pkg_install $(pmv PKGS)
 
+	# Memcached is the one service here whose memory is a single number and
+	# whose default — 64MB — is half of a small container. It is also a hard
+	# ceiling rather than a hint: memcached allocates slabs up to -m and
+	# evicts rather than growing, so this is the whole story.
+	if [ "$(mem_profile)" = normal ]; then
+		_mb=64
+	else
+		_mb="$(mem_share 16 8 64)"
+		step "sizing memcached for $(mem_total_mb)MB of memory"
+	fi
+
 	# Memcached has no authentication at all in its default mode. The only
 	# thing standing between it and the internet is the address it binds.
+	#
+	# Three config formats, and they share nothing. Writing OPTIONS= into all
+	# of them is the obvious thing and it is wrong: Alpine's OpenRC script
+	# never reads OPTIONS. It builds the command line out of LISTENON,
+	# MEMUSAGE and MAXCONN, so a `-l 127.0.0.1` written to OPTIONS there goes
+	# into a variable nothing reads — and memcached with no password is not a
+	# thing to be wrong about by accident. Check with the command line it
+	# actually got, never with the file:
+	#
+	#   grep -a memcached /proc/*/cmdline
 	for _f in /etc/memcached.conf /etc/sysconfig/memcached /etc/conf.d/memcached; do
 		[ -f "$_f" ] || continue
 		backup_once "$_f"
 		case "$_f" in
 			/etc/memcached.conf)
-				grep -q '^-l ' "$_f" && sed -i 's/^-l .*/-l 127.0.0.1/' "$_f" || echo '-l 127.0.0.1' >> "$_f"
+				# Debian: the file *is* the argument list, one flag per line.
+				mc_flag "$_f" '-l' '127.0.0.1'
+				mc_flag "$_f" '-m' "$_mb"
 				;;
-			*)
-				sed -i 's/^OPTIONS=.*/OPTIONS="-l 127.0.0.1"/' "$_f" 2>/dev/null || true
-				grep -q '^OPTIONS=' "$_f" || echo 'OPTIONS="-l 127.0.0.1"' >> "$_f"
+			/etc/conf.d/memcached)
+				# Alpine, Gentoo: OpenRC assembles the flags from these.
+				mc_var "$_f" LISTENON '127.0.0.1'
+				mc_var "$_f" MEMUSAGE "$_mb"
+				;;
+			/etc/sysconfig/memcached)
+				# RHEL: CACHESIZE is its own variable and beats OPTIONS.
+				mc_var "$_f" CACHESIZE "$_mb"
+				mc_var "$_f" OPTIONS '-l 127.0.0.1'
 				;;
 		esac
 	done
 
 	svc_enable "$(svc)"
-	svc_start "$(svc)" || die "memcached would not start"
-	ok "memcached is running on 127.0.0.1:11211"
+	if svc_running "$(svc)"; then
+		svc_restart "$(svc)" || die "memcached would not come back up"
+	else
+		svc_start "$(svc)" || die "memcached would not start"
+	fi
+	ok "memcached is running on 127.0.0.1:11211, holding at most ${_mb}MB"
 }
 
 do_help() { cat <<'EOF'

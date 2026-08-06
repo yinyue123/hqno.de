@@ -33,8 +33,89 @@ version_line() {
 	printf 'Apache %s, root %s' "$_v" "$WEBROOT"
 }
 
+TUNE_CONF=zz-app-setup-sizing.conf
+
+# Apache's memory is its process pool, and the default pool is sized for a
+# dedicated web server: MaxRequestWorkers 150. What one worker costs depends
+# entirely on which MPM is running and how PHP is attached to it —
+#
+#   prefork + mod_php   every child holds its own PHP interpreter, 15-30MB.
+#                       150 of those is 3GB, and the machine dies long before
+#                       Apache decides it has enough workers.
+#   event/worker + fpm  children are threads and cost well under a megabyte;
+#                       the PHP interpreters live in php-fpm's pool instead,
+#                       which app-setup has already capped.
+#
+# Both are sized here, in IfModule blocks, because which one is loaded is a
+# per-distro answer and changes when someone installs mod_php later.
+apache_tune() {
+	local _dir _f _kids _threads _workers
+	_dir="$(apache_conf_dir)" || {
+		warn "no Apache conf directory found; leaving its MPM settings alone"
+		return 0
+	}
+	_f="$_dir/$TUNE_CONF"
+
+	if [ "$(mem_profile)" = normal ]; then
+		if [ -f "$_f" ]; then
+			tuning_drop "$_f"
+			info "this machine is big enough now; removed $_f"
+		fi
+		return 0
+	fi
+
+	# prefork: one process per request in flight, and possibly a PHP each.
+	_kids="$(mem_share 40 2 16)"
+	# event/worker: threads are cheap, so the ceiling is about file
+	# descriptors and connection buffers rather than about memory.
+	_threads=12
+	_workers=$((_kids * _threads))
+	[ "$_workers" -lt 24 ] && _workers=24
+
+	step "sizing Apache for $(mem_total_mb)MB of memory"
+	tuning_write "$_f" <<EOF
+$(tuning_header)
+# Both MPMs are sized: which one is loaded is a per-distro answer, and it
+# changes the day somebody installs mod_php on top of an event build.
+
+<IfModule mpm_prefork_module>
+    StartServers            1
+    MinSpareServers         1
+    MaxSpareServers         2
+    MaxRequestWorkers       $_kids
+    MaxConnectionsPerChild  500
+</IfModule>
+
+<IfModule mpm_event_module>
+    StartServers            1
+    MinSpareThreads         $_threads
+    MaxSpareThreads         $((_threads * 2))
+    ThreadsPerChild         $_threads
+    MaxRequestWorkers       $_workers
+    MaxConnectionsPerChild  1000
+</IfModule>
+
+<IfModule mpm_worker_module>
+    StartServers            1
+    MinSpareThreads         $_threads
+    MaxSpareThreads         $((_threads * 2))
+    ThreadsPerChild         $_threads
+    MaxRequestWorkers       $_workers
+    MaxConnectionsPerChild  1000
+</IfModule>
+
+# A child held open for a keep-alive is a child not serving anyone else, and
+# on a pool this small that is the difference between slow and refusing.
+KeepAlive               On
+KeepAliveTimeout        3
+MaxKeepAliveRequests    100
+EOF
+	info "Apache: at most $_kids prefork workers / $_workers threaded"
+}
+
 do_install() {
 	pkg_install $(pmv PKGS)
+	apache_tune
 
 	mkdir -p "$WEBROOT"
 	if [ ! -f "$WEBROOT/index.html" ] && [ ! -f "$WEBROOT/index.php" ]; then
@@ -96,13 +177,24 @@ EOF
 	esac
 
 	svc_enable "$(svc)"
-	svc_start "$(svc)" || die "apache was installed but would not start; see the log"
+	# Restart rather than start when it is already up, or the MPM sizes just
+	# written sit unread until something else happens to bounce it.
+	if svc_running "$(svc)"; then
+		svc_restart "$(svc)" || die "apache would not come back up; see its log"
+	else
+		svc_start "$(svc)" || die "apache was installed but would not start; see the log"
+	fi
 	ok "Apache is serving $WEBROOT on port 80"
+	if [ "$(mem_profile)" != normal ]; then
+		info "sized for $(mem_total_mb)MB — see $(apache_conf_dir)/$TUNE_CONF"
+	fi
 }
 
 do_uninstall() {
+	local _d
 	svc_stop "$(svc)"
 	svc_disable "$(svc)"
+	_d="$(apache_conf_dir)" && tuning_drop "$_d/$TUNE_CONF"
 	restore_backup /etc/apache2/apache2.conf
 	restore_backup /etc/httpd/conf/httpd.conf
 	restore_backup /etc/apache2/httpd.conf

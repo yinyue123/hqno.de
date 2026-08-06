@@ -29,10 +29,20 @@ is_installed() {
 }
 
 do_install() {
-	if [ "$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')" -lt 700 ] 2>/dev/null; then
-		warn "this machine has under 700MB of memory. MariaDB alone wants ~400MB;"
-		warn "expect it to be killed under load. See the docs button for the small-box settings."
-	fi
+	# `free` reads the host's numbers inside a container without lxcfs, which
+	# is how a 128MB box talks itself into believing it has 2G to spend.
+	# mem_total_mb asks the cgroup first.
+	case "$(mem_profile)" in
+		tiny)
+			warn "this machine has $(mem_total_mb)MB of memory. All three are being"
+			warn "sized down to fit — MariaDB to about 65MB resident rather than 103MB,"
+			warn "and php-fpm to workers that only exist while a page is being served."
+			warn "It will run. It will not survive much traffic. Docs has the numbers."
+			;;
+		small)
+			info "sizing all three for $(mem_total_mb)MB rather than using the defaults"
+			;;
+	esac
 
 	recipe nginx install
 	recipe mysql install
@@ -170,16 +180,28 @@ LNMP — Linux, Nginx, MariaDB, PHP
                         usually killed for memory. dmesg | tail says so.
 
   On a small container
-    MariaDB is the expensive part. Under about 700MB of memory it will be
-    killed under load. Add this to the MariaDB config and restart it:
+    Under 1G of memory, app-setup sizes all three down as it installs them
+    rather than leaving you to find out under load. Nothing to do; this is
+    what it did and where it wrote it:
 
-      [mysqld]
-      innodb_buffer_pool_size = 64M
-      performance_schema      = OFF
-      max_connections         = 30
+      90-app-setup.cnf in MariaDB's config directory — three caches that
+        default to 128M each, cut to fit. This is most of the saving.
+      99-app-setup.ini in php's conf.d — opcache, which is also 128M by
+        default, and a memory_limit that fits this machine.
+      an app-setup block at the end of php-fpm's www.conf — pm = ondemand,
+        so a PHP worker exists only while a page is being served.
+      worker_processes in nginx.conf — one worker, not one per host core.
 
-    Or use the `sqlite` source instead of MariaDB — for a small site it is
-    genuinely the better answer.
+    Measured on a 128MB container: mysqld 103MB resident before, 65MB after.
+
+    Delete any of those and restart the service for the distro's defaults.
+    Give the machine more memory, install again, and they are rewritten to
+    match — above 1G they are removed entirely, because by then the defaults
+    are the right answer.
+
+    MariaDB is still the expensive part by a wide margin. For a small site
+    the `sqlite` source instead is genuinely the better answer: no service,
+    no port, no password, and no resident memory at all.
 
   Uninstalling
     Removes all three packages. Your files in /var/www/html and your

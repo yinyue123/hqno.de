@@ -36,6 +36,22 @@ do_install() {
 		warn "Stop nginx first, or install the 'lnmp' suite instead of this one."
 	fi
 
+	# `free` reads the host's numbers in a container without lxcfs, which is
+	# how a 128MB box talks itself into believing it has 2G. mem_total_mb asks
+	# the cgroup first.
+	case "$(mem_profile)" in
+		tiny)
+			warn "this machine has $(mem_total_mb)MB of memory. All three are being sized"
+			warn "down to fit: Apache to a handful of workers rather than 150, MariaDB"
+			warn "to about half what it asks for, and php-fpm to workers that exist only"
+			warn "while a page is being served. LNMP is the lighter of the two suites —"
+			warn "pick this one only if your software genuinely needs .htaccess."
+			;;
+		small)
+			info "sizing all three for $(mem_total_mb)MB rather than using the defaults"
+			;;
+	esac
+
 	recipe apache install
 	recipe mysql  install
 	recipe php    install
@@ -171,8 +187,25 @@ LAMP — Linux, Apache, MariaDB, PHP
     it exists to get right.
 
   Small containers
-    Apache's prefork worker uses noticeably more memory than php-fpm behind
-    nginx. Under 512MB, prefer LNMP.
+    Under 1G of memory app-setup sizes all three down as it installs them.
+    What it wrote, and where:
+
+      zz-app-setup-sizing.conf in Apache's conf directory — MaxRequestWorkers
+        cut from 150 to a number this machine can actually hold, for prefork
+        and for the threaded MPMs, plus a short KeepAliveTimeout so a child
+        held open for an idle browser is not a child nobody else can use.
+      90-app-setup.cnf in MariaDB's config directory — three caches that
+        default to 128M each. Measured on a 128MB container: 76MB of
+        unreclaimable memory before, 45MB after.
+      99-app-setup.ini in php's conf.d, and a block at the end of php-fpm's
+        www.conf — opcache, and pm = ondemand.
+
+    Even so, LNMP is the lighter of the two suites and by a wide margin. The
+    reason is prefork: if PHP is attached as mod_php, every Apache child
+    holds its own interpreter, so the pool size and the PHP count are the
+    same number. nginx and php-fpm keep those two ceilings separate, which
+    is why the same machine serves more behind LNMP. Pick LAMP when your
+    software genuinely needs .htaccess, not by default.
 EOF
 }
 
