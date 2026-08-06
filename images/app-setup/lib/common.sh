@@ -274,9 +274,16 @@ pkg_remove() {
 		        printf '%s\n' "$_out" ;;
 	esac
 	[ "$_rc" = 0 ] && return 0
-	warn "some of those packages are still here: the system depends on them,"
-	warn "and removing them would take other software with it. Nothing was"
-	warn "broken; there is just less to remove than the list suggests."
+	# Careful what this claims. A non-zero here means one of two very different
+	# things and the output above says which: dnf and apk both fail when asked
+	# for a package that was never installed (mongodb's uninstall list on
+	# Alpine prints five "No such package" lines), and apt fails when one entry
+	# in the list is something the system depends on. Neither is a broken
+	# machine, and guessing between them in the message would be worse than
+	# describing both.
+	warn "not everything on that list came off. Either it was not installed"
+	warn "here, or something else on this machine depends on it — the package"
+	warn "manager's own output above says which. Nothing was broken."
 	return 0
 }
 
