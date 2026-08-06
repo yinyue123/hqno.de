@@ -21,6 +21,11 @@ SERVICE="apache2"
 SERVICE_rpm="httpd"
 CHECK_BIN="apache2"
 CHECK_BIN_rpm="httpd"
+# Alpine's package is called apache2 but the binary it installs is httpd, so
+# without this the card read "absent" for an Apache that was installed, running
+# and serving — and version_line, which resolves the same variable, printed
+# nothing.
+CHECK_BIN_apk="httpd"
 
 version_line() {
 	_b="$(pmv CHECK_BIN)"

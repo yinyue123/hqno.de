@@ -58,6 +58,14 @@ EOF
 
 do_uninstall() {
 	rm -f /etc/periodic/daily/certbot-renew
+	# The nginx and apache plugins depend on certbot, so removing certbot alone
+	# is refused — and apk announces the refusal on stdout while exiting 0, so
+	# the remove reported success and certbot was still installed. Take the
+	# plugins first, whichever names this family uses.
+	case "$PMF" in
+		deb|rpm) pkg_remove python3-certbot-nginx python3-certbot-apache ;;
+		apk)     pkg_remove certbot-nginx certbot-apache ;;
+	esac
 	pkg_remove certbot
 	info "/etc/letsencrypt was kept. Delete it yourself to remove your certificates."
 }

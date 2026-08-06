@@ -146,20 +146,28 @@ gets a default that works from `PKGS` and `SERVICE`.
 | `do_disable` | the Boot tick again | `svc_disable` |
 | `do_status` | constantly — see below | derived from `is_installed` and `SERVICE` |
 | `do_help` | the Docs button | "this source ships no documentation" |
-| `is_installed` | inside `do_status` | `CHECK_BIN`, else `CHECK_FILE`, else all of `PKGS` |
+| `is_installed` | inside `do_status` | `CHECK_PKG`, else `CHECK_BIN`, else `CHECK_FILE`, else all of `PKGS` |
 | `version_line` | inside `do_status` | nothing |
 
 The last line of the file must be `app_main "$@"`. That is what turns the verb
 in `$1` into one of the calls above.
 
-Three variables drive the defaults:
+A few variables drive the defaults:
 
 ```sh
 PKGS="nginx nginx-common"   # what to install
 SERVICE="nginx"             # what to start
 CHECK_BIN="nginx"           # how to tell it is installed — a command on PATH
 CHECK_FILE="/etc/nginx"     # ...or a path, if there is no command
+CHECK_PKG="nginx"           # ...or a package, when the command is not proof
 ```
+
+**Reach for `CHECK_PKG` when the command might already exist.** On Alpine,
+busybox provides applets called `unzip`, `ping`, `wget`, `less` and about three
+hundred others *in the base image*, so `CHECK_BIN="unzip"` is true on a machine
+where nothing has been installed — the card reads "installed" and the Install
+button never gets pressed. `CHECK_PKG` asks the package manager, which busybox
+cannot answer for.
 
 Write `do_help` even when you write nothing else. It is the difference between
 software somebody installed and software somebody can use. Say where the config
@@ -275,7 +283,15 @@ lang_zh         # is the user reading Chinese
 fetch https://example.com/x.tar.gz /tmp/x.tar.gz
 fetch_stdout https://example.com/version.txt
 ensure_downloader        # install one if neither is here
+run_bounded 180 sh /tmp/vendor-install.sh    # give up after 180s, exit 124
 ```
+
+`fetch` bounds its own curl. `run_bounded` is for the case it cannot reach:
+somebody *else's* installer, which you hand control to and which may have no
+timeout of its own. Oh My Zsh's `install.sh` ends in a `git fetch`, and where
+github.com is dropped rather than refused — a firewall, a country, a flaky
+route — that call waits forever and the holder watches an install that never
+finishes. **Every vendor script goes through `run_bounded`.**
 
 **Web things**, because every distro puts them somewhere different:
 

@@ -31,6 +31,15 @@ do_install() {
 	fi
 }
 
+do_uninstall() {
+	# git-lfs depends on git, so removing git alone is refused — and apk says
+	# so on stdout while still exiting 0 ("World updated, but the following
+	# packages are not removed due to: git: git-lfs"). The remove reported
+	# success and git was still installed. Take the dependant first.
+	pkg_remove git-lfs
+	pkg_remove $(pmv PKGS)
+}
+
 do_help() { cat <<'EOF'
 Git
 

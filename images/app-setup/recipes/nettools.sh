@@ -16,7 +16,10 @@
 PKGS="iputils-ping net-tools iproute2 dnsutils traceroute mtr-tiny tcpdump"
 PKGS_rpm="iputils net-tools iproute bind-utils traceroute mtr tcpdump"
 PKGS_apk="iputils net-tools iproute2 bind-tools traceroute mtr tcpdump"
-CHECK_BIN="ping"
+# Not CHECK_BIN="ping": busybox provides a ping applet in the base Alpine
+# image, so every fresh Alpine box read as "network tools installed". tcpdump
+# is in all three package lists and busybox has no applet by that name.
+CHECK_PKG="tcpdump"
 
 version_line() { echo "ping, dig, ss, netstat, traceroute, mtr, tcpdump"; }
 

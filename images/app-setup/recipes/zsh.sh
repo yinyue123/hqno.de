@@ -31,7 +31,13 @@ do_install() {
 	if [ ! -d "$OMZ" ]; then
 		step "fetching Oh My Zsh"
 		if fetch_stdout https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh > /tmp/omz.sh 2>/dev/null; then
-			RUNZSH=no KEEP_ZSHRC=no CHSH=no sh /tmp/omz.sh --unattended >/dev/null 2>&1 ||
+			# raw.githubusercontent.com answering does not mean github.com
+			# will: a firewall that drops one and not the other is normal, and
+			# install.sh's `git fetch` then hangs with no timeout of its own.
+			# Bound it, and tell git to give up on a stalled transfer too.
+			GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME=30 \
+			RUNZSH=no KEEP_ZSHRC=no CHSH=no \
+				run_bounded 180 sh /tmp/omz.sh --unattended >/dev/null 2>&1 ||
 				warn "Oh My Zsh did not install; zsh itself is fine"
 			rm -f /tmp/omz.sh
 		else

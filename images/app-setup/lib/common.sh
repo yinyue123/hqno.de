@@ -331,6 +331,7 @@ enable_crb() {
 svc_supported() { [ "$INIT" != none ]; }
 
 svc_start() {
+	local _rc
 	[ -n "${1:-}" ] || return 0
 	case "$INIT" in
 		systemd) systemctl start "$1" ;;
@@ -338,6 +339,33 @@ svc_start() {
 		sysv)    service "$1" start || /etc/init.d/"$1" start ;;
 		*)       warn "no init system here; start $1 yourself"; return 1 ;;
 	esac
+	_rc=$?
+	svc_settle "$1"
+	return $_rc
+}
+
+# Wait for a just-started service to admit that it is running.
+#
+# `rc-service X start` returns as soon as it has forked the daemon, and the
+# very next `rc-service X status` answers 32 — OpenRC's "starting", not
+# "started". A recipe whose do_install ends in svc_start and whose card is then
+# painted by do_status milliseconds later showed the service as *down* on a
+# machine where it was coming up perfectly well. Same shape as the nginx reload
+# race, one layer down, and it hits every OpenRC recipe rather than one.
+#
+# Bounded and quiet: at worst this adds a second or two to an install that has
+# already spent a minute in the package manager. Never call it from do_status —
+# status must stay fast.
+svc_settle() {
+	local _i
+	[ -n "${1:-}" ] || return 0
+	_i=0
+	while [ "$_i" -lt 20 ]; do
+		svc_running "$1" && return 0
+		sleep 1
+		_i=$((_i + 1))
+	done
+	return 1
 }
 
 svc_stop() {
@@ -504,6 +532,30 @@ fetch() {          # fetch <url> <dest>
 		curl -fsSL --http1.1 --retry 3 --connect-timeout 20 -o "$_dst" "$_url"
 	else
 		wget -q -t 3 -T 20 -O "$_dst" "$_url"
+	fi
+}
+
+# run_bounded <seconds> <command...>
+#
+# fetch() bounds its own curl, but a *vendor* installer we hand control to does
+# not: Oh My Zsh's install.sh ends in `git fetch https://github.com/...`, and
+# git has no default timeout at all. Where github.com is blackholed rather than
+# refused — a firewall that drops instead of rejecting, which is the common
+# case — that fetch waits forever and the picker shows an install that never
+# ends. Anything that runs somebody else's script goes through here.
+#
+# Exit 124 is `timeout`'s "it ran out of time", and callers treat it as such.
+# Where there is no timeout(1) the command simply runs unbounded, which is no
+# worse than not having called this.
+run_bounded() {
+	local _secs
+	_secs="$1"; shift
+	if have timeout; then
+		# GNU coreutils kills the whole group after a grace period; busybox
+		# accepts the same first two arguments and ignores the rest.
+		timeout -k 10 "$_secs" "$@"
+	else
+		"$@"
 	fi
 }
 
@@ -878,7 +930,14 @@ tmp_dir() {
 # sourcing this file; the later definition wins.
 
 is_installed() {
-	local _bin _file _p _pkgs
+	local _bin _file _p _pkgs _pkg
+	# CHECK_PKG before CHECK_BIN, because a binary on PATH does not prove the
+	# package is there: busybox ships applets called unzip, ping, wget and less
+	# in the *base* Alpine image, so `have unzip` is true on a box where
+	# nothing has been installed at all. Ask the package manager when the
+	# answer has to be exact.
+	_pkg="$(pmv CHECK_PKG)"
+	if [ -n "$_pkg" ]; then pkg_present "$_pkg" && return 0 || return 1; fi
 	_bin="$(pmv CHECK_BIN)"
 	if [ -n "$_bin" ]; then have "$_bin" && return 0 || return 1; fi
 	_file="$(pmv CHECK_FILE)"

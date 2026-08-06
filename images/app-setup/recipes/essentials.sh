@@ -20,7 +20,11 @@
 PKGS="curl wget ca-certificates unzip tar gzip xz-utils bzip2 less procps"
 PKGS_rpm="wget ca-certificates unzip tar gzip xz bzip2 less procps-ng"
 PKGS_apk="curl wget ca-certificates unzip tar gzip xz bzip2 less procps-ng"
-CHECK_BIN="unzip"
+# Not CHECK_BIN="unzip": busybox provides unzip (and wget, and less) in the
+# base Alpine image, so a fresh Alpine box read as "basic tools installed" and
+# nobody ever installed them. The package named unzip exists on all three
+# families; busybox cannot satisfy a package check.
+CHECK_PKG="unzip"
 
 version_line() {
 	if have curl; then curl --version 2>/dev/null | head -1 | cut -c1-50
