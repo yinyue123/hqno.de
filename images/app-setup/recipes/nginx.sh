@@ -47,6 +47,20 @@ EOF
 	# One document root on every distro, so a tutorial that says
 	# /var/www/html is true here whichever image this is.
 	nginx_drop_default
+
+	# ...but not if a suite is already the default server. WordPress, Typecho
+	# and Nextcloud each write app-setup-<id>.conf holding `default_server`,
+	# and adding a second one here makes nginx refuse the whole config:
+	#
+	#   nginx: [emerg] a duplicate default server for 0.0.0.0:80
+	#
+	# which is what `install nginx` did to a machine that already had
+	# WordPress on it — nginx installed, and then would not start. The suite
+	# is already serving this address; leave it alone.
+	if default_site_holder >/dev/null; then
+		info "$(default_site_holder) is already serving the default address;"
+		info "leaving its site alone. nginx itself is installed and running."
+	else
 	cat > "$(nginx_conf_dir)/app-setup.conf" <<EOF
 # written by app-setup. Your own sites go in files next to this one; this is
 # the default server, which answers for any name that nothing else claims.
@@ -67,6 +81,7 @@ server {
     location ~ /\\. { deny all; }
 }
 EOF
+	fi
 
 	# Alpine's package ships no pid directory and nginx will not start without
 	# one; the systemd packages create theirs in a tmpfiles rule.

@@ -687,19 +687,30 @@ nginx_conf_dir() {
 #
 # Refuse at the top of do_install instead, and say who has the address. Evicting
 # somebody's WordPress to make room would be worse than not installing.
-web_claim_default() {
+# default_site_holder [id-to-ignore] — print the suites holding `default_server`,
+# and exit non-zero when there are none. `install nginx` uses it to keep its
+# hands off a document root that WordPress is already serving, which it
+# otherwise broke outright.
+default_site_holder() {
 	local _me _f _other _ids
-	_me="$1"
+	_me="${1:-}"
 	_ids=""
 	for _f in "$(nginx_conf_dir)"/app-setup-*.conf; do
 		[ -f "$_f" ] || continue
 		_other="${_f##*/app-setup-}"; _other="${_other%.conf}"
-		[ "$_other" = "$_me" ] && continue
+		[ -n "$_me" ] && [ "$_other" = "$_me" ] && continue
 		grep -q 'default_server' "$_f" 2>/dev/null || continue
-		_ids="$_ids $_other"
+		_ids="${_ids:+$_ids }$_other"
 	done
-	[ -n "$_ids" ] || return 0
-	err "another site is already serving this container's address:$_ids"
+	[ -n "$_ids" ] || return 1
+	printf '%s' "$_ids"
+}
+
+web_claim_default() {
+	local _me _other _ids
+	_me="$1"
+	_ids="$(default_site_holder "$_me")" || return 0
+	err "another site is already serving this container's address: $_ids"
 	err "nginx allows one default site on port 80, so $_me cannot take it too."
 	err "Remove the other one first, then install this:"
 	for _other in $_ids; do err "  app-setup remove $_other"; done
