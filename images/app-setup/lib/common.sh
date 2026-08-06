@@ -370,8 +370,14 @@ svc_start() {
 		*)       warn "no init system here; start $1 yourself"; return 1 ;;
 	esac
 	_rc=$?
-	svc_settle "$1"
-	return $_rc
+	[ "$_rc" = 0 ] || return $_rc
+	# Starting is not running. `systemctl start` on a Type=forking unit returns
+	# 0 the moment the daemon forks — mongod forks, dies of SIGILL a second
+	# later, and the install went on to print "MongoDB is running on
+	# 127.0.0.1:27017" over a corpse. Callers write `svc_start X || die`, and
+	# that is the right thing to happen, so it has to be able to fail.
+	svc_settle "$1" || return 1
+	return 0
 }
 
 # Wait for a just-started service to admit that it is running.
@@ -390,7 +396,7 @@ svc_settle() {
 	local _i
 	[ -n "${1:-}" ] || return 0
 	_i=0
-	while [ "$_i" -lt 20 ]; do
+	while [ "$_i" -lt 30 ]; do
 		svc_running "$1" && return 0
 		sleep 1
 		_i=$((_i + 1))
@@ -759,6 +765,37 @@ server {
     location = /favicon.ico { log_not_found off; access_log off; }
 }
 EOF
+}
+
+# --------------------------------------------------- the placeholder page --
+# Every web recipe drops a "it works" page into an empty document root, and
+# takes it away again on uninstall. Both halves were unconditional: `install
+# lamp` ran `rm -f $WEBROOT/index.html` and overwrote `index.php` whatever was
+# in it, and `uninstall` deleted `index.php` — while printing "files in
+# $WEBROOT stay". A holder who replaced the page with their own site lost it
+# to a *second* install and again to the removal.
+#
+# So the pages carry a marker, and nothing is deleted unless the marker is
+# there. Rule one of this whole catalogue is that uninstall does not delete
+# somebody's data, and a page they wrote is their data.
+PLACEHOLDER_MARK='app-setup placeholder'
+
+# True when the path is safe for us to write over or delete: either it is not
+# there at all, or it is a page this tool wrote.
+placeholder_ours() {
+	[ -e "$1" ] || return 0
+	grep -qF "$PLACEHOLDER_MARK" "$1" 2>/dev/null
+}
+
+# True when the document root has no page of somebody else's in it.
+docroot_is_ours() {
+	placeholder_ours "$1/index.php" && placeholder_ours "$1/index.html"
+}
+
+# Take our own placeholder away, and only ours.
+placeholder_remove() {
+	placeholder_ours "$1" && rm -f "$1"
+	return 0
 }
 
 # Who should own the files under the document root. php-fpm's pool user is the

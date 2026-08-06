@@ -35,6 +35,26 @@ refuse_musl() {
 	exit 1
 }
 
+# MongoDB 5.0 and later are compiled with AVX and there is no build without it.
+# On a CPU that has no AVX — an older Xeon, a budget VPS, some of the cheaper
+# cloud instances — mongod installs perfectly, starts, and is killed by the
+# kernel with SIGILL a second later. Measured on this very host: `Main PID
+# (code=killed, signal=ILL)`.
+#
+# Checking costs nothing and saves a 190MB download onto a machine that can
+# never run it. Without the check the failure is unreadable: the service is
+# simply "stopped" and nothing says why.
+refuse_no_avx() {
+	grep -qm1 -E '^flags.* avx( |$)' /proc/cpuinfo 2>/dev/null && return 0
+	err "This machine's CPU has no AVX, and MongoDB $MONGO_VER needs it — every"
+	err "build from 5.0 onwards is compiled with it. mongod would install, start,"
+	err "and be killed with SIGILL (illegal instruction) a moment later."
+	err "Options: MongoDB 4.4 is the last version without AVX but is long out of"
+	err "support, so the better answer is PostgreSQL — it has JSONB and covers"
+	err "most of what people want MongoDB for. Or move to a host with a newer CPU."
+	exit 1
+}
+
 deb_codename() {
 	# MongoDB publishes per-codename. A release they have not built for yet —
 	# a brand new Debian, say — falls back to the previous one, which works
@@ -50,6 +70,7 @@ deb_codename() {
 
 do_install() {
 	refuse_musl
+	refuse_no_avx
 	ensure_downloader
 
 	case "$PMF" in
@@ -93,7 +114,7 @@ EOF
 		chown -R mongodb:mongodb /var/lib/mongo /var/log/mongodb 2>/dev/null || true
 
 	svc_enable "$(svc)"
-	svc_start "$(svc)" || die "mongod would not start. Check /var/log/mongodb/mongod.log — on a small container this is usually memory."
+	svc_start "$(svc)" || die "mongod started and then stopped. Check /var/log/mongodb/mongod.log and \`journalctl -u mongod\` — on a small container this is usually memory, and \`signal=ILL\` there means the CPU is too old for this MongoDB."
 
 	ok "MongoDB is running on 127.0.0.1:27017 with no authentication."
 	warn "Turn authentication on before anything else can reach it — the docs button says how."

@@ -64,9 +64,11 @@ do_install() {
 		;;
 	esac
 
+	if docroot_is_ours "$WEBROOT"; then
 	rm -f "$WEBROOT/index.html"
 	cat > "$WEBROOT/index.php" <<'EOF'
 <?php ?><!doctype html>
+<!-- app-setup placeholder -->
 <meta charset="utf-8">
 <title>LAMP is running</title>
 <style>body{font:16px/1.7 system-ui,sans-serif;max-width:36rem;margin:12vh auto;padding:0 1rem}
@@ -80,6 +82,10 @@ code{background:#f4f4f5;padding:.1em .35em;border-radius:3px}</style>
 <p>This file is <code><?= __FILE__ ?></code>. Replace it with your site.</p>
 <p>Your database password is in <code>/root/.app-setup/mysql.txt</code>.</p>
 EOF
+	else
+		info "$WEBROOT already has a page in it that app-setup did not write."
+		info "Leaving it alone — Apache and PHP are serving whatever is there."
+	fi
 	chown -R "$(web_user)":"$(web_group)" "$WEBROOT" 2>/dev/null || true
 
 	svc_restart "$(svc)" || die "apache would not restart after adding PHP"
@@ -93,7 +99,7 @@ do_uninstall() {
 	recipe php    uninstall
 	recipe mysql  uninstall
 	recipe apache uninstall
-	rm -f "$WEBROOT/index.php"
+	placeholder_remove "$WEBROOT/index.php"
 }
 
 do_start()   { svc_start "$(svc)" || true; svc_start "$(php_service)" 2>/dev/null || true; svc_start mariadb || true; ok "started"; }

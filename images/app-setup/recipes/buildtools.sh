@@ -13,7 +13,13 @@
 # memory: 512M
 . /usr/lib/app-setup/common.sh
 
-CHECK_BIN="gcc"
+# Not CHECK_BIN="gcc". On Ubuntu the recipe installs the build-essential
+# meta-package, and purging it leaves /usr/bin/gcc behind whenever anything
+# else still depends on gcc — so a successful Remove left the card saying
+# installed. Key the check on the package each family is actually asked for.
+CHECK_PKG="build-essential"
+CHECK_PKG_rpm="gcc"
+CHECK_PKG_apk="build-base"
 
 version_line() {
 	printf '%s, make %s' \

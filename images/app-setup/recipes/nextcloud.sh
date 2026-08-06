@@ -91,7 +91,11 @@ do_install() {
 		info "Nextcloud is already unpacked in $NC_ROOT; leaving the files alone"
 	else
 		_tmp="$(tmp_dir)"
-		step "downloading Nextcloud (about 200MB — this is the slow part)"
+		# 280MB as of Nextcloud 31 — measured, not remembered. On a slow link
+		# this single step can take an hour, and somebody watching a silent
+		# terminal needs to know that before they conclude it has hung.
+		step "downloading Nextcloud (280MB — this is the slow part, and on a slow"
+		step "connection it can take an hour. It is not stuck.)"
 		if fetch "https://download.nextcloud.com/server/releases/latest.tar.bz2" "$_tmp/nc.tar.bz2"; then
 			step "unpacking into $NC_ROOT"
 			tar -xjf "$_tmp/nc.tar.bz2" -C "$_tmp" ||

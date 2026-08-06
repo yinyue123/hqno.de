@@ -59,7 +59,7 @@ CapabilityBoundingSet=CAP_NET_BIND_SERVICE"
 
 	mkdir -p "$WEBROOT" /etc/caddy
 	[ -f "$WEBROOT/index.html" ] || cat > "$WEBROOT/index.html" <<EOF
-<!doctype html><meta charset="utf-8"><title>Caddy is running</title>
+<!doctype html><!-- app-setup placeholder --><meta charset="utf-8"><title>Caddy is running</title>
 <h1>Caddy is running</h1>
 <p>This page is $WEBROOT/index.html.</p>
 EOF

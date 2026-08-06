@@ -45,9 +45,11 @@ do_install() {
 	php_nginx_site "$WEBROOT" > "$(nginx_conf_dir)/app-setup.conf"
 	nginx_test_reload || die "nginx will not reload with the PHP config"
 
+	if docroot_is_ours "$WEBROOT"; then
 	rm -f "$WEBROOT/index.html"
 	cat > "$WEBROOT/index.php" <<'EOF'
 <?php
+// app-setup placeholder
 $db = 'not checked';
 try {
   $cnf = @parse_ini_file('/root/.my.cnf');
@@ -69,6 +71,10 @@ li{margin:.2em 0}</style>
 <p>Your database password is in <code>/root/.app-setup/mysql.txt</code>.
 Run <code>app-setup</code> to add WordPress, Typecho or Nextcloud on top.</p>
 EOF
+	else
+		info "$WEBROOT already has a page in it that app-setup did not write."
+		info "Leaving it alone — nginx and PHP are serving whatever is there."
+	fi
 	chown -R "$(web_user)":"$(web_group)" "$WEBROOT" 2>/dev/null || true
 
 	ok "LNMP is up"
@@ -81,7 +87,7 @@ do_uninstall() {
 	recipe php   uninstall
 	recipe mysql uninstall
 	recipe nginx uninstall
-	rm -f "$WEBROOT/index.php"
+	placeholder_remove "$WEBROOT/index.php"
 }
 
 do_start() {
