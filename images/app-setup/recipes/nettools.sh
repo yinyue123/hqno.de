@@ -28,6 +28,23 @@ do_install() {
 	pkg_install $(pmv PKGS)
 }
 
+# iproute2 is not a network *tool* here, it is plumbing: on Debian and Ubuntu
+# nginx and a good deal else depend on it, and apt answers a purge that
+# includes it with "impossible situation" and then removes none of the other
+# six either. The whole uninstall was a silent no-op. Ask for the six.
+do_uninstall() {
+	local _p _keep _want
+	_keep="iproute2 iproute"
+	_want=""
+	for _p in $(pmv PKGS); do
+		case " $_keep " in *" $_p "*) continue ;; esac
+		_want="$_want $_p"
+	done
+	pkg_remove $_want
+	info "ip(8) was left installed — it is part of the base system here, not"
+	info "part of this package, and removing it would take nginx with it."
+}
+
 do_help() { cat <<'EOF'
 Network tools
 

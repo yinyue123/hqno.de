@@ -234,20 +234,50 @@ pkg_install() {
 	esac
 }
 
+# Every branch here used to end in `|| true`, so a removal that removed nothing
+# was indistinguishable from one that worked. Two ways that happens, both found
+# on real containers rather than by reading:
+#
+#   apt   the transaction is all-or-nothing. One package the system depends on
+#         — iproute2 in the nettools list — and apt resolves the whole thing to
+#         "impossible situation" and removes *none* of the other six. `remove
+#         nettools` and `remove essentials` were both silent no-ops on Ubuntu.
+#   apk   refuses a package something else depends on, says so on stdout, and
+#         exits 0 regardless. `remove git` and `remove certbot` left both
+#         installed and reported success.
+#
+# `|| true` stays — a recipe removing a package that was never installed must
+# not fail — but now something looks at the result and says so. Nothing here
+# retries per-package: on apt that would ask it to remove nginx and half the
+# system to satisfy one purge, which is worse than doing nothing.
 pkg_remove() {
+	local _out _rc
 	[ $# -gt 0 ] || return 0
 	need_root
 	pm_wait_unlocked
 	step "removing: $*"
+	_rc=0
 	case "$PM" in
-		apt)    apt_get purge -y "$@" || true
-		        apt_get autoremove -y || true ;;
-		dnf)    dnf remove -y "$@" || true ;;
-		yum)    yum remove -y "$@" || true ;;
-		apk)    apk del "$@" || true ;;
-		zypper) zypper -n remove "$@" || true ;;
-		pacman) pacman -Rns --noconfirm "$@" || true ;;
+		apt)    _out="$(apt_get purge -y "$@" 2>&1)" || _rc=$?
+		        printf '%s\n' "$_out"
+		        apt_get autoremove -y >/dev/null 2>&1 || true ;;
+		dnf)    _out="$(dnf remove -y "$@" 2>&1)" || _rc=$?
+		        printf '%s\n' "$_out" ;;
+		yum)    _out="$(yum remove -y "$@" 2>&1)" || _rc=$?
+		        printf '%s\n' "$_out" ;;
+		apk)    _out="$(apk del "$@" 2>&1)" || _rc=$?
+		        printf '%s\n' "$_out"
+		        case "$_out" in *"not removed due to"*) _rc=1 ;; esac ;;
+		zypper) _out="$(zypper -n remove "$@" 2>&1)" || _rc=$?
+		        printf '%s\n' "$_out" ;;
+		pacman) _out="$(pacman -Rns --noconfirm "$@" 2>&1)" || _rc=$?
+		        printf '%s\n' "$_out" ;;
 	esac
+	[ "$_rc" = 0 ] && return 0
+	warn "some of those packages are still here: the system depends on them,"
+	warn "and removing them would take other software with it. Nothing was"
+	warn "broken; there is just less to remove than the list suggests."
+	return 0
 }
 
 pkg_present() {

@@ -31,6 +31,29 @@ version_line() {
 	else echo "wget, unzip, tar, less"; fi
 }
 
+# Half of this list is not an extra, it is the machine: dpkg unpacks with tar
+# and gzip, https needs ca-certificates, and apt itself pulls in procps. The
+# default do_uninstall asked apt to purge all ten, apt answered "impossible
+# situation", removed *none* of them and said nothing — so Remove looked like
+# it worked and changed nothing at all.
+#
+# Ask only for the ones that are genuinely additions, and say what stayed.
+# Nobody who presses Remove on "Basic tools" means "take tar away".
+KEEP="tar gzip less procps procps-ng ca-certificates"
+
+do_uninstall() {
+	local _p _want
+	_want=""
+	for _p in $(pmv PKGS); do
+		case " $KEEP " in *" $_p "*) continue ;; esac
+		_want="$_want $_p"
+	done
+	pkg_remove $_want
+	info "tar, gzip, less, ps and the root certificates were left installed."
+	info "They are part of this machine rather than part of this package —"
+	info "removing them would break the package manager and https."
+}
+
 do_help() { cat <<'EOF'
 Basic tools
 
