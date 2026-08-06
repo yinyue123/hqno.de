@@ -580,19 +580,45 @@ fetch() {          # fetch <url> <dest>
 # case — that fetch waits forever and the picker shows an install that never
 # ends. Anything that runs somebody else's script goes through here.
 #
-# Exit 124 is `timeout`'s "it ran out of time", and callers treat it as such.
-# Where there is no timeout(1) the command simply runs unbounded, which is no
-# worse than not having called this.
+# Returns **124** on timeout, on every system. Two reasons it is not a plain
+# call to timeout(1):
+#
+#   - timeout(1) signals the process it started. The thing that actually hangs
+#     is a *grandchild*: `sh install.sh` is what we launch, and the `git fetch`
+#     inside it is what waits forever. Killing the wrapper leaves the fetch
+#     running. Here the child gets its own session, and the whole group is
+#     signalled, so the tree goes.
+#   - busybox's timeout returns 143 (128+TERM) where GNU returns 124. Neither
+#     number is portable, and busybox setsid has no `-w`, so
+#     `setsid -w timeout …` is not a way out. This returns 124 either way.
+#
+# **Everything here is guarded**, because this file runs under `set -e` and the
+# expected path is a `kill` that fails: after the TERM lands there is no group
+# left for the KILL to find, and one unguarded non-zero would take the caller
+# down at exactly the moment it is trying to recover. Callers write
+# `run_bounded N cmd || warn …`, which is itself guarded — but a helper must
+# not depend on its caller for that.
 run_bounded() {
-	local _secs
+	local _secs _pid _i _rc
 	_secs="$1"; shift
-	if have timeout; then
-		# GNU coreutils kills the whole group after a grace period; busybox
-		# accepts the same first two arguments and ignores the rest.
-		timeout -k 10 "$_secs" "$@"
-	else
-		"$@"
-	fi
+	_rc=0
+	if ! have setsid; then "$@" || _rc=$?; return $_rc; fi
+	setsid "$@" &
+	_pid=$!
+	_i=0
+	while kill -0 "$_pid" 2>/dev/null; do
+		if [ "$_i" -ge "$_secs" ]; then
+			kill -TERM "-$_pid" 2>/dev/null || kill -TERM "$_pid" 2>/dev/null || true
+			sleep 2
+			kill -KILL "-$_pid" 2>/dev/null || kill -KILL "$_pid" 2>/dev/null || true
+			wait "$_pid" 2>/dev/null || true
+			return 124
+		fi
+		sleep 1
+		_i=$((_i + 1))
+	done
+	wait "$_pid" || _rc=$?
+	return $_rc
 }
 
 fetch_stdout() {
