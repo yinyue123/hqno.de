@@ -12,13 +12,23 @@
  * when a key is pressed. Adding software is dropping a file in a directory —
  * see docs/app-setup-sources.md — and never touches this file.
  *
- * The screen is nmtui's, deliberately: blue root, grey windows, a cyan bar on
- * the selected row, a help line along the bottom. Anyone who has configured a
- * network on a Red Hat box already knows how to drive it, and the ones who
- * have not can drive it with four arrow keys, Enter and Space and nothing
- * else. No letter accelerators to memorise, no mouse to hunt with: you walk
- * into a list, you press Enter on a thing, and you get a menu of what can be
- * done to that thing. A television remote, not a keyboard shortcut sheet.
+ * The screen is a video site's, deliberately: a strip of categories along the
+ * top with Installed as the first of them, and under it a grid of cards, each
+ * with a coloured cover, a name, a line saying what it is for and a line
+ * saying where it stands. Press Enter on a card and everything that can be
+ * done to that thing is laid along the top of the next screen. Nobody has to
+ * be taught this; they have been driving it in a browser for years.
+ *
+ * Two ways in, neither a patch over the other. Four arrow keys and Enter reach
+ * every control, which is the path that always works — over ssh, on a terminal
+ * with no mouse, or with both hands already on the keys. And the mouse clicks
+ * whatever it can see, which is faster when it is there. Back is a button in
+ * the top right corner of every screen rather than a key you have to know, so
+ * holding Up walks you out of the program.
+ *
+ * The palette is still newt's, so this and nmtui look like the same family:
+ * white on blue for the page, black on cyan for whatever the cursor is on, a
+ * help line along the bottom naming the keys that do something here.
  *
  * It is C with nothing but libc so it can be linked static and copied into
  * every image we publish, Alpine's musl included. That rules out ncurses, so
@@ -52,7 +62,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define APP_VERSION   "2.0.0"
+#define APP_VERSION   "2.1.0"
 #define MAX_PKGS      512
 #define MAX_CATS      32
 #define MAX_PARAMS    12
@@ -69,15 +79,19 @@
  * the same way without patching anything here.
  */
 typedef struct { const char *en, *zh; } L;
-static int g_zh = 0;                       /* chosen from LANG, or --lang */
+static int g_zh = 0;                       /* English unless asked otherwise */
 #define S(l) (g_zh ? (l).zh : (l).en)
+
+/* The label of the *other* language, which is what a switch should be called:
+ * pressing a button that says 中文 gets you 中文. Never S()'d — it is the one
+ * string in here that must not follow the current language. */
+static const char *lang_other(void) { return g_zh ? "English" : "中文"; }
 
 static const L T_TITLE     = {"app-setup", "app-setup"};
 static const L T_SUBTITLE  = {"software manager", "软件管家"};
 static const L T_INSTALLP  = {"Installed",    "已安装"};
-static const L T_CATS      = {"Categories",   "分类"};
 static const L T_INSTALL   = {"Install",      "安装"};
-static const L T_UPDATE    = {"Update / reinstall", "更新（重新安装）"};
+static const L T_UPDATE    = {"Update",       "更新"};
 static const L T_REMOVE    = {"Uninstall",    "卸载"};
 static const L T_START     = {"Start",        "启动"};
 static const L T_STOP      = {"Stop",         "停止"};
@@ -135,10 +149,19 @@ static const L T_NOPARAM   = {"This software has no settings to change.",
                              "这个软件没有可以改的参数。"};
 static const L T_PARAMSAVED= {"Settings saved. They apply the next time it is installed.",
                              "参数已保存，下次安装时生效。"};
-static const L T_HELPMAIN  = {"↑↓ move   ←→ pane   Enter open   L 中文   q quit",
-                             "↑↓ 选择   ←→ 换栏   回车 打开   L English   q 退出"};
-static const L T_HELPMENU  = {"↑↓ move   Enter / Space run   ← Esc back",
-                             "↑↓ 选择   回车/空格 执行   ← Esc 返回"};
+
+/* The home screen and the detail page. Both say which way is out, because the
+ * way out is a button you walk to rather than a key you have to know. */
+static const L T_ALL       = {"All",           "全部"};
+static const L T_HELPHOME  = {"↑↓←→ move    Enter open    ↑ to the top row",
+                             "↑↓←→ 移动    回车 打开    ↑ 走到顶是「返回」"};
+static const L T_HELPDET   = {"←→ button    Enter run    ↓ into the text",
+                             "←→ 选按钮    回车 执行    ↓ 进正文滚动"};
+static const L T_SERVICE   = {"Service",      "服务"};
+static const L T_VERSION   = {"Version",      "版本"};
+static const L T_INCLUDES  = {"Includes",     "包含"};
+static const L T_LOG       = {"Log",          "日志"};
+static const L T_NITEMS    = {"%d",           "%d 项"};
 static const L T_HELPFORM  = {"↑↓ field   Space toggle   ←→ choose   Enter OK   Esc cancel",
                              "↑↓ 换行   空格 切换   ←→ 选值   回车 确定   Esc 取消"};
 static const L T_HELPPAGE  = {"↑↓ scroll   Enter / Esc back", "↑↓ 滚动   回车/Esc 返回"};
@@ -306,6 +329,11 @@ static void mkdir_p(const char *path)
 	mkdir(buf, 0755);
 }
 
+/* Whether the terminal can be sent UTF-8 and colour at all. Declared up here
+ * rather than with the screen because the width and truncation helpers below
+ * need it: what they emit has to be drawable, not merely the right width. */
+static int g_color = 1, g_utf8 = 1;
+
 /* ------------------------------------------------------------------- utf8 --
  *
  * Two things are needed of it: how many terminal columns a string occupies,
@@ -384,20 +412,38 @@ static int u8trunc(char *dst, size_t cap, const char *src, int cols)
 }
 
 /* Truncate to `cols` and mark it with an ellipsis when something was cut, so a
- * clipped summary does not read as a sentence that simply stops. */
+ * clipped summary does not read as a sentence that simply stops.
+ *
+ * The mark is one column of UTF-8 or three of ASCII, and the budget is taken
+ * off before the truncation either way — the whole point of this file's own
+ * width table is that nothing it draws is allowed to be one column out, and a
+ * `…` emitted to a Latin-1 terminal is three bytes of mojibake. */
 static void u8ellipsis(char *dst, size_t cap, const char *src, int cols)
 {
 	if (u8width(src) <= cols) { copy_str(dst, cap, src); return; }
-	if (cols < 2) { u8trunc(dst, cap, src, cols); return; }
-	int w = u8trunc(dst, cap, src, cols - 1);
-	(void)w;
+	const char *mark = g_utf8 ? "…" : "...";
+	int mw = g_utf8 ? 1 : 3;
+	if (cols <= mw) { u8trunc(dst, cap, src, cols); return; }
+	u8trunc(dst, cap, src, cols - mw);
 	size_t n = strlen(dst);
-	if (n + 4 < cap) strcpy(dst + n, "…");
+	if (n + strlen(mark) + 1 < cap) strcpy(dst + n, mark);
 }
 
 /* Wrap to `cols`, breaking on spaces where there are any and between
  * characters where there are not — Chinese summaries have no spaces to break
  * on and would otherwise never wrap. */
+/* `label` followed by spaces out to `cols` display columns. printf's %-*s pads
+ * to a byte count, and every label in here has a Chinese form that is fewer
+ * columns per byte than its English one — so a column laid out with %-*s lines
+ * up in one language and not the other. */
+static void u8pad(char *dst, size_t cap, const char *label, int cols)
+{
+	size_t n = 0;
+	while (label[n] && n + 1 < cap) { dst[n] = label[n]; n++; }
+	for (int i = u8width(label); i < cols && n + 1 < cap; i++) dst[n++] = ' ';
+	dst[n] = '\0';
+}
+
 static int u8wrap(const char *src, int cols, char out[][512], int maxlines)
 {
 	int line = 0;
@@ -999,8 +1045,22 @@ enum {
 	P_HELP,
 	P_RUN, P_STOPPED, P_ABSENT, P_ERR, P_WARN, P_DIM,
 	P_BARFULL, P_BAREMPTY,
+	/* the card screen: chips along the top, cards under them, and the two
+	 * buttons that live on the root itself */
+	P_CHIP, P_CHIPSEL, P_CHIPCUR,
+	P_CARDB, P_CARDBSEL, P_BTNDIM,
+	P_RBTN, P_RBTNACT,
+	/* the state words again, on blue: a card is drawn on the root rather than
+	 * in a window, so every colour it uses needs a blue-backed twin */
+	P_RUNB, P_STOPPEDB, P_ABSENTB, P_ERRB, P_WARNB,
+	/* one cover colour per category, and the same hue bold for the wordmark
+	 * printed on it. Indexed by cover_of() — six is one more than the built-in
+	 * categories, so a source that invents its own still gets a colour. */
+	P_COV0, P_COV1, P_COV2, P_COV3, P_COV4, P_COV5,
+	P_LOGO0, P_LOGO1, P_LOGO2, P_LOGO3, P_LOGO4, P_LOGO5,
 	P_COUNT
 };
+#define N_COVERS 6
 
 static const char *SGR[P_COUNT] = {
 	"0;37;44",       /* ROOT      white on blue                       */
@@ -1026,35 +1086,70 @@ static const char *SGR[P_COUNT] = {
 	"0;1;30;47",     /* DIM       grey on grey                        */
 	"0;1;34;44",     /* BARFULL   blue on blue                        */
 	"0;37;47",       /* BAREMPTY  grey on grey                        */
+	"0;37;44",       /* CHIP      a category, not the current one     */
+	"0;34;46",       /* CHIPSEL   the current category               */
+	"0;30;46",       /* CHIPCUR   …and the cursor is on the strip     */
+	"0;37;44",       /* CARDB     card border                         */
+	"0;1;36;44",     /* CARDBSEL  card border under the cursor        */
+	"0;1;30;44",     /* BTNDIM    a button that cannot be pressed yet */
+	"0;37;44",       /* RBTN      Back / language, on the root        */
+	"0;30;46",       /* RBTNACT   …with the cursor on it              */
+	"0;1;32;44",     /* RUNB      green on blue                       */
+	"0;1;33;44",     /* STOPPEDB  yellow on blue                      */
+	"0;1;30;44",     /* ABSENTB   grey on blue                        */
+	"0;1;31;44",     /* ERRB      red on blue                         */
+	"0;31;44",       /* WARNB     red on blue — a size that will not fit */
+	"0;35;44",       /* COV0      suites      magenta                 */
+	"0;36;44",       /* COV1      web servers cyan                    */
+	"0;32;44",       /* COV2      databases   green                   */
+	"0;33;44",       /* COV3      dev tools   yellow                  */
+	"0;37;44",       /* COV4      system      grey                    */
+	"0;31;44",       /* COV5      anything else                       */
+	"0;1;35;44",     /* LOGO0..5  the wordmark, same hue, bold        */
+	"0;1;36;44",
+	"0;1;32;44",
+	"0;1;33;44",
+	"0;1;37;44",
+	"0;1;31;44",
 };
 
 typedef struct { char ch[5]; unsigned char attr; unsigned char cont; } Cell;
 
 static Cell *g_grid = NULL;
 static int g_w = 80, g_h = 24, g_gw = 0, g_gh = 0;
-static int g_color = 1, g_utf8 = 1;
 
 static const char *BX_TL, *BX_TR, *BX_BL, *BX_BR, *BX_H, *BX_V;
 static const char *BX_LT, *BX_RT;
+/* The same box in double rule, which is what a card under the cursor is drawn
+ * in. Colour says it too, but a monochrome terminal is still a terminal. */
+static const char *B2_TL, *B2_TR, *B2_BL, *B2_BR, *B2_H, *B2_V;
+static const char *B2_LT, *B2_RT;
 static const char *MK_RUN, *MK_STOP, *MK_ABSENT, *MK_ERR, *MK_OK, *MK_DOT;
 static const char *BAR_F, *BAR_E, *AR_L, *AR_R, *AR_UD;
+static const char *TH_COVER, *CH_MORE;
 
 static void pick_glyphs(void)
 {
 	if (g_utf8) {
 		BX_TL = "┌"; BX_TR = "┐"; BX_BL = "└"; BX_BR = "┘";
 		BX_H  = "─"; BX_V  = "│"; BX_LT = "├"; BX_RT = "┤";
+		B2_TL = "╔"; B2_TR = "╗"; B2_BL = "╚"; B2_BR = "╝";
+		B2_H  = "═"; B2_V  = "║"; B2_LT = "╟"; B2_RT = "╢";
 		MK_RUN = "●"; MK_STOP = "○"; MK_ABSENT = "·";
 		MK_ERR = "✗"; MK_OK = "✓"; MK_DOT = "·";
 		BAR_F = "█"; BAR_E = "░";
 		AR_L = "◄"; AR_R = "►"; AR_UD = "↑↓";
+		TH_COVER = "▒"; CH_MORE = "›";
 	} else {
 		BX_TL = "+"; BX_TR = "+"; BX_BL = "+"; BX_BR = "+";
 		BX_H = "-"; BX_V = "|"; BX_LT = "+"; BX_RT = "+";
+		B2_TL = "+"; B2_TR = "+"; B2_BL = "+"; B2_BR = "+";
+		B2_H = "="; B2_V = "|"; B2_LT = "+"; B2_RT = "+";
 		MK_RUN = "*"; MK_STOP = "o"; MK_ABSENT = "-";
 		MK_ERR = "x"; MK_OK = "+"; MK_DOT = "-";
 		BAR_F = "#"; BAR_E = "-";
 		AR_L = "<"; AR_R = ">"; AR_UD = "^v";
+		TH_COVER = ":"; CH_MORE = ">";
 	}
 }
 
@@ -1126,17 +1221,6 @@ static void gfill(int row, int col, int w, const char *glyph, int attr)
 	for (int i = 0; i < w; i++) gput(row, col + i, glyph, attr, 1);
 }
 
-/* Paint a background without disturbing what is already written on it — used
- * to lay a selection bar under a row that has already been composed. */
-static void gtint(int row, int col, int w, int attr)
-{
-	if (row < 0 || row >= g_gh || !row_visible(row)) return;
-	for (int i = 0; i < w; i++) {
-		int c = col + i;
-		if (c < 0 || c >= g_gw) continue;
-		g_grid[row * g_gw + c].attr = (unsigned char)attr;
-	}
-}
 
 /* Every cell is emitted, background included: a blue root that stopped at the
  * last non-space column would show the terminal's own background for the rest
@@ -1192,6 +1276,11 @@ static struct termios g_saved_tio;
 static int g_raw = 0;
 static volatile sig_atomic_t g_resized = 0;
 
+/* Mouse. `g_mouse` is the wish, `g_mouse_on` is whether the terminal is
+ * currently reporting; the last click lands in g_mx/g_my as a 0-based cell. */
+static int g_mouse = 1, g_mouse_on = 0;
+static int g_mx = 0, g_my = 0;
+
 static void on_winch(int sig) { (void)sig; g_resized = 1; }
 
 static void term_measure(void)
@@ -1218,15 +1307,33 @@ static void term_raw(void)
 	t.c_cc[VTIME] = 0;
 	tcsetattr(STDIN_FILENO, TCSAFLUSH, &t);
 	g_raw = 1;
-	/* alt screen, cursor off. No mouse reporting: everything here is
-	 * reachable from the arrow keys, and a terminal that grabs the mouse
-	 * takes copy-and-paste away from the holder for no gain. */
+	/* alt screen, cursor off, and click reporting in SGR coordinates.
+	 *
+	 * 1000 is presses and releases only — not 1002 or 1003, which also report
+	 * motion. Nothing here needs to follow a drag, and the fewer events the
+	 * terminal sends the less there is to go wrong. 1006 is what makes a click
+	 * past column 223 arrive intact; without it the coordinates are a single
+	 * byte and a wide terminal silently stops responding down its right-hand
+	 * side.
+	 *
+	 * Turning this on costs the terminal's own drag-to-select. Shift-drag
+	 * still selects in every terminal we know of, and `--no-mouse` is there
+	 * for the one that does not — the keyboard path is unaffected either way,
+	 * which is why this can be on by default. */
 	if (write(STDOUT_FILENO, "\x1b[?1049h\x1b[?25l\x1b[2J", 17) < 0) { }
+	if (g_mouse) {
+		if (write(STDOUT_FILENO, "\x1b[?1000h\x1b[?1006h", 16) < 0) { }
+		g_mouse_on = 1;
+	}
 }
 
 static void term_cooked(void)
 {
 	if (!g_raw) return;
+	if (g_mouse_on) {
+		if (write(STDOUT_FILENO, "\x1b[?1006l\x1b[?1000l", 16) < 0) { }
+		g_mouse_on = 0;
+	}
 	if (write(STDOUT_FILENO, "\x1b[0m\x1b[?25h\x1b[?1049l", 18) < 0) { }
 	tcsetattr(STDIN_FILENO, TCSAFLUSH, &g_saved_tio);
 	g_raw = 0;
@@ -1236,7 +1343,8 @@ static void on_fatal(int sig) { term_cooked(); _exit(128 + sig); }
 
 enum {
 	K_NONE = 0, K_UP = 256, K_DOWN, K_LEFT, K_RIGHT, K_PGUP, K_PGDN,
-	K_HOME, K_END, K_TAB, K_BTAB, K_ENTER, K_ESC, K_BACK, K_RESIZE, K_TIMEOUT
+	K_HOME, K_END, K_TAB, K_BTAB, K_ENTER, K_ESC, K_BACK, K_RESIZE, K_TIMEOUT,
+	K_CLICK, K_WHEELUP, K_WHEELDN
 };
 
 static int read_byte(int timeout_ms, unsigned char *out)
@@ -1281,10 +1389,25 @@ static int read_key_to(int timeout_ms)
 		while (len < (int)sizeof seq - 1) {
 			if (read_byte(60, &seq[len]) <= 0) break;
 			unsigned char x = seq[len++];
+			/* A mouse report is `<b;x;yM` for a press and `…m` for the
+			 * release, so lowercase 'm' has to end the sequence too — but
+			 * only for that shape, or an ordinary CSI would stop early. */
 			if ((x >= 'A' && x <= 'Z') || x == '~') break;
+			if (x == 'm' && seq[0] == '<') break;
 		}
 		seq[len] = '\0';
 		if (len == 0) return K_ESC;
+
+		if (seq[0] == '<') {
+			int b = 0, x = 0, y = 0;
+			if (sscanf((char *)seq + 1, "%d;%d;%d", &b, &x, &y) != 3) return K_NONE;
+			if (seq[len - 1] != 'M') return K_NONE;   /* release: nothing to do */
+			g_mx = x - 1; g_my = y - 1;               /* the wire is 1-based */
+			if (b & 64) return (b & 1) ? K_WHEELDN : K_WHEELUP;
+			if ((b & 3) == 0) return K_CLICK;         /* left button only */
+			return K_NONE;
+		}
+
 		switch (seq[len - 1]) {
 		case 'A': return K_UP;
 		case 'B': return K_DOWN;
@@ -1316,6 +1439,45 @@ static int read_key_to(int timeout_ms)
 }
 
 static int read_key(void) { return read_key_to(-1); }
+
+/* ------------------------------------------------------------ hit testing --
+ *
+ * Where the clickable things are. A screen registers a rectangle as it draws
+ * it, which is the only arrangement that cannot drift: there is no second
+ * description of the layout to keep in step, and a card that moved because the
+ * window was resized takes its click target with it.
+ *
+ * Later entries win, so a button drawn on top of a panel is found first.
+ */
+enum { H_NONE = 0, H_BACK, H_LANG, H_CHIP, H_CARD, H_BTN, H_BODY };
+
+typedef struct { short r0, c0, r1, c1; short what, idx; } Hit;
+static Hit g_hit[256];
+static int g_nhit = 0;
+
+static void hit_clear(void) { g_nhit = 0; }
+
+static void hit_add(int what, int idx, int row, int col, int h, int w)
+{
+	if (g_nhit >= (int)(sizeof g_hit / sizeof g_hit[0]) || w <= 0 || h <= 0) return;
+	Hit *z = &g_hit[g_nhit++];
+	z->r0 = (short)row; z->c0 = (short)col;
+	z->r1 = (short)(row + h - 1); z->c1 = (short)(col + w - 1);
+	z->what = (short)what; z->idx = (short)idx;
+}
+
+static int hit_test(int row, int col, int *idx)
+{
+	for (int i = g_nhit - 1; i >= 0; i--) {
+		Hit *z = &g_hit[i];
+		if (row >= z->r0 && row <= z->r1 && col >= z->c0 && col <= z->c1) {
+			if (idx) *idx = z->idx;
+			return z->what;
+		}
+	}
+	if (idx) *idx = 0;
+	return H_NONE;
+}
 
 /* ------------------------------------------------------------- widgets ---*/
 
@@ -1365,15 +1527,85 @@ static void help_line(const char *text)
 	gput(g_h - 1, 1, text, P_HELP, g_w - 2);
 }
 
+/* The help line names keys with arrow glyphs, which is the clearest way to say
+ * "press this" right up until the terminal cannot draw them — and then it is
+ * three bytes of mojibake in the one line whose entire job is telling somebody
+ * which key to press. Spelling them out is done here rather than in a second
+ * set of strings so that a translator only ever writes the line once. */
+static void help_line_l(const L *l)
+{
+	if (g_utf8) { help_line(S(*l)); return; }
+
+	static const struct { const char *u, *a; } sub[] = {
+		{"↑↓←→", "arrows"}, {"↑↓", "up/down"}, {"←→", "left/right"},
+		{"↑", "up"}, {"↓", "down"}, {"←", "left"}, {"→", "right"},
+		{"…", "..."},
+	};
+	char out[512];
+	size_t n = 0;
+	for (const char *s = S(*l); *s && n + 12 < sizeof out; ) {
+		size_t k = 0;
+		for (; k < sizeof sub / sizeof sub[0]; k++) {
+			size_t ul = strlen(sub[k].u);
+			if (!strncmp(s, sub[k].u, ul)) {
+				n += (size_t)snprintf(out + n, sizeof out - n, "%s", sub[k].a);
+				s += ul;
+				break;
+			}
+		}
+		if (k == sizeof sub / sizeof sub[0]) out[n++] = *s++;
+	}
+	out[n] = '\0';
+	help_line(out);
+}
+
 /* The blue root, with the program name and what this machine is. Drawn under
- * every screen, so a dialog always sits on the same background. */
+ * every screen, so a dialog always sits on the same background.
+ *
+ * The home screen also asks for the two buttons that live up here — the way
+ * out and the way to the other language. They are set through globals rather
+ * than an argument because every modal screen in this file calls draw_root()
+ * and none of them wants them: the modals carry their own Back, on their own
+ * top row, so that Back is in the top right corner of whatever is in front of
+ * you and never somewhere behind it.
+ */
+static int g_showtop = 0;      /* draw the top-right buttons at all */
+static int g_topsel  = -1;     /* which one has the cursor: 0 language, 1 back */
+
 static void draw_root(void)
 {
 	grid_clear(P_ROOT);
 
+	/* Right to left, because the right hand end is the part with a fixed
+	 * claim on the row: the buttons are always the full width of their
+	 * labels, and it is the title that gives way on a narrow terminal. */
+	int rightedge = g_w - 1;
+	if (g_showtop) {
+		/* No language button on a terminal that cannot draw the language it
+		 * would switch to — --ascii already pins this to English, and a
+		 * button labelled in mojibake is worse than no button. */
+		int offer_lang = g_utf8;
+		char b[64];
+		snprintf(b, sizeof b, " %s ", S(T_BACK));
+		int bw = u8width(b);
+		if (bw < g_w / 3) {
+			rightedge -= bw;
+			gput(0, rightedge, b, g_topsel == 1 ? P_RBTNACT : P_RBTN, bw);
+			hit_add(H_BACK, 0, 0, rightedge, 1, bw);
+		}
+		snprintf(b, sizeof b, " %s ", lang_other());
+		bw = u8width(b);
+		if (offer_lang && bw < g_w / 3) {
+			rightedge -= bw + 1;
+			gput(0, rightedge, b, g_topsel == 0 ? P_RBTNACT : P_RBTN, bw);
+			hit_add(H_LANG, 0, 0, rightedge, 1, bw);
+		}
+		rightedge -= 2;
+	}
+
 	char left[256];
 	snprintf(left, sizeof left, "%s %s  %s", S(T_TITLE), APP_VERSION, S(T_SUBTITLE));
-	gput(0, 1, left, P_ROOTTITLE, g_w - 2);
+	gput(0, 1, left, P_ROOTTITLE, rightedge - 2);
 
 	char right[128];
 	const char *user = geteuid() == 0 ? "root" : (getenv("USER") ? getenv("USER") : "user");
@@ -1381,7 +1613,7 @@ static void draw_root(void)
 	if (gethostname(host, sizeof host - 1) != 0) copy_str(host, sizeof host, "container");
 	snprintf(right, sizeof right, "%s@%s", user, host);
 	int rw = u8width(right);
-	if (rw < g_w - u8width(left) - 4) gput(0, g_w - 1 - rw, right, P_ROOTDIM, rw);
+	if (rw < rightedge - u8width(left) - 3) gput(0, rightedge - rw, right, P_ROOTDIM, rw);
 
 	if (g_h >= 18) {
 		char mem[16], disk[16], facts[320];
@@ -1413,14 +1645,16 @@ static const L *status_label(const Pkg *p)
 	}
 }
 
-static int status_attr(const Pkg *p)
+
+/* The same five colours over the blue root, for the card grid. */
+static int status_attr_root(const Pkg *p)
 {
 	switch (p->status) {
-	case ST_RUNNING: case ST_INSTALLED: return P_RUN;
-	case ST_STOPPED: return P_STOPPED;
-	case ST_BROKEN:  return P_ERR;
-	case ST_ABSENT:  return P_ABSENT;
-	default:         return P_DIM;
+	case ST_RUNNING: case ST_INSTALLED: return P_RUNB;
+	case ST_STOPPED: return P_STOPPEDB;
+	case ST_BROKEN:  return P_ERRB;
+	case ST_ABSENT:  return P_ABSENTB;
+	default:         return P_ABSENTB;
 	}
 }
 
@@ -1445,21 +1679,6 @@ static int resource_short(const Pkg *p, int *disk_short, int *mem_short)
 	return *disk_short || *mem_short;
 }
 
-static void size_line(const Pkg *p, char *out, size_t cap)
-{
-	size_t n = 0;
-	out[0] = '\0';
-	/* A recipe that writes `memory: 0` means it does not care, not that it
-	 * needs none — certbot does exactly this. Printing "RAM 0" is noise. */
-	if (p->disk[0] && p->disk_bytes > 0)
-		n += (size_t)snprintf(out + n, cap - n, "%s %s", S(T_DISK), p->disk);
-	if (p->memory[0] && p->mem_bytes > 0 && n < cap - 24)
-		n += (size_t)snprintf(out + n, cap - n, "%s%s %s", n ? " · " : "", S(T_RAM), p->memory);
-	if (p->ports[0] && n < cap - 24)
-		n += (size_t)snprintf(out + n, cap - n, "%s%s %s", n ? " · " : "", S(T_PORT), p->ports);
-	if (p->requires[0] && n < cap - 24)
-		snprintf(out + n, cap - n, "%s%s %s", n ? " · " : "", S(T_NEEDS), p->requires);
-}
 
 /* --------------------------------------------------------------- dialogs ---*/
 static void pager(const char *title, const char *text)
@@ -1510,7 +1729,7 @@ static void pager(const char *title, const char *text)
 			gput(row + h - 1, col + w - 3 - sw, sb, P_TITLE, sw);
 		}
 		btn_draw(row + h - 1, col + 2, S(T_CLOSE), 1);
-		help_line(S(T_HELPPAGE));
+		help_line_l(&T_HELPPAGE);
 		grid_flush();
 
 		int k = read_key();
@@ -1582,7 +1801,7 @@ static void message(const char *title, const char *msg)
 		for (int i = 0; i < nl; i++) gput(row + 1 + i, col + 2, lines[i], P_WIN, inner);
 		int bx = col + (w - btn_width(S(T_OK))) / 2;
 		btn_draw(row + h - 2, bx, S(T_OK), 1);
-		help_line(S(T_HELPDONE));
+		help_line_l(&T_HELPDONE);
 		grid_flush();
 		int k = read_key();
 		if (k == K_ENTER || k == K_ESC || k == ' ' || k == K_LEFT) return;
@@ -1795,6 +2014,107 @@ static void verb_title(char *out, size_t cap, const char *verb, const Pkg *p)
 	snprintf(out, cap, S(*t), pkg_name(p));
 }
 
+/* Drawing the running screen, split from the loop that feeds it, so that
+ * `screenshot --screen progress` can hand it a Runner filled in by hand rather
+ * than by a child process. The alternative is a second drawing of this screen
+ * living in the screenshot path, which is what the previous version had: a
+ * mocked-up frame that proves nothing about the real one.
+ *
+ * `rows` and `first` come back out because the key handling needs to know how
+ * tall the log pane turned out and where it is scrolled to, and only the code
+ * that laid it out knows. */
+static void progress_draw(Runner *r, const char *title, int log_scroll,
+                          int esc_armed, int *rows_out, int *first_out)
+{
+	grid_size(g_w, g_h);
+	g_showtop = 0;
+	draw_root();
+	hit_clear();
+
+	int w = g_w - 8; if (w > 100) w = 100; if (w < 36) w = g_w - 2;
+	int h = g_h - 4; if (h > 26) h = 26; if (h < 12) h = g_h - 2;
+	int row = (g_h - h) / 2 - 1, col = (g_w - w) / 2;
+	if (row < 1) row = 1;
+	if (col < 0) col = 0;
+	int inner = w - 4, x = col + 2;
+	win_box(row, col, w, h, title);
+
+	int y = row + 1;
+	int pct = runner_percent(r);
+
+	char head[128];
+	if (r->done)          snprintf(head, sizeof head, "%s", r->rc == 0 ? S(T_DONE) : S(T_BROKEN));
+	else if (r->total > 0) snprintf(head, sizeof head, S(T_STEPOF),
+	                                r->step > r->total ? r->total : r->step, r->total);
+	else                   snprintf(head, sizeof head, "%s", S(T_WORKING));
+
+	/* Back sits in the corner it occupies everywhere else, but it is grey and
+	 * does nothing until the child has exited. Letting somebody leave half an
+	 * install behind a screen that said Back is how a container comes to be
+	 * believed to have a package it does not have. */
+	char backl[64];
+	snprintf(backl, sizeof backl, " %s ", S(T_BACK));
+	int backw = u8width(backl);
+	gput(y, x + inner - backw, backl, r->done ? P_BTNACT : P_DIM, backw);
+	if (r->done) hit_add(H_BACK, 0, y, x + inner - backw, 1, backw);
+
+	gput(y, x, head, r->done && r->rc ? P_ERR : P_DIM, inner - backw - 2);
+	y++;
+
+	char pctstr[16];
+	snprintf(pctstr, sizeof pctstr, " %3d%%", pct);
+	draw_bar(y, x, inner - 5, pct);
+	gput(y, x + inner - 5, pctstr, P_WIN, 5);
+	y += 2;
+
+	char phase[600];
+	u8ellipsis(phase, sizeof phase, r->done
+	           ? (r->rc == 0 ? S(T_DONE) : r->phase)
+	           : r->phase, inner);
+	gput(y, x, phase, r->done && r->rc ? P_ERR : P_WIN, inner);
+	y += 2;
+
+	/* the detailed log, framed, at the bottom — where an installer puts it */
+	int logh = row + h - 3 - y;
+	if (logh < 3) logh = 3;
+	gput(y, x, BX_TL, P_BORDER, 1);
+	gfill(y, x + 1, inner - 2, BX_H, P_BORDER);
+	gput(y, x + inner - 1, BX_TR, P_BORDER, 1);
+	{
+		char lt[64];
+		snprintf(lt, sizeof lt, " %s ", S(T_LOGPANE));
+		gput(y, x + 2, lt, P_TITLE, u8width(lt));
+	}
+	for (int i = 1; i < logh - 1; i++) {
+		gput(y + i, x, BX_V, P_BORDER, 1);
+		gput(y + i, x + inner - 1, BX_V, P_BORDER, 1);
+	}
+	gput(y + logh - 1, x, BX_BL, P_BORDER, 1);
+	gfill(y + logh - 1, x + 1, inner - 2, BX_H, P_BORDER);
+	gput(y + logh - 1, x + inner - 1, BX_BR, P_BORDER, 1);
+
+	int rows = logh - 2;
+	int first = log_scroll >= 0 ? log_scroll : (r->nlog > rows ? r->nlog - rows : 0);
+	if (first > r->nlog - rows) first = r->nlog - rows;
+	if (first < 0) first = 0;
+	for (int i = 0; i < rows && first + i < r->nlog; i++) {
+		char cut[600];
+		u8ellipsis(cut, sizeof cut, runner_line(r, first + i), inner - 4);
+		gput(y + 1 + i, x + 2, cut, P_DIM, inner - 4);
+	}
+	hit_add(H_BODY, 0, y + 1, x + 1, rows, inner - 2);
+
+	if (r->done)
+		help_line_l(&T_HELPDONE);
+	else
+		help_line(esc_armed
+		          ? (g_zh ? "再按一次 Esc 强行中止" : "press Esc again to force a stop")
+		          : S(T_HELPRUN));
+
+	if (rows_out)  *rows_out = rows;
+	if (first_out) *first_out = first;
+}
+
 static void screen_progress(Pkg *p, const char *verb)
 {
 	Runner r;
@@ -1814,78 +2134,8 @@ static void screen_progress(Pkg *p, const char *verb)
 		runner_reap(&r);
 
 		term_measure();
-		grid_size(g_w, g_h);
-		draw_root();
-
-		int w = g_w - 8; if (w > 100) w = 100; if (w < 36) w = g_w - 2;
-		int h = g_h - 4; if (h > 26) h = 26; if (h < 12) h = g_h - 2;
-		int row = (g_h - h) / 2 - 1, col = (g_w - w) / 2;
-		if (row < 1) row = 1;
-		if (col < 0) col = 0;
-		int inner = w - 4, x = col + 2;
-		win_box(row, col, w, h, title);
-
-		int y = row + 1;
-		int pct = runner_percent(&r);
-
-		char head[128];
-		if (r.done)          snprintf(head, sizeof head, "%s", r.rc == 0 ? S(T_DONE) : S(T_BROKEN));
-		else if (r.total > 0) snprintf(head, sizeof head, S(T_STEPOF), r.step > r.total ? r.total : r.step, r.total);
-		else                  snprintf(head, sizeof head, "%s", S(T_WORKING));
-		gput(y, x, head, r.done && r.rc ? P_ERR : P_DIM, inner);
-		y++;
-
-		char pctstr[16];
-		snprintf(pctstr, sizeof pctstr, " %3d%%", pct);
-		draw_bar(y, x, inner - 5, pct);
-		gput(y, x + inner - 5, pctstr, P_WIN, 5);
-		y += 2;
-
-		char phase[600];
-		u8ellipsis(phase, sizeof phase, r.done
-		           ? (r.rc == 0 ? S(T_DONE) : r.phase)
-		           : r.phase, inner);
-		gput(y, x, phase, r.done && r.rc ? P_ERR : P_WIN, inner);
-		y += 2;
-
-		/* the detailed log, framed, at the bottom — where an installer puts it */
-		int logh = row + h - 3 - y;
-		if (logh < 3) logh = 3;
-		gput(y, x, BX_TL, P_BORDER, 1);
-		gfill(y, x + 1, inner - 2, BX_H, P_BORDER);
-		gput(y, x + inner - 1, BX_TR, P_BORDER, 1);
-		{
-			char lt[64];
-			snprintf(lt, sizeof lt, " %s ", S(T_LOGPANE));
-			gput(y, x + 2, lt, P_TITLE, u8width(lt));
-		}
-		for (int i = 1; i < logh - 1; i++) {
-			gput(y + i, x, BX_V, P_BORDER, 1);
-			gput(y + i, x + inner - 1, BX_V, P_BORDER, 1);
-		}
-		gput(y + logh - 1, x, BX_BL, P_BORDER, 1);
-		gfill(y + logh - 1, x + 1, inner - 2, BX_H, P_BORDER);
-		gput(y + logh - 1, x + inner - 1, BX_BR, P_BORDER, 1);
-
-		int rows = logh - 2;
-		int first = log_scroll >= 0 ? log_scroll : (r.nlog > rows ? r.nlog - rows : 0);
-		if (first > r.nlog - rows) first = r.nlog - rows;
-		if (first < 0) first = 0;
-		for (int i = 0; i < rows && first + i < r.nlog; i++) {
-			char cut[600];
-			u8ellipsis(cut, sizeof cut, runner_line(&r, first + i), inner - 4);
-			gput(y + 1 + i, x + 2, cut, P_DIM, inner - 4);
-		}
-
-		if (r.done) {
-			const char *lab = r.rc == 0 ? S(T_DONE) : S(T_CLOSE);
-			btn_draw(row + h - 2, col + (w - btn_width(lab)) / 2, lab, 1);
-			help_line(S(T_HELPDONE));
-		} else {
-			help_line(esc_armed
-			          ? (g_zh ? "再按一次 Esc 强行中止" : "press Esc again to force a stop")
-			          : S(T_HELPRUN));
-		}
+		int rows = 0, first = 0;
+		progress_draw(&r, title, log_scroll, esc_armed, &rows, &first);
 		grid_flush();
 
 		/* While it runs the screen has to keep moving, so the wait is short
@@ -1895,6 +2145,25 @@ static void screen_progress(Pkg *p, const char *verb)
 			if (k != K_TIMEOUT) esc_armed = 0;
 			continue;
 		}
+
+		/* Touching the log stops it following the tail, so what has already
+		 * gone by can be read back; reaching the bottom picks the tail up. */
+		if (k == K_WHEELUP) {
+			log_scroll = first - 1; if (log_scroll < 0) log_scroll = 0;
+			esc_armed = 0; continue;
+		}
+		if (k == K_WHEELDN) {
+			log_scroll = first + 1; if (log_scroll > r.nlog - rows) log_scroll = -1;
+			esc_armed = 0; continue;
+		}
+		if (k == K_CLICK) {
+			esc_armed = 0;
+			int what = hit_test(g_my, g_mx, NULL);
+			if (what == H_BACK && r.done) break;
+			if (what == H_BODY && log_scroll < 0) log_scroll = first;
+			continue;
+		}
+
 		if (r.done) {
 			if (k == K_ENTER || k == K_ESC || k == ' ' || k == K_LEFT) break;
 			if (k == K_UP)   { if (first > 0) log_scroll = first - 1; }
@@ -2017,7 +2286,7 @@ static int screen_params(Pkg *p)
 		int bx = col + (w - bw) / 2;
 		btn_draw(row + h - 2, bx, S(T_OK), sel == p->nparams);
 		btn_draw(row + h - 2, bx + btn_width(S(T_OK)) + 2, S(T_CANCEL), sel == p->nparams + 1);
-		help_line(S(T_HELPFORM));
+		help_line_l(&T_HELPFORM);
 		grid_flush();
 
 		int k = read_key();
@@ -2071,10 +2340,18 @@ static int screen_params(Pkg *p)
 	}
 }
 
-/* ------------------------------------------------------------ the details --*/
+/* ------------------------------------------------------------ the details --
+ *
+ * Both of these are label-and-value columns, and both pad the label with
+ * u8pad rather than %-10s: printf counts bytes, and every label here is
+ * fewer bytes per column in Chinese than in English, so %-10s lines the
+ * column up in one language and not the other.
+ */
+#define DET_LAB 10
+
 static void screen_details(Pkg *p)
 {
-	char t[4096];
+	char t[4096], gut[64];
 	size_t n = 0;
 	char cats[192] = "";
 	for (int i = 0; i < p->ncats; i++) {
@@ -2084,33 +2361,49 @@ static void screen_details(Pkg *p)
 	}
 
 	n += (size_t)snprintf(t + n, sizeof t - n, "%s\n\n", pkg_summary(p));
-	n += (size_t)snprintf(t + n, sizeof t - n, "%-10s %s %s\n",
-	                      g_zh ? "状态" : "State", S(*status_label(p)),
-	                      p->detail[0] ? p->detail : "");
-	if (pkg_includes(p)[0])
-		n += (size_t)snprintf(t + n, sizeof t - n, "%-10s %s\n",
-		                      g_zh ? "包含" : "Includes", pkg_includes(p));
-	n += (size_t)snprintf(t + n, sizeof t - n, "%-10s %s\n", g_zh ? "分类" : "Category", cats);
-	if (p->disk[0])
-		n += (size_t)snprintf(t + n, sizeof t - n, "%-10s %s\n", S(T_DISK), p->disk);
-	if (p->memory[0])
-		n += (size_t)snprintf(t + n, sizeof t - n, "%-10s %s\n", S(T_RAM), p->memory);
-	if (p->ports[0])
-		n += (size_t)snprintf(t + n, sizeof t - n, "%-10s %s\n", S(T_PORT), p->ports);
-	if (p->requires[0])
-		n += (size_t)snprintf(t + n, sizeof t - n, "%-10s %s\n", S(T_NEEDS), p->requires);
-	if (p->service[0])
-		n += (size_t)snprintf(t + n, sizeof t - n, "%-10s %s (%s %s)\n",
-		                      g_zh ? "服务" : "Service", p->service, S(T_BOOT),
+	u8pad(gut, sizeof gut, g_zh ? "状态" : "State", DET_LAB);
+	n += (size_t)snprintf(t + n, sizeof t - n, "%s %s %s\n", gut,
+	                      S(*status_label(p)), p->detail[0] ? p->detail : "");
+	if (pkg_includes(p)[0]) {
+		u8pad(gut, sizeof gut, S(T_INCLUDES), DET_LAB);
+		n += (size_t)snprintf(t + n, sizeof t - n, "%s %s\n", gut, pkg_includes(p));
+	}
+	u8pad(gut, sizeof gut, g_zh ? "分类" : "Category", DET_LAB);
+	n += (size_t)snprintf(t + n, sizeof t - n, "%s %s\n", gut, cats);
+	if (p->disk[0]) {
+		u8pad(gut, sizeof gut, S(T_DISK), DET_LAB);
+		n += (size_t)snprintf(t + n, sizeof t - n, "%s %s\n", gut, p->disk);
+	}
+	if (p->memory[0]) {
+		u8pad(gut, sizeof gut, S(T_RAM), DET_LAB);
+		n += (size_t)snprintf(t + n, sizeof t - n, "%s %s\n", gut, p->memory);
+	}
+	if (p->ports[0]) {
+		u8pad(gut, sizeof gut, S(T_PORT), DET_LAB);
+		n += (size_t)snprintf(t + n, sizeof t - n, "%s %s\n", gut, p->ports);
+	}
+	if (p->requires[0]) {
+		u8pad(gut, sizeof gut, S(T_NEEDS), DET_LAB);
+		n += (size_t)snprintf(t + n, sizeof t - n, "%s %s\n", gut, p->requires);
+	}
+	if (p->service[0]) {
+		u8pad(gut, sizeof gut, S(T_SERVICE), DET_LAB);
+		n += (size_t)snprintf(t + n, sizeof t - n, "%s %s (%s %s)\n", gut, p->service,
+		                      S(T_BOOT),
 		                      p->enabled == 1 ? S(T_YES) : p->enabled == 0 ? S(T_NO) : "?");
+	}
 	if (p->nparams) {
 		n += (size_t)snprintf(t + n, sizeof t - n, "\n%s\n", S(T_PARAMS));
-		for (int i = 0; i < p->nparams; i++)
-			n += (size_t)snprintf(t + n, sizeof t - n, "  %-16s %s\n",
-			                      param_label(&p->params[i]), p->params[i].value);
+		for (int i = 0; i < p->nparams; i++) {
+			u8pad(gut, sizeof gut, param_label(&p->params[i]), 16);
+			n += (size_t)snprintf(t + n, sizeof t - n, "  %s %s\n",
+			                      gut, p->params[i].value);
+		}
 	}
-	n += (size_t)snprintf(t + n, sizeof t - n, "\n%-10s %s\n", g_zh ? "脚本" : "Recipe", p->path);
-	snprintf(t + n, sizeof t - n, "%-10s %s/%s.log\n", g_zh ? "日志" : "Log", log_dir(), p->id);
+	u8pad(gut, sizeof gut, g_zh ? "脚本" : "Recipe", DET_LAB);
+	n += (size_t)snprintf(t + n, sizeof t - n, "\n%s %s\n", gut, p->path);
+	u8pad(gut, sizeof gut, S(T_LOG), DET_LAB);
+	snprintf(t + n, sizeof t - n, "%s %s/%s.log\n", gut, log_dir(), p->id);
 
 	char title[256];
 	snprintf(title, sizeof title, "%s %s %s", pkg_name(p), MK_DOT, S(T_DETAILS));
@@ -2125,19 +2418,26 @@ static void screen_status(Pkg *p)
 	run_capture(p->path, "status", out, sizeof out, 8, 1);
 	g_env_pkg = NULL;
 
-	char t[9000];
+	char t[9000], gut[64];
 	size_t n = 0;
-	n += (size_t)snprintf(t + n, sizeof t - n, "%-10s %s %s\n",
-	                      g_zh ? "状态" : "State", status_mark(p), S(*status_label(p)));
-	if (p->detail[0])
-		n += (size_t)snprintf(t + n, sizeof t - n, "%-10s %s\n", g_zh ? "版本" : "Detail", p->detail);
+	u8pad(gut, sizeof gut, g_zh ? "状态" : "State", DET_LAB);
+	n += (size_t)snprintf(t + n, sizeof t - n, "%s %s %s\n", gut,
+	                      status_mark(p), S(*status_label(p)));
+	if (p->detail[0]) {
+		u8pad(gut, sizeof gut, S(T_VERSION), DET_LAB);
+		n += (size_t)snprintf(t + n, sizeof t - n, "%s %s\n", gut, p->detail);
+	}
 	if (p->service[0]) {
-		n += (size_t)snprintf(t + n, sizeof t - n, "%-10s %s\n", g_zh ? "服务" : "Service", p->service);
-		n += (size_t)snprintf(t + n, sizeof t - n, "%-10s %s\n", S(T_BOOT),
+		u8pad(gut, sizeof gut, S(T_SERVICE), DET_LAB);
+		n += (size_t)snprintf(t + n, sizeof t - n, "%s %s\n", gut, p->service);
+		u8pad(gut, sizeof gut, S(T_BOOT), DET_LAB);
+		n += (size_t)snprintf(t + n, sizeof t - n, "%s %s\n", gut,
 		                      p->enabled == 1 ? S(T_YES) : p->enabled == 0 ? S(T_NO) : "?");
 	}
-	if (p->ports[0])
-		n += (size_t)snprintf(t + n, sizeof t - n, "%-10s %s\n", S(T_PORT), p->ports);
+	if (p->ports[0]) {
+		u8pad(gut, sizeof gut, S(T_PORT), DET_LAB);
+		n += (size_t)snprintf(t + n, sizeof t - n, "%s %s\n", gut, p->ports);
+	}
 
 	n += (size_t)snprintf(t + n, sizeof t - n, "\n%s\n",
 	                      g_zh ? "── 脚本自己报告的 ──" : "── what the recipe reports ──");
@@ -2166,11 +2466,61 @@ static void screen_docs(Pkg *p)
 	pager(title, out);
 }
 
-/* --------------------------------------------------------- the app dialog --
+/* ------------------------------------------------------------- the cover --
  *
- * The one the whole redesign is for. You walk onto a thing and press Enter,
- * and you get a list of everything that can be done to that thing — install
- * it, look at what it is, see whether it is running, change its settings.
+ * A terminal has no pictures, so the thing a card shows where a thumbnail
+ * would go is a block of shade in the category's colour with the package's own
+ * id across it in capitals. The id is latin by construction — it is a filename
+ * — so it can never be the thing that pushes a border out by a column, and
+ * adding a package draws its cover without anybody drawing anything.
+ */
+static int cover_of(const Pkg *p)
+{
+	/* First category wins, and it is the recipe that decides the order, so a
+	 * package that is both `web` and `stack` gets the colour of whichever it
+	 * calls itself first. */
+	if (p->ncats > 0) {
+		int i = cat_index(p->cats[0]);
+		if (i >= 0) return i % N_COVERS;
+	}
+	return N_COVERS - 1;
+}
+
+static void cover_wordmark(char *out, size_t cap, const Pkg *p)
+{
+	size_t n = 0;
+	for (const char *s = p->id; *s && n + 1 < cap; s++)
+		out[n++] = (char)toupper((unsigned char)*s);
+	out[n] = '\0';
+}
+
+/* `rows` rows of shade at (row,col), the wordmark across the middle of it and
+ * the size in the bottom right, which is where a video's duration sits. */
+static void draw_cover(int row, int col, int w, int rows, const Pkg *p, const char *badge)
+{
+	int cv = cover_of(p);
+	for (int r = 0; r < rows; r++) gfill(row + r, col, w, TH_COVER, P_COV0 + cv);
+
+	char mark[96], lg[104];
+	cover_wordmark(mark, sizeof mark, p);
+	snprintf(lg, sizeof lg, " %s ", mark);
+	int lw = u8width(lg);
+	if (lw <= w) gput(row + (rows - 1) / 2, col + (w - lw) / 2, lg, P_LOGO0 + cv, lw);
+
+	if (badge && badge[0] && rows >= 2) {
+		char bd[40];
+		snprintf(bd, sizeof bd, " %s ", badge);
+		int bw = u8width(bd);
+		if (bw + 2 <= w) gput(row + rows - 1, col + w - bw - 1, bd, P_LOGO0 + cv, bw);
+	}
+}
+
+/* --------------------------------------------------------- the app screen --
+ *
+ * The one the whole redesign is for. You walk onto a card and press Enter, and
+ * you get everything that can be done to that thing laid along the top —
+ * install it, change its settings, read what it is — with Back at the right
+ * hand end of the same row, in the same corner it occupies everywhere else.
  * Choosing what to do is the same gesture as choosing what to do it to.
  */
 enum { A_INSTALL = 1, A_REMOVE, A_START, A_STOP, A_RESTART, A_BOOT,
@@ -2214,71 +2564,359 @@ static int build_actions(const Pkg *p, Action *a)
 	return n;
 }
 
+/* A panel drawn straight onto the root: a border and a title, no grey fill and
+ * no shadow. What fills the terminal is not a dialog sitting on a screen, it
+ * is the screen, and giving it a dialog's drop shadow says otherwise. */
+static void root_box(int row, int col, int w, int h, const char *title)
+{
+	gput(row, col, BX_TL, P_CARDB, 1);
+	gfill(row, col + 1, w - 2, BX_H, P_CARDB);
+	gput(row, col + w - 1, BX_TR, P_CARDB, 1);
+	for (int r = 1; r < h - 1; r++) {
+		gput(row + r, col, BX_V, P_CARDB, 1);
+		gfill(row + r, col + 1, w - 2, " ", P_ROOT);
+		gput(row + r, col + w - 1, BX_V, P_CARDB, 1);
+	}
+	gput(row + h - 1, col, BX_BL, P_CARDB, 1);
+	gfill(row + h - 1, col + 1, w - 2, BX_H, P_CARDB);
+	gput(row + h - 1, col + w - 1, BX_BR, P_CARDB, 1);
+
+	if (title && *title) {
+		char t[256];
+		snprintf(t, sizeof t, " %s ", title);
+		int tw = u8width(t);
+		if (tw > w - 4) { u8ellipsis(t, sizeof t, title, w - 6); tw = u8width(t); }
+		gput(row, col + (w - tw) / 2, t, P_ROOTTITLE, tw);
+	}
+}
+
+static int act_width(const Action *a)
+{
+	int w = u8width(a->label) + 2;
+	if (a->aux[0]) w += u8width(a->aux) + 1;
+	return w;
+}
+
+/* One verb, drawn as a pill. Cyan under the cursor, grey when it cannot be
+ * pressed, plain otherwise. Returns the columns it used. */
+static int act_draw(int row, int col, const Action *a, int focused, int maxw)
+{
+	char t[128];
+	if (a->aux[0]) snprintf(t, sizeof t, " %s %s ", a->label, a->aux);
+	else           snprintf(t, sizeof t, " %s ", a->label);
+	int w = u8width(t);
+	if (w > maxw) return 0;
+	gput(row, col, t, focused ? P_RBTNACT : (a->dim ? P_BTNDIM : P_RBTN), w);
+	return w;
+}
+
+/* The label / value pairs shown beside the cover. Two to a line, three lines,
+ * in the order somebody scanning for "will this fit and what will it open"
+ * reads them. */
+static int detail_facts(const Pkg *p, char lab[6][32], char val[6][64])
+{
+	int n = 0;
+	int inst = pkg_installed(p);
+	if (inst && p->detail[0]) {
+		copy_str(lab[n], 32, S(T_VERSION)); copy_str(val[n], 64, p->detail); n++;
+	}
+	if (!inst && p->disk[0]) {
+		copy_str(lab[n], 32, S(T_DISK)); copy_str(val[n], 64, p->disk); n++;
+	}
+	if (!inst && p->memory[0] && p->mem_bytes > 0 && n < 6) {
+		copy_str(lab[n], 32, S(T_RAM)); copy_str(val[n], 64, p->memory); n++;
+	}
+	if (p->ports[0] && n < 6) {
+		copy_str(lab[n], 32, S(T_PORT)); copy_str(val[n], 64, p->ports); n++;
+	}
+	if (p->service[0] && n < 6) {
+		copy_str(lab[n], 32, S(T_SERVICE)); copy_str(val[n], 64, p->service); n++;
+	}
+	if (p->service[0] && n < 6) {
+		copy_str(lab[n], 32, S(T_BOOT));
+		copy_str(val[n], 64, p->enabled == 1 ? S(T_YES) : p->enabled == 0 ? S(T_NO) : MK_DOT);
+		n++;
+	}
+	if (p->nparams && n < 6) {
+		copy_str(lab[n], 32, S(T_PARAMS));
+		snprintf(val[n], 64, S(T_NITEMS), p->nparams);
+		n++;
+	}
+	if (p->requires[0] && n < 6) {
+		copy_str(lab[n], 32, S(T_NEEDS)); copy_str(val[n], 64, p->requires); n++;
+	}
+	return n;
+}
+
+/* The prose under the cover: what it is, what comes with it, where the log
+ * goes. Built as lines rather than drawn, because it is the part that scrolls
+ * and the scroller only needs to know how many there are. */
+#define DET_LINES 96
+typedef struct { char t[512]; unsigned char a; } DetLine;
+
+static int detail_body(const Pkg *p, int cols, DetLine *out)
+{
+	int n = 0;
+	char wrap[24][512];
+
+	int nw = u8wrap(pkg_summary(p), cols, wrap, 24);
+	for (int i = 0; i < nw && n < DET_LINES; i++) {
+		copy_str(out[n].t, sizeof out[n].t, wrap[i]); out[n].a = P_ROOT; n++;
+	}
+
+	int labw = u8width(S(T_INCLUDES));
+	if (u8width(S(T_LOG)) > labw) labw = u8width(S(T_LOG));
+	labw += 3;
+
+	char gutter[64];
+	if (pkg_includes(p)[0] && n < DET_LINES) {
+		out[n].t[0] = '\0'; out[n].a = P_ROOT; n++;
+		nw = u8wrap(pkg_includes(p), cols - labw, wrap, 8);
+		for (int i = 0; i < nw && n < DET_LINES; i++) {
+			u8pad(gutter, sizeof gutter, i == 0 ? S(T_INCLUDES) : "", labw);
+			snprintf(out[n].t, sizeof out[n].t, "%s%s", gutter, wrap[i]);
+			out[n].a = P_ROOTDIM; n++;
+		}
+	}
+	if (n < DET_LINES) {
+		out[n].t[0] = '\0'; out[n].a = P_ROOT; n++;
+		u8pad(gutter, sizeof gutter, S(T_LOG), labw);
+		snprintf(out[n].t, sizeof out[n].t, "%s%s/%s.log", gutter, log_dir(), p->id);
+		out[n].a = P_ROOTDIM; n++;
+	}
+	return n;
+}
+
+/* Two zones on this screen: the row of verbs, and the prose under it that
+ * scrolls when there is more of it than fits. */
+enum { Z_BTN = 0, Z_BODY };
+
+/* Everything the app screen needs to draw itself, and everything drawing it
+ * works out on the way. The screen is split from its loop so that
+ * `screenshot --screen app` renders the real thing rather than a second
+ * drawing of it that is free to drift — the last version had two, and the
+ * copy is what a layout test would have been testing. */
+typedef struct {
+	int sel;          /* 0..na-1 a verb, na is Back */
+	int zone;         /* Z_BTN or Z_BODY */
+	int scroll;       /* first verb drawn, when they do not all fit */
+	int bscroll;      /* first line of prose drawn */
+	/* filled in by app_draw */
+	int na, brows, maxscroll;
+	Action acts[12];
+} AppView;
+
+static void app_draw(Pkg *p, AppView *v)
+{
+	static DetLine body[DET_LINES];
+
+	v->na = build_actions(p, v->acts);
+	if (v->sel > v->na) v->sel = v->na;
+	if (v->sel < 0) v->sel = 0;
+
+	grid_size(g_w, g_h);
+	g_showtop = 0;
+	draw_root();
+	hit_clear();
+
+	int px = 1, pw = g_w - 2, room = g_h - 3;
+	if (room < 10) { px = 0; pw = g_w; room = g_h - 1; }
+	int tx = px + 2, inner = pw - 4;
+
+	/* Everything that goes in the panel is measured before the panel is
+	 * drawn, so a package with two lines to say about itself gets a short
+	 * panel rather than a screen-high box with a field of nothing under the
+	 * text. The cover is the part that gives when the terminal is short. */
+	int coverh = 3;
+	if (room < 16) coverh = 2;
+	if (room < 13) coverh = 1;
+	int cw = inner * 2 / 5;
+	if (cw > 30) cw = 30;
+	int stacked = (inner < 46 || cw < 12);
+
+	int nb = detail_body(p, inner, body);
+	char lab[6][32], val[6][64];
+	int nf = detail_facts(p, lab, val);
+	int nfrows = stacked ? (nf < 4 ? nf : 4) : 0;
+
+	/* border, verbs, rule, state, cover, stacked facts, blank, prose, border */
+	int ph = 2 + 1 + 1 + 1 + coverh + nfrows + 1 + nb;
+	if (ph > room) ph = room;
+	if (ph < 8) ph = 8;
+
+	int prow = 2 + (room - ph) / 2;
+	if (prow + ph > g_h - 1) prow = g_h - 1 - ph;
+	if (prow < 1) prow = 1;
+	root_box(prow, px, pw, ph, pkg_name(p));
+
+	/* ---- the verb row, Back pinned to its right hand end ---------------- */
+	int y = prow + 1;
+	char backl[64];
+	snprintf(backl, sizeof backl, " %s ", S(T_BACK));
+	int backw = u8width(backl);
+	int avail = inner - backw - 2;
+	if (avail < 8) avail = 8;
+
+	if (v->sel >= v->na) v->scroll = 0;          /* Back does not scroll it */
+	else {
+		if (v->sel < v->scroll) v->scroll = v->sel;
+		for (;;) {
+			int used = 0;
+			for (int i = v->scroll; i <= v->sel; i++) used += act_width(&v->acts[i]) + 1;
+			if (used <= avail + 1 || v->scroll >= v->sel) break;
+			v->scroll++;
+		}
+	}
+
+	int bx = tx, last = v->scroll - 1;
+	for (int i = v->scroll; i < v->na; i++) {
+		int wneed = act_width(&v->acts[i]);
+		if (bx - tx + wneed > avail) break;
+		act_draw(y, bx, &v->acts[i], v->zone == Z_BTN && i == v->sel, wneed);
+		hit_add(H_BTN, i, y, bx, 1, wneed);
+		bx += wneed + 1;
+		last = i;
+	}
+	if (last < v->na - 1) gput(y, tx + avail, CH_MORE, P_RBTN, 1);
+
+	gput(y, tx + inner - backw, backl,
+	     v->zone == Z_BTN && v->sel == v->na ? P_RBTNACT : P_RBTN, backw);
+	hit_add(H_BACK, 0, y, tx + inner - backw, 1, backw);
+
+	/* ---- the rule under it ---------------------------------------------- */
+	y++;
+	gput(y, px, BX_LT, P_CARDB, 1);
+	gfill(y, px + 1, pw - 2, BX_H, P_CARDB);
+	gput(y, px + pw - 1, BX_RT, P_CARDB, 1);
+	y++;
+
+	/* Everything from here down belongs inside the panel. Clipping rather
+	 * than arithmetic means a terminal too short for the cover loses the
+	 * bottom of the cover, not the bottom border. */
+	g_clip_top = prow + 1; g_clip_bot = prow + ph - 2;
+
+	/* ---- state, then the cover with the hard numbers beside it ---------- */
+	char st[192];
+	snprintf(st, sizeof st, "%s %s", status_mark(p), S(*status_label(p)));
+	gput(y, tx, st, status_attr_root(p), inner);
+	y++;
+
+	if (!stacked) {
+		draw_cover(y, tx, cw, coverh, p, p->disk[0] ? p->disk : NULL);
+		/* Two columns of label-and-number, sized to the widest pair rather
+		 * than to the space available — spreading six short facts across
+		 * fifty columns turns a block you can read at a glance into a
+		 * scatter you have to track across. */
+		int fx = tx + cw + 3, fw = inner - cw - 3;
+		int colw = 0;
+		for (int i = 0; i < nf; i++) {
+			int lw = u8width(lab[i]) + 1 + u8width(val[i]) + 2;
+			if (lw > colw) colw = lw;
+		}
+		if (colw > fw / 2) colw = fw / 2;
+		if (colw < 8) colw = 8;
+		for (int i = 0; i < nf; i++) {
+			int fr = y + i / 2, fc = fx + (i % 2) * colw;
+			if (fr >= y + coverh) break;
+			char f[160], cut[160];
+			snprintf(f, sizeof f, "%s %s", lab[i], val[i]);
+			u8ellipsis(cut, sizeof cut, f, colw - 1);
+			gput(fr, fc, cut, P_ROOTDIM, colw - 1);
+		}
+		y += coverh;
+	} else {
+		draw_cover(y, tx, inner, coverh, p, p->disk[0] ? p->disk : NULL);
+		y += coverh;
+		for (int i = 0; i < nfrows; i++) {
+			char f[160], cut[192];
+			snprintf(f, sizeof f, "%s %s", lab[i], val[i]);
+			u8ellipsis(cut, sizeof cut, f, inner);
+			gput(y, tx, cut, P_ROOTDIM, inner);
+			y++;
+		}
+	}
+	y++;
+
+	/* ---- the prose, which is the part that scrolls ---------------------- */
+	int btop = y;
+	v->brows = prow + ph - 1 - btop;
+	if (v->brows < 1) v->brows = 1;
+	v->maxscroll = nb - v->brows;
+	if (v->maxscroll < 0) v->maxscroll = 0;
+	if (v->bscroll > v->maxscroll) v->bscroll = v->maxscroll;
+	if (v->bscroll < 0) v->bscroll = 0;
+	if (v->zone == Z_BODY && !v->maxscroll) v->zone = Z_BTN;
+
+	for (int i = 0; i < v->brows && v->bscroll + i < nb; i++)
+		gput(btop + i, tx, body[v->bscroll + i].t, body[v->bscroll + i].a, inner);
+	hit_add(H_BODY, 0, btop, tx, v->brows, inner);
+	g_clip_top = g_clip_bot = -1;
+
+	if (v->maxscroll) {
+		char sb[32];
+		snprintf(sb, sizeof sb, " %d%% ", (v->bscroll + v->brows) * 100 / nb);
+		int sw = u8width(sb);
+		gput(prow + ph - 1, px + pw - 3 - sw, sb,
+		     v->zone == Z_BODY ? P_RBTNACT : P_CARDB, sw);
+	}
+
+	help_line_l(&T_HELPDET);
+}
+
 static void screen_app(Pkg *p)
 {
-	int sel = 0;
+	AppView v;
+	memset(&v, 0, sizeof v);
+	v.zone = Z_BTN;
+
 	for (;;) {
-		Action acts[12];
-		int na = build_actions(p, acts);
-		if (sel >= na) sel = na - 1;
-		if (sel < 0) sel = 0;
-
 		term_measure();
-		grid_size(g_w, g_h);
-		draw_root();
-
-		/* wide enough for the summary to be worth showing above the menu */
-		int w = 54;
-		if (w > g_w - 6) w = g_w - 6;
-		int inner = w - 4;
-		char sum[3][512];
-		int ns = u8wrap(pkg_summary(p), inner, sum, 2);
-		int h = na + ns + 7;
-		if (h > g_h - 2) h = g_h - 2;
-		int row = (g_h - h) / 2, col = (g_w - w) / 2;
-		if (row < 1) row = 1;
-		if (col < 0) col = 0;
-		win_box(row, col, w, h, pkg_name(p));
-
-		int y = row + 1;
-		char st[128];
-		snprintf(st, sizeof st, "%s %s", status_mark(p), S(*status_label(p)));
-		gput(y, col + 2, st, status_attr(p), inner);
-		if (p->detail[0]) {
-			int sw = u8width(st) + 2;
-			char d[256];
-			u8ellipsis(d, sizeof d, p->detail, inner - sw);
-			gput(y, col + 2 + sw, d, P_DIM, inner - sw);
-		}
-		y++;
-		for (int i = 0; i < ns; i++) { gput(y, col + 2, sum[i], P_DIM, inner); y++; }
-		y++;
-
-		for (int i = 0; i < na && y < row + h - 2; i++, y++) {
-			int a = acts[i].dim ? P_DIM : P_WIN;
-			if (i == sel) { gtint(y, col + 2, inner, P_SEL); a = acts[i].dim ? P_SELDIM : P_SEL; }
-			gput(y, col + 3, acts[i].label, a, inner - 10);
-			if (acts[i].aux[0]) {
-				int aw = u8width(acts[i].aux);
-				gput(y, col + 1 + inner - aw, acts[i].aux, i == sel ? P_SELDIM : P_DIM, aw);
-			}
-		}
-
-		btn_draw(row + h - 2, col + 2, S(T_BACK), 0);
-		help_line(S(T_HELPMENU));
+		app_draw(p, &v);
 		grid_flush();
 
 		int k = read_key();
-		if (k == K_ESC || k == K_LEFT || k == 'q') return;
 		if (k == K_RESIZE) continue;
-		if (k == K_UP)   { sel = (sel - 1 + na) % na; continue; }
-		if (k == K_DOWN) { sel = (sel + 1) % na; continue; }
-		if (k == K_HOME) { sel = 0; continue; }
-		if (k == K_END)  { sel = na - 1; continue; }
-		if (k != K_ENTER && k != ' ' && k != K_RIGHT) continue;
-		if (acts[sel].dim) continue;
+		if (k == K_ESC || k == 'q') return;
+		if (k == 'L') { g_zh = !g_zh; continue; }
 
-		switch (acts[sel].act) {
+		if (k == K_CLICK) {
+			int idx = 0;
+			switch (hit_test(g_my, g_mx, &idx)) {
+			case H_BACK: return;
+			case H_BTN:  v.zone = Z_BTN; v.sel = idx; k = K_ENTER; break;
+			case H_BODY: v.zone = v.maxscroll ? Z_BODY : Z_BTN; continue;
+			default: continue;
+			}
+		}
+		if (k == K_WHEELUP) { if (v.bscroll > 0) v.bscroll--; continue; }
+		if (k == K_WHEELDN) { if (v.bscroll < v.maxscroll) v.bscroll++; continue; }
+
+		if (v.zone == Z_BODY) {
+			switch (k) {
+			case K_UP:    if (v.bscroll > 0) v.bscroll--; else v.zone = Z_BTN; continue;
+			case K_DOWN:  if (v.bscroll < v.maxscroll) v.bscroll++; continue;
+			case K_PGUP:  v.bscroll -= v.brows; continue;
+			case K_PGDN:  v.bscroll += v.brows; continue;
+			case K_HOME:  v.bscroll = 0; continue;
+			case K_END:   v.bscroll = v.maxscroll; continue;
+			case K_ENTER: v.zone = Z_BTN; continue;
+			default: continue;
+			}
+		}
+
+		switch (k) {
+		case K_LEFT:  v.sel = (v.sel - 1 + v.na + 1) % (v.na + 1); continue;
+		case K_RIGHT: v.sel = (v.sel + 1) % (v.na + 1); continue;
+		case K_HOME:  v.sel = 0; continue;
+		case K_END:   v.sel = v.na; continue;
+		case K_DOWN:  if (v.maxscroll) v.zone = Z_BODY; continue;
+		case K_UP:    continue;
+		}
+		if (k != K_ENTER && k != ' ') continue;
+		if (v.sel == v.na) return;                    /* Back */
+		if (v.acts[v.sel].dim) continue;
+
+		switch (v.acts[v.sel].act) {
 		case A_DETAILS: screen_details(p); break;
 		case A_DOCS:    screen_docs(p); break;
 		case A_STATUS:  screen_status(p); break;
@@ -2305,30 +2943,46 @@ static void screen_app(Pkg *p)
 		case A_RESTART: screen_progress(p, "restart"); break;
 		case A_BOOT:    screen_progress(p, p->enabled == 1 ? "disable" : "enable"); break;
 		}
+		v.bscroll = 0;
 	}
 }
 
-/* ------------------------------------------------------------ the main screen
+/* --------------------------------------------------------- the home screen
  *
- * Three panes, left to right in the order somebody actually wants them: what
- * is already on this machine, what kinds of thing there are, and the things
- * themselves. Arrows walk within a pane, Left and Right step between panes,
- * Enter opens whatever is under the cursor. The installed pane is the first
- * column because managing what is running is what somebody comes back for —
- * installing is what they did once, on the first day.
+ * A strip of categories along the top and a grid of cards under it, laid out
+ * the way a video site lays out videos — which is the one arrangement that
+ * anybody who has used a browser can already drive, without being told.
+ *
+ * Installed is the first chip rather than a pane of its own. Coming back to
+ * see whether things are still running is the common visit, so it is the first
+ * thing the cursor reaches; but it is the same kind of thing as every other
+ * chip, and making it one costs a whole column of screen less than making it
+ * special did.
+ *
+ * Three zones, stacked. Up from the cards is the strip, up from the strip is
+ * the pair of buttons in the top right corner, and up from there is nowhere:
+ * holding Up walks you to the way out. There is no key to know.
  */
-enum { F_INST = 0, F_CAT, F_APP };
+enum { Z_TOP = 0, Z_CHIP, Z_GRID };
 
-static int g_focus = F_APP;
-static int g_cat = 0;
-static int g_sel_inst = 0, g_sel_cat = 0, g_sel_app = 0;
-static int g_scr_inst = 0, g_scr_cat = 0, g_scr_app = 0;
+static int g_zone = Z_GRID;
+static int g_topbtn = 1;              /* in Z_TOP: 0 language, 1 back */
+static int g_chip = 1;                /* All, until something is installed */
+static int g_chipscroll = 0;
+static int g_card = 0, g_cardrow = 0;
+static int g_cat = 0;                 /* the category the current chip names */
 static int g_view[MAX_PKGS], g_nview = 0;
 static int g_inst[MAX_PKGS], g_ninst = 0;
 static char g_msg[256] = "";
 
-/* geometry, recomputed on every frame so a resize needs no special case */
-static int L_top, L_h, L_instw, L_catw, L_appw, L_instx, L_catx, L_appx, L_showinst;
+/* chip -> category, with two reserved values ahead of the real ones */
+#define CHIP_INSTALLED (-2)
+#define CHIP_ALL       (-1)
+static int g_chipcat[MAX_CATS + 2];
+static int g_nchip = 0;
+
+/* the grid, recomputed every frame so a resize needs no special case */
+static int G_cols, G_cardw, G_coverh, G_cardh, G_pitch, G_top, G_rows, G_chiprow;
 
 static int pkg_in_cat(const Pkg *p, const char *cat)
 {
@@ -2345,218 +2999,245 @@ static int cat_count(int i)
 	return n;
 }
 
+/* An empty category is not shown at all — a source that ships no databases
+ * should not put an empty Databases on the strip. Which means the strip
+ * changes shape as things are installed, so the cursor is kept on the category
+ * it was on rather than on the index it was at. */
+static void rebuild_chips(void)
+{
+	int keep = g_nchip ? g_chipcat[g_chip] : CHIP_ALL;
+	g_nchip = 0;
+	g_chipcat[g_nchip++] = CHIP_INSTALLED;
+	g_chipcat[g_nchip++] = CHIP_ALL;
+	for (int i = 0; i < g_ncat && g_nchip < MAX_CATS + 2; i++)
+		if (cat_count(i)) g_chipcat[g_nchip++] = i;
+
+	g_chip = 1;
+	for (int i = 0; i < g_nchip; i++) if (g_chipcat[i] == keep) { g_chip = i; break; }
+	if (g_chip >= g_nchip) g_chip = g_nchip - 1;
+	if (g_chip < 0) g_chip = 0;
+	if (g_chipcat[g_chip] >= 0) g_cat = g_chipcat[g_chip];
+}
+
+static void chip_label(int i, char *out, size_t cap)
+{
+	int c = g_chipcat[i];
+	if (c == CHIP_INSTALLED) snprintf(out, cap, "%s %d", S(T_INSTALLP), g_ninst);
+	else if (c == CHIP_ALL)  snprintf(out, cap, "%s", S(T_ALL));
+	else                     snprintf(out, cap, "%s", S(g_cats[c].label));
+}
+
 static void rebuild_lists(void)
 {
 	g_ninst = 0;
 	for (int i = 0; i < g_npkg; i++)
 		if (pkg_installed(&g_pkg[i])) g_inst[g_ninst++] = i;
 
+	rebuild_chips();
+
+	int c = g_chipcat[g_chip];
 	g_nview = 0;
-	for (int i = 0; i < g_npkg; i++)
-		if (pkg_in_cat(&g_pkg[i], g_cats[g_cat].id)) g_view[g_nview++] = i;
+	for (int i = 0; i < g_npkg; i++) {
+		Pkg *p = &g_pkg[i];
+		if (c == CHIP_INSTALLED) { if (pkg_installed(p)) g_view[g_nview++] = i; }
+		else if (c == CHIP_ALL)  g_view[g_nview++] = i;
+		else if (pkg_in_cat(p, g_cats[c].id)) g_view[g_nview++] = i;
+	}
 
-	if (g_sel_app >= g_nview) g_sel_app = g_nview ? g_nview - 1 : 0;
-	if (g_sel_inst >= g_ninst) g_sel_inst = g_ninst ? g_ninst - 1 : 0;
-	if (g_sel_app < 0) g_sel_app = 0;
-	if (g_sel_inst < 0) g_sel_inst = 0;
+	if (g_card >= g_nview) g_card = g_nview ? g_nview - 1 : 0;
+	if (g_card < 0) g_card = 0;
 }
 
-static void compute_layout(void)
+/* Three columns when a card can still be 28 columns wide, then two, then one.
+ * The card never shrinks below that: a narrow terminal shows fewer of them at
+ * a time, it does not show unreadable ones. */
+static void card_layout(void)
 {
-	L_top = (g_h >= 18) ? 3 : 2;
-	L_h = g_h - L_top - 1;
-	if (L_h < 5) L_h = 5;
+	int avail = g_w - 2;
+	G_cols = 3;
+	while (G_cols > 1 && (avail - 2 * (G_cols - 1)) / G_cols < 28) G_cols--;
+	G_cardw = (avail - 2 * (G_cols - 1)) / G_cols;
+	if (G_cardw < 14) G_cardw = 14;
+	if (G_cardw > avail) G_cardw = avail;
 
-	/* The installed pane is worth a column of its own only when there is
-	 * something in it and there is room; otherwise the categories pane takes
-	 * the space and nothing is lost, because everything installed is still in
-	 * its own category. */
-	L_showinst = (g_ninst > 0 && g_w >= 86);
-	L_instw = L_showinst ? 26 : 0;
-	L_catw  = g_w >= 70 ? 18 : 16;
-	L_appw = g_w - 2 - L_instw - L_catw;
-	/* The listing is the pane that must stay usable: the installed column
-	 * goes first when there is not room for everything, then the categories
-	 * pane gives up what it can. */
-	if (L_appw < 26 && L_showinst) {
-		L_showinst = 0; L_instw = 0;
-		L_appw = g_w - 2 - L_catw;
-	}
-	if (L_appw < 24) { L_catw = 12; L_appw = g_w - 2 - L_catw; }
-	if (L_appw < 12) L_appw = 12;
+	G_chiprow = (g_h >= 18) ? 3 : 2;
+	G_top = G_chiprow + 3;                    /* the rule, a blank, the cards */
+	int space = (g_h - 1) - G_top;            /* the help line owns the last row */
+	if (space < 5) { G_top = G_chiprow + 2; space = (g_h - 1) - G_top; }
+	if (space < 4) space = 4;
 
-	L_instx = 1;
-	L_catx  = 1 + L_instw;
-	L_appx  = L_catx + L_catw;
+	/* The cover is what gives when the window is short, because it is the
+	 * part carrying no words. */
+	G_coverh = 3;
+	while (G_coverh > 1 && space < G_coverh + 6) G_coverh--;
+	G_cardh = G_coverh + 6;
+	G_pitch = G_cardh + 1;
+	G_rows = (space + 1) / G_pitch;           /* the last row needs no gap */
+	if (G_rows < 1) G_rows = 1;
 }
 
-/* A pane: a window whose title says what it holds and, when it has the focus,
- * whose border is the thing your eye lands on. newt has no focused-border
- * colour, so the title carries it instead. */
-static void pane_box(int col, int w, const char *title, int focused, int count)
+static void draw_chips(void)
 {
-	char t[128];
-	if (count >= 0) snprintf(t, sizeof t, "%s (%d)", title, count);
-	else            snprintf(t, sizeof t, "%s", title);
-	win_box(L_top, col, w, L_h, t);
-	if (focused) {
-		int tw = u8width(t) + 2;
-		char tt[132];
-		snprintf(tt, sizeof tt, " %s ", t);
-		gput(L_top, col + (w - tw) / 2, tt, P_BTNACT, tw);
+	int y = G_chiprow, room = g_w - 3;
+
+	/* Whole chips only. Half a category reads as a rendering fault, so the
+	 * strip scrolls by whole chips until the current one is inside it. */
+	if (g_chip < g_chipscroll) g_chipscroll = g_chip;
+	for (;;) {
+		int used = 0;
+		char lab[160];
+		for (int i = g_chipscroll; i <= g_chip; i++) {
+			chip_label(i, lab, sizeof lab);
+			used += u8width(lab) + 3;
+		}
+		if (used <= room || g_chipscroll >= g_chip) break;
+		g_chipscroll++;
 	}
+
+	int x = 1, last = g_chipscroll - 1;
+	for (int i = g_chipscroll; i < g_nchip; i++) {
+		char lab[160], pill[168];
+		chip_label(i, lab, sizeof lab);
+		snprintf(pill, sizeof pill, " %s ", lab);
+		int w = u8width(pill);
+		if (x - 1 + w > room) break;
+		int on = (i == g_chip);
+		gput(y, x, pill, on ? (g_zone == Z_CHIP ? P_CHIPCUR : P_CHIPSEL) : P_CHIP, w);
+		hit_add(H_CHIP, i, y, x, 1, w);
+		x += w + 1;
+		last = i;
+	}
+	if (last < g_nchip - 1) gput(y, g_w - 2, CH_MORE, P_CHIP, 1);
+	if (g_chipscroll > 0)   gput(y, 0, AR_L, P_CHIP, 1);
+
+	gfill(y + 1, 1, g_w - 2, BX_H, P_ROOTDIM);
 }
 
-static void draw_installed_pane(void)
+/* One card: a cover with the id across it and the disk footprint in the
+ * corner, then the name, what it is for, and where it stands. Under the cursor
+ * the border doubles as well as changing colour, because a terminal that is
+ * showing this over a monochrome ssh session still has to say which one. */
+static void draw_card(int row, int col, Pkg *p, int focused)
 {
-	pane_box(L_instx, L_instw, S(T_INSTALLP), g_focus == F_INST, g_ninst);
-	int rows = L_h - 2, inner = L_instw - 4;
-	if (g_sel_inst < g_scr_inst) g_scr_inst = g_sel_inst;
-	if (g_sel_inst >= g_scr_inst + rows) g_scr_inst = g_sel_inst - rows + 1;
-	if (g_scr_inst < 0) g_scr_inst = 0;
+	int inner = G_cardw - 2;
+	int b = focused ? P_CARDBSEL : P_CARDB;
+	const char *tl = focused ? B2_TL : BX_TL, *tr = focused ? B2_TR : BX_TR;
+	const char *bl = focused ? B2_BL : BX_BL, *br = focused ? B2_BR : BX_BR;
+	const char *hz = focused ? B2_H  : BX_H,  *vt = focused ? B2_V  : BX_V;
+	const char *lt = focused ? B2_LT : BX_LT, *rt = focused ? B2_RT : BX_RT;
 
-	g_clip_top = L_top + 1; g_clip_bot = L_top + L_h - 2;
-	for (int i = 0; i < rows && g_scr_inst + i < g_ninst; i++) {
-		Pkg *p = &g_pkg[g_inst[g_scr_inst + i]];
-		int y = L_top + 1 + i;
-		int on = (g_scr_inst + i == g_sel_inst);
-		if (on) gtint(y, L_instx + 1, L_instw - 2, g_focus == F_INST ? P_SEL : P_IDLE);
-		int a = on ? (g_focus == F_INST ? P_SEL : P_IDLE) : P_WIN;
-		gput(y, L_instx + 2, status_mark(p), on ? a : status_attr(p), 1);
-		char nm[128];
-		const char *sw = S(*status_label(p));
-		int stw = u8width(sw);
-		/* one column short of the state word, so a truncated name never runs
-		 * into it */
-		u8ellipsis(nm, sizeof nm, pkg_name(p), inner - stw - 3);
-		gput(y, L_instx + 4, nm, a, inner - stw - 3);
-		gput(y, L_instx + 2 + inner - stw, sw, on ? a : status_attr(p), stw);
+	gput(row, col, tl, b, 1);
+	gfill(row, col + 1, inner, hz, b);
+	gput(row, col + inner + 1, tr, b, 1);
+
+	for (int r = 1; r <= G_coverh; r++) {
+		gput(row + r, col, vt, b, 1);
+		gput(row + r, col + inner + 1, vt, b, 1);
 	}
-	g_clip_top = g_clip_bot = -1;
-	if (!g_ninst) gput(L_top + 1, L_instx + 2, S(T_NOINST), P_DIM, L_instw - 4);
+	draw_cover(row + 1, col + 1, inner, G_coverh, p, p->disk[0] ? p->disk : NULL);
+
+	int sy = row + G_coverh + 1;
+	gput(sy, col, lt, b, 1);
+	gfill(sy, col + 1, inner, BX_H, b);
+	gput(sy, col + inner + 1, rt, b, 1);
+
+	for (int r = 1; r <= 3; r++) {
+		gput(sy + r, col, vt, b, 1);
+		gput(sy + r, col + inner + 1, vt, b, 1);
+	}
+
+	int tw = inner - 2, tcol = col + 2;
+	char buf[700];
+	u8ellipsis(buf, sizeof buf, pkg_name(p), tw);
+	gput(sy + 1, tcol, buf, P_ROOTTITLE, tw);
+	u8ellipsis(buf, sizeof buf, pkg_summary(p), tw);
+	gput(sy + 2, tcol, buf, P_ROOTDIM, tw);
+
+	/* The last line answers the question being asked at that moment: while it
+	 * is not installed, what it will cost; once it is, which version is
+	 * actually there. The disk figure is not repeated — it is on the cover. */
+	char facts[320], sep[8];
+	size_t fn = 0;
+	facts[0] = '\0';
+	snprintf(sep, sizeof sep, " %s ", MK_DOT);
+	if (pkg_installed(p) && p->detail[0])
+		fn += (size_t)snprintf(facts + fn, sizeof facts - fn, "%s", p->detail);
+	else if (p->memory[0] && p->mem_bytes > 0)
+		fn += (size_t)snprintf(facts + fn, sizeof facts - fn, "%s %s", S(T_RAM), p->memory);
+	if (p->ports[0] && fn < sizeof facts - 32)
+		snprintf(facts + fn, sizeof facts - fn, "%s%s %s",
+		         fn ? sep : "", S(T_PORT), p->ports);
+
+	char meta[700];
+	snprintf(meta, sizeof meta, "%s %s%s%s", status_mark(p), S(*status_label(p)),
+	         facts[0] ? sep : "", facts);
+	u8ellipsis(buf, sizeof buf, meta, tw);
+	int ds = 0, ms = 0;
+	gput(sy + 3, tcol, buf,
+	     resource_short(p, &ds, &ms) ? P_WARNB : status_attr_root(p), tw);
+
+	int by = sy + 4;
+	gput(by, col, bl, b, 1);
+	gfill(by, col + 1, inner, hz, b);
+	gput(by, col + inner + 1, br, b, 1);
 }
 
-static void draw_cat_pane(void)
-{
-	int shown[MAX_CATS], nshown = 0;
-	for (int i = 0; i < g_ncat; i++) if (cat_count(i)) shown[nshown++] = i;
-
-	pane_box(L_catx, L_catw, S(T_CATS), g_focus == F_CAT, -1);
-	int rows = L_h - 2, inner = L_catw - 4;
-	if (g_sel_cat >= nshown) g_sel_cat = nshown ? nshown - 1 : 0;
-	if (g_sel_cat < g_scr_cat) g_scr_cat = g_sel_cat;
-	if (g_sel_cat >= g_scr_cat + rows) g_scr_cat = g_sel_cat - rows + 1;
-	if (g_scr_cat < 0) g_scr_cat = 0;
-
-	g_clip_top = L_top + 1; g_clip_bot = L_top + L_h - 2;
-	for (int i = 0; i < rows && g_scr_cat + i < nshown; i++) {
-		int ci = shown[g_scr_cat + i];
-		int y = L_top + 1 + i;
-		int on = (ci == g_cat);
-		int cursor = (g_scr_cat + i == g_sel_cat);
-		if (cursor) gtint(y, L_catx + 1, L_catw - 2, g_focus == F_CAT ? P_SEL : P_IDLE);
-		int a = cursor ? (g_focus == F_CAT ? P_SEL : P_IDLE) : (on ? P_TITLE : P_WIN);
-		/* the marker eats two of the pane's columns before the label starts */
-		char nm[128];
-		u8ellipsis(nm, sizeof nm, S(g_cats[ci].label), inner - 2);
-		gput(y, L_catx + 2, on ? MK_RUN : " ", a, 1);
-		gput(y, L_catx + 4, nm, a, inner - 2);
-	}
-	g_clip_top = g_clip_bot = -1;
-}
-
-static void draw_app_pane(void)
-{
-	char title[128];
-	snprintf(title, sizeof title, "%s", S(g_cats[g_cat].label));
-	pane_box(L_appx, L_appw, title, g_focus == F_APP, g_nview);
-
-	int inner = L_appw - 4;
-	int rows = L_h - 2;
-	/* Three lines a package — name and state, what it is, how big it is — is
-	 * the cover of the thing. Below about forty columns or a short window
-	 * there is no room for prose, so it collapses to a name and a state and
-	 * the details live one Enter away. */
-	int tall = (inner >= 36 && rows >= 9);
-	int pitch = tall ? 4 : 1;
-	int per = rows / pitch;
-	if (per < 1) per = 1;
-
-	if (g_sel_app < g_scr_app) g_scr_app = g_sel_app;
-	if (g_sel_app >= g_scr_app + per) g_scr_app = g_sel_app - per + 1;
-	if (g_scr_app < 0) g_scr_app = 0;
-
-	if (!g_nview) { gput(L_top + 1, L_appx + 2, S(T_EMPTY), P_DIM, inner); return; }
-
-	g_clip_top = L_top + 1; g_clip_bot = L_top + L_h - 2;
-	for (int i = 0; i < per && g_scr_app + i < g_nview; i++) {
-		Pkg *p = &g_pkg[g_view[g_scr_app + i]];
-		int y = L_top + 1 + i * pitch;
-		int on = (g_scr_app + i == g_sel_app);
-		int selattr = g_focus == F_APP ? P_SEL : P_IDLE;
-		int dimattr = g_focus == F_APP ? P_SELDIM : P_IDLE;
-
-		if (on) for (int r = 0; r < (tall ? 3 : 1); r++)
-			gtint(y + r, L_appx + 1, L_appw - 2, selattr);
-
-		const char *sw = S(*status_label(p));
-		int stw = u8width(sw);
-		char nm[160];
-		u8ellipsis(nm, sizeof nm, pkg_name(p), inner - stw - 4);
-		gput(y, L_appx + 2, status_mark(p), on ? selattr : status_attr(p), 1);
-		gput(y, L_appx + 4, nm, on ? selattr : P_WIN, inner - stw - 4);
-		gput(y, L_appx + 2 + inner - stw, sw, on ? dimattr : status_attr(p), stw);
-
-		if (!tall) continue;
-
-		char sm[600];
-		const char *src = (p->detail[0] && pkg_installed(p)) ? p->detail : pkg_summary(p);
-		u8ellipsis(sm, sizeof sm, src, inner - 2);
-		gput(y + 1, L_appx + 4, sm, on ? dimattr : P_DIM, inner - 2);
-
-		int ds = 0, ms = 0;
-		int tight = resource_short(p, &ds, &ms);
-		char sz[256];
-		size_line(p, sz, sizeof sz);
-		char szcut[256];
-		u8ellipsis(szcut, sizeof szcut, sz, inner - 2);
-		gput(y + 2, L_appx + 4, szcut, on ? dimattr : (tight ? P_WARN : P_DIM), inner - 2);
-	}
-	g_clip_top = g_clip_bot = -1;
-
-	if (g_nview > per) {
-		char sb[32];
-		snprintf(sb, sizeof sb, " %d/%d ", g_sel_app + 1, g_nview);
-		int sw = u8width(sb);
-		gput(L_top + L_h - 1, L_appx + L_appw - 3 - sw, sb, P_TITLE, sw);
-	}
-}
-
-static void render_main(void)
+static void render_home(void)
 {
 	grid_size(g_w, g_h);
+	hit_clear();
+	g_showtop = 1;
+	g_topsel = (g_zone == Z_TOP) ? g_topbtn : -1;
 	draw_root();
-	compute_layout();
+	card_layout();
 
 	if (g_npkg == 0) {
-		win_box(L_top, 1, g_w - 2, L_h, S(T_TITLE));
-		gput(L_top + 1, 3, S(T_NORECIPE), P_WARN, g_w - 6);
-		help_line(S(T_HELPMAIN));
+		gput(G_chiprow, 2, S(T_NORECIPE), P_WARNB, g_w - 4);
+		help_line_l(&T_HELPHOME);
 		return;
 	}
 
-	if (L_showinst) draw_installed_pane();
-	draw_cat_pane();
-	draw_app_pane();
+	draw_chips();
+
+	/* Follow the cursor with the viewport, then pin the viewport inside the
+	 * list — in that order, so a shrinking list cannot leave it past the end. */
+	int nrows = (g_nview + G_cols - 1) / G_cols;
+	int cur = g_card / G_cols;
+	if (cur < g_cardrow) g_cardrow = cur;
+	if (cur >= g_cardrow + G_rows) g_cardrow = cur - G_rows + 1;
+	if (g_cardrow > nrows - G_rows) g_cardrow = nrows - G_rows;
+	if (g_cardrow < 0) g_cardrow = 0;
+
+	g_clip_top = G_top; g_clip_bot = g_h - 2;
+	for (int r = 0; r < G_rows; r++) {
+		for (int c = 0; c < G_cols; c++) {
+			int i = (g_cardrow + r) * G_cols + c;
+			if (i >= g_nview) break;
+			int row = G_top + r * G_pitch, col = 1 + c * (G_cardw + 2);
+			draw_card(row, col, &g_pkg[g_view[i]], g_zone == Z_GRID && i == g_card);
+			hit_add(H_CARD, i, row, col, G_cardh, G_cardw);
+		}
+	}
+	g_clip_top = g_clip_bot = -1;
+
+	if (!g_nview) {
+		const L *e = g_chipcat[g_chip] == CHIP_INSTALLED ? &T_NOINST : &T_EMPTY;
+		gput(G_top, 2, S(*e), P_ABSENTB, g_w - 4);
+	} else if (nrows > G_rows) {
+		char sb[40];
+		snprintf(sb, sizeof sb, " %d/%d ", g_card + 1, g_nview);
+		int sw = u8width(sb);
+		gput(G_chiprow + 1, g_w - 2 - sw, sb, P_CHIPSEL, sw);
+	}
 
 	if (g_msg[0]) {
 		char m[300];
 		snprintf(m, sizeof m, " %s ", g_msg);
 		int mw = u8width(m);
 		if (mw > g_w - 4) mw = g_w - 4;
-		gput(L_top + L_h - 1, L_appx + 2, m, P_TITLE, mw);
+		gput(G_chiprow + 1, 2, m, P_CHIPSEL, mw);
 	}
-	help_line(S(T_HELPMAIN));
+	help_line_l(&T_HELPHOME);
 }
 
 static void probe_all(int quiet)
@@ -2573,28 +3254,19 @@ static void probe_all(int quiet)
 	if (!quiet) fprintf(stderr, "\r\x1b[K");
 }
 
-/* Move the category cursor and follow it with the listing. Selecting is what
- * the cursor does here — there is no separate "open" for a category, because
- * a category is not a thing you do anything to. */
-static void cat_cursor(int dir)
+/* Changing the chip changes what the grid holds, so the cursor goes back to
+ * the start of it — landing on card 14 of a category you have just arrived in
+ * is disorienting, and there is nothing there you were looking at. */
+static void chip_to(int i)
 {
-	int shown[MAX_CATS], nshown = 0;
-	for (int i = 0; i < g_ncat; i++) if (cat_count(i)) shown[nshown++] = i;
-	if (!nshown) return;
-	g_sel_cat += dir;
-	if (g_sel_cat < 0) g_sel_cat = 0;
-	if (g_sel_cat >= nshown) g_sel_cat = nshown - 1;
-	g_cat = shown[g_sel_cat];
-	g_sel_app = 0;
-	g_scr_app = 0;
-}
-
-static void sync_cat_cursor(void)
-{
-	int shown[MAX_CATS], nshown = 0;
-	for (int i = 0; i < g_ncat; i++) if (cat_count(i)) shown[nshown++] = i;
-	for (int i = 0; i < nshown; i++) if (shown[i] == g_cat) { g_sel_cat = i; return; }
-	if (nshown) { g_cat = shown[0]; g_sel_cat = 0; }
+	if (i < 0) i = 0;
+	if (i >= g_nchip) i = g_nchip - 1;
+	if (i == g_chip) return;
+	g_chip = i;
+	if (g_chipcat[i] >= 0) g_cat = g_chipcat[i];
+	g_card = 0;
+	g_cardrow = 0;
+	rebuild_lists();
 }
 
 static void tui(void)
@@ -2615,16 +3287,15 @@ static void tui(void)
 	term_raw();
 	atexit(term_cooked);
 	term_measure();
-	sync_cat_cursor();
 	rebuild_lists();
-	if (g_ninst) g_focus = F_INST;
+	/* Something is already installed: that is what this visit is probably
+	 * about, so start on that chip rather than on the whole catalogue. */
+	if (g_ninst) chip_to(0);
 
 	for (;;) {
 		term_measure();
 		rebuild_lists();
-		compute_layout();
-		if (!L_showinst && g_focus == F_INST) g_focus = F_CAT;
-		render_main();
+		render_home();
 		grid_flush();
 
 		int k = read_key();
@@ -2634,72 +3305,91 @@ static void tui(void)
 		if (k == 'L') { g_zh = !g_zh; continue; }
 		if (k == 'r' || k == 'R') {
 			copy_str(g_msg, sizeof g_msg, g_zh ? "正在刷新…" : "refreshing…");
-			render_main(); grid_flush();
+			render_home(); grid_flush();
 			probe_all(1);
 			g_msg[0] = '\0';
 			continue;
 		}
 
-		int rows = L_h - 2;
-		switch (k) {
-		case K_LEFT:
-			if (g_focus == F_APP) g_focus = F_CAT;
-			else if (g_focus == F_CAT && L_showinst) g_focus = F_INST;
+		if (k == K_CLICK) {
+			int idx = 0;
+			switch (hit_test(g_my, g_mx, &idx)) {
+			case H_BACK: term_cooked(); return;
+			case H_LANG: g_zh = !g_zh; g_zone = Z_TOP; g_topbtn = 0; continue;
+			case H_CHIP: g_zone = Z_CHIP; chip_to(idx); continue;
+			/* A card opens on a single click, anywhere on it, the way a
+			 * thumbnail does. Moving the cursor there first would be a
+			 * second gesture for something already pointed at. */
+			case H_CARD:
+				g_zone = Z_GRID; g_card = idx; g_msg[0] = '\0';
+				screen_app(&g_pkg[g_view[idx]]);
+				continue;
+			default: continue;
+			}
+		}
+		if (k == K_WHEELUP) { if (g_cardrow > 0) g_cardrow--; continue; }
+		if (k == K_WHEELDN) { g_cardrow++; continue; }
+
+		switch (g_zone) {
+		case Z_TOP:
+			switch (k) {
+			case K_LEFT: case K_RIGHT: g_topbtn = !g_topbtn; break;
+			case K_DOWN: g_zone = Z_CHIP; break;
+			case K_ENTER: case ' ':
+				if (g_topbtn) { term_cooked(); return; }
+				g_zh = !g_zh;
+				break;
+			case K_ESC: g_zone = Z_CHIP; break;
+			}
 			break;
-		case K_RIGHT:
-			if (g_focus == F_INST) g_focus = F_CAT;
-			else if (g_focus == F_CAT) g_focus = F_APP;
-			else if (g_focus == F_APP && g_nview) screen_app(&g_pkg[g_view[g_sel_app]]);
+
+		case Z_CHIP:
+			switch (k) {
+			case K_LEFT:  chip_to(g_chip - 1); break;
+			case K_RIGHT: chip_to(g_chip + 1); break;
+			case K_HOME:  chip_to(0); break;
+			case K_END:   chip_to(g_nchip - 1); break;
+			case K_UP:    g_zone = Z_TOP; break;
+			case K_DOWN: case K_ENTER: case ' ':
+				if (g_nview) g_zone = Z_GRID;
+				break;
+			case K_TAB:   g_zone = Z_GRID; break;
+			case K_ESC:   g_zone = Z_TOP; break;
+			}
 			break;
-		case K_TAB:
-			g_focus = (g_focus == F_APP) ? (L_showinst ? F_INST : F_CAT) : g_focus + 1;
-			break;
-		case K_BTAB:
-			g_focus = (g_focus == F_INST || (g_focus == F_CAT && !L_showinst)) ? F_APP : g_focus - 1;
-			break;
-		case K_UP:
-			if (g_focus == F_INST) { if (g_sel_inst > 0) g_sel_inst--; }
-			else if (g_focus == F_CAT) cat_cursor(-1);
-			else if (g_sel_app > 0) g_sel_app--;
-			break;
-		case K_DOWN:
-			if (g_focus == F_INST) { if (g_sel_inst < g_ninst - 1) g_sel_inst++; }
-			else if (g_focus == F_CAT) cat_cursor(1);
-			else if (g_sel_app < g_nview - 1) g_sel_app++;
-			break;
-		case K_PGUP:
-			if (g_focus == F_INST) { g_sel_inst -= rows; if (g_sel_inst < 0) g_sel_inst = 0; }
-			else if (g_focus == F_CAT) cat_cursor(-3);
-			else { g_sel_app -= 3; if (g_sel_app < 0) g_sel_app = 0; }
-			break;
-		case K_PGDN:
-			if (g_focus == F_INST) { g_sel_inst += rows; if (g_sel_inst >= g_ninst) g_sel_inst = g_ninst - 1; }
-			else if (g_focus == F_CAT) cat_cursor(3);
-			else { g_sel_app += 3; if (g_sel_app >= g_nview) g_sel_app = g_nview - 1; }
-			break;
-		case K_HOME:
-			if (g_focus == F_INST) g_sel_inst = 0;
-			else if (g_focus == F_CAT) cat_cursor(-g_ncat);
-			else g_sel_app = 0;
-			break;
-		case K_END:
-			if (g_focus == F_INST) g_sel_inst = g_ninst ? g_ninst - 1 : 0;
-			else if (g_focus == F_CAT) cat_cursor(g_ncat);
-			else g_sel_app = g_nview ? g_nview - 1 : 0;
-			break;
-		case K_ENTER:
-		case ' ':
-			g_msg[0] = '\0';
-			if (g_focus == F_INST && g_ninst) screen_app(&g_pkg[g_inst[g_sel_inst]]);
-			else if (g_focus == F_CAT) g_focus = F_APP;
-			else if (g_focus == F_APP && g_nview) screen_app(&g_pkg[g_view[g_sel_app]]);
-			break;
-		case K_ESC:
-			g_msg[0] = '\0';
+
+		default:
+			switch (k) {
+			case K_LEFT:  if (g_card > 0) g_card--; break;
+			case K_RIGHT: if (g_card < g_nview - 1) g_card++; break;
+			case K_UP:
+				if (g_card >= G_cols) g_card -= G_cols;
+				else g_zone = Z_CHIP;
+				break;
+			case K_DOWN:
+				if (g_card + G_cols < g_nview) g_card += G_cols;
+				else if (g_nview) g_card = g_nview - 1;
+				break;
+			case K_PGUP:
+				g_card -= G_cols * G_rows;
+				if (g_card < 0) g_card = 0;
+				break;
+			case K_PGDN:
+				g_card += G_cols * G_rows;
+				if (g_card >= g_nview) g_card = g_nview ? g_nview - 1 : 0;
+				break;
+			case K_HOME: g_card = 0; break;
+			case K_END:  g_card = g_nview ? g_nview - 1 : 0; break;
+			case K_TAB:  g_zone = Z_CHIP; break;
+			case K_ESC:  g_zone = Z_CHIP; g_msg[0] = '\0'; break;
+			case K_ENTER: case ' ':
+				g_msg[0] = '\0';
+				if (g_nview) screen_app(&g_pkg[g_view[g_card]]);
+				break;
+			}
 			break;
 		}
-		if (g_sel_inst < 0) g_sel_inst = 0;
-		if (g_sel_app < 0) g_sel_app = 0;
+		if (g_card < 0) g_card = 0;
 	}
 }
 
@@ -2862,96 +3552,76 @@ static int cli_doctor(void)
 }
 
 /* One frame as plain text. This is how the layout is tested without a
- * terminal: render at 130, 88 and 46 columns and look at what survived. */
+ * terminal: render at 130, 88 and 46 columns and look at what survived.
+ *
+ * Every screen below is drawn by the function the interactive program calls,
+ * given a hand-made cursor position — so what this prints is what a terminal
+ * would show. The settings form is the exception and is still drawn twice; it
+ * is a plain stack of fields, with no geometry worth a second implementation
+ * being wrong about.
+ */
 static int cli_screenshot(int n, char **rest)
 {
-	int w = 100, h = 30;
-	const char *cat = NULL, *screen = "main", *pick = NULL;
+	int w = 100, h = 30, sel = 0, zone = -1;
+	const char *cat = NULL, *screen = "home", *pick = NULL;
 	for (int i = 1; i < n; i++) {
 		if (!strcmp(rest[i], "--width") && i + 1 < n) w = atoi(rest[++i]);
 		else if (!strcmp(rest[i], "--height") && i + 1 < n) h = atoi(rest[++i]);
 		else if (!strcmp(rest[i], "--category") && i + 1 < n) cat = rest[++i];
 		else if (!strcmp(rest[i], "--screen") && i + 1 < n) screen = rest[++i];
 		else if (!strcmp(rest[i], "--id") && i + 1 < n) pick = rest[++i];
+		else if (!strcmp(rest[i], "--select") && i + 1 < n) sel = atoi(rest[++i]);
+		else if (!strcmp(rest[i], "--focus") && i + 1 < n) {
+			const char *f = rest[++i];
+			zone = !strcmp(f, "back") || !strcmp(f, "top") ? Z_TOP
+			     : !strcmp(f, "chips") ? Z_CHIP : Z_GRID;
+		}
 		else if (!strcmp(rest[i], "--probe")) probe_all(1);
 	}
 	g_w = w > 24 ? w : 24;
 	g_h = h > 10 ? h : 10;
-	if (cat) { int i = cat_index(cat); if (i >= 0) g_cat = i; }
-	sync_cat_cursor();
+
 	rebuild_lists();
-	grid_size(g_w, g_h);
-	compute_layout();
-
-	Pkg *p = pick ? find_pkg(pick) : (g_nview ? &g_pkg[g_view[0]] : NULL);
-
-	if (!strcmp(screen, "menu") && p) {
-		/* the action dialog, drawn once — same code path, no event loop */
-		render_main();
-		Action acts[12];
-		int na = build_actions(p, acts);
-		int ww = 54; if (ww > g_w - 6) ww = g_w - 6;
-		int inner = ww - 4;
-		char sum[3][512];
-		int ns = u8wrap(pkg_summary(p), inner, sum, 2);
-		int hh = na + ns + 7; if (hh > g_h - 2) hh = g_h - 2;
-		int row = (g_h - hh) / 2, col = (g_w - ww) / 2;
-		if (row < 1) row = 1;
-		if (col < 0) col = 0;
-		win_box(row, col, ww, hh, pkg_name(p));
-		int y = row + 1;
-		char st[128];
-		snprintf(st, sizeof st, "%s %s", status_mark(p), S(*status_label(p)));
-		gput(y, col + 2, st, status_attr(p), inner); y++;
-		for (int i = 0; i < ns; i++) { gput(y, col + 2, sum[i], P_DIM, inner); y++; }
-		y++;
-		for (int i = 0; i < na && y < row + hh - 2; i++, y++) {
-			if (i == 0) gtint(y, col + 2, inner, P_SEL);
-			gput(y, col + 3, acts[i].label, i == 0 ? P_SEL : P_WIN, inner - 10);
-			if (acts[i].aux[0])
-				gput(y, col + 1 + inner - u8width(acts[i].aux), acts[i].aux, P_DIM, 8);
+	if (cat) {
+		int ci = cat_index(cat);
+		for (int i = 0; i < g_nchip; i++) {
+			int c = g_chipcat[i];
+			if ((ci >= 0 && c == ci) ||
+			    (c == CHIP_INSTALLED && !strcmp(cat, "installed")) ||
+			    (c == CHIP_ALL && !strcmp(cat, "all"))) { chip_to(i); break; }
 		}
-		btn_draw(row + hh - 2, col + 2, S(T_BACK), 0);
-		help_line(S(T_HELPMENU));
+	}
+	if (zone >= 0) g_zone = zone;
+	if (sel > 0 && sel <= g_nview) g_card = sel - 1;
+
+	Pkg *p = pick ? find_pkg(pick) : (g_nview ? &g_pkg[g_view[g_card]] : NULL);
+
+	if (p && (!strcmp(screen, "app") || !strcmp(screen, "menu") ||
+	          !strcmp(screen, "detail"))) {
+		AppView v;
+		memset(&v, 0, sizeof v);
+		v.zone = Z_BTN;
+		v.sel = sel;
+		app_draw(p, &v);
+		screen = "app";
 	} else if (!strcmp(screen, "progress")) {
-		/* a fabricated frame — the real one needs a child process */
-		render_main();
+		/* A Runner that never had a child: the drawing cannot tell, which is
+		 * the point of it taking one. */
+		static Runner r;
+		memset(&r, 0, sizeof r);
+		r.fd = r.logfd = -1;
+		r.step = 3; r.total = 6; r.lines_in_step = 4;
+		copy_str(r.phase, sizeof r.phase,
+		         g_zh ? "正在配置默认站点…" : "configuring the default site…");
+		runner_push(&r, "Setting up nginx (1.26.3-1) ...");
+		runner_push(&r, g_zh ? "==> 配置默认站点" : "==> configuring the default site");
+		runner_push(&r, "nginx: configuration file /etc/nginx/nginx.conf test is ok");
+		runner_push(&r, g_zh ? "==> 启动 nginx" : "==> starting nginx");
 		char title[256];
-		snprintf(title, sizeof title, S(T_VERB_INS), p ? pkg_name(p) : "…");
-		int ww = g_w - 8; if (ww > 100) ww = 100; if (ww < 36) ww = g_w - 2;
-		int hh = g_h - 4; if (hh > 26) hh = 26; if (hh < 12) hh = g_h - 2;
-		int row = (g_h - hh) / 2 - 1, col = (g_w - ww) / 2;
-		if (row < 1) row = 1;
-		if (col < 0) col = 0;
-		int inner = ww - 4, x = col + 2;
-		win_box(row, col, ww, hh, title);
-		int y = row + 1;
-		char head[128];
-		snprintf(head, sizeof head, S(T_STEPOF), 3, 6);
-		gput(y, x, head, P_DIM, inner); y++;
-		draw_bar(y, x, inner - 5, 45);
-		gput(y, x + inner - 5, "  45%", P_WIN, 5);
-		y += 2;
-		gput(y, x, g_zh ? "正在配置默认站点…" : "configuring the default site…", P_WIN, inner);
-		y += 2;
-		int logh = row + hh - 3 - y; if (logh < 3) logh = 3;
-		gput(y, x, BX_TL, P_BORDER, 1);
-		gfill(y, x + 1, inner - 2, BX_H, P_BORDER);
-		gput(y, x + inner - 1, BX_TR, P_BORDER, 1);
-		{ char lt[64]; snprintf(lt, sizeof lt, " %s ", S(T_LOGPANE));
-		  gput(y, x + 2, lt, P_TITLE, u8width(lt)); }
-		for (int i = 1; i < logh - 1; i++) {
-			gput(y + i, x, BX_V, P_BORDER, 1);
-			gput(y + i, x + inner - 1, BX_V, P_BORDER, 1);
-		}
-		gput(y + logh - 1, x, BX_BL, P_BORDER, 1);
-		gfill(y + logh - 1, x + 1, inner - 2, BX_H, P_BORDER);
-		gput(y + logh - 1, x + inner - 1, BX_BR, P_BORDER, 1);
-		gput(y + 1, x + 2, "Setting up nginx (1.22.1-9) ...", P_DIM, inner - 4);
-		gput(y + 2, x + 2, "==> configuring the default site", P_DIM, inner - 4);
-		help_line(S(T_HELPRUN));
+		verb_title(title, sizeof title, "install", p);
+		progress_draw(&r, title, -1, 0, NULL, NULL);
 	} else if (!strcmp(screen, "params") && p) {
-		render_main();
+		render_home();
 		int labw = 12;
 		for (int i = 0; i < p->nparams; i++) {
 			int lw = u8width(param_label(&p->params[i]));
@@ -2987,14 +3657,15 @@ static int cli_screenshot(int n, char **rest)
 		int bx = col + (ww - bw) / 2;
 		btn_draw(row + hh - 2, bx, S(T_OK), 1);
 		btn_draw(row + hh - 2, bx + btn_width(S(T_OK)) + 2, S(T_CANCEL), 0);
-		help_line(S(T_HELPFORM));
+		help_line_l(&T_HELPFORM);
 	} else {
-		render_main();
+		render_home();
+		screen = "home";
 	}
 
 	grid_dump(stdout);
-	printf("\n[screen=%s panes=%d apps=%d/%d installed=%d %dx%d]\n",
-	       screen, L_showinst ? 3 : 2, g_nview, g_npkg, g_ninst, g_w, g_h);
+	printf("\n[screen=%s cols=%d card=%dx%d apps=%d/%d installed=%d %dx%d]\n",
+	       screen, G_cols, G_cardw, G_cardh, g_nview, g_npkg, g_ninst, g_w, g_h);
 	return 0;
 }
 
@@ -3015,11 +3686,17 @@ static void usage(FILE *f)
 	  "  app-setup set <id> [k=v ...] show or change a recipe's settings\n"
 	  "  app-setup docs <id>          what the recipe says about itself\n"
 	  "  app-setup doctor             what this machine looks like to app-setup\n"
-	  "  app-setup screenshot [--width N] [--height N] [--category C]\n"
-	  "                       [--screen main|menu|params|progress] [--id ID]\n"
+	  "  app-setup screenshot [--width N] [--height N] [--category C|installed|all]\n"
+	  "                       [--screen home|app|params|progress] [--id ID]\n"
+	  "                       [--select N] [--focus grid|chips|back] [--probe]\n"
 	  "                               render one frame as plain text\n"
 	  "\n"
-	  "  --lang en|zh    override the language guessed from LANG\n"
+	  "  --lang en|zh    English unless this or APP_SETUP_LANG says otherwise;\n"
+	  "                  in the picker, the button in the top right corner\n"
+	  "                  switches it, and so does L\n"
+	  "  --no-mouse      do not ask the terminal to report clicks. Everything is\n"
+	  "                  reachable from four arrow keys and Enter either way; use\n"
+	  "                  this if your terminal will not Shift-drag to select text\n"
 	  "  --no-color      no escape sequences in the CLI output\n"
 	  "  --version\n"
 	  "\n"
@@ -3031,10 +3708,13 @@ static void usage(FILE *f)
 /* ------------------------------------------------------------------ main ---*/
 int main(int argc, char **argv)
 {
+	/* English unless somebody says otherwise, and only APP_SETUP_LANG or
+	 * --lang says otherwise. LANG is not consulted: it describes the locale
+	 * the terminal was started in, which on a shared box is whatever the
+	 * image happened to set, and a picker that comes up in a language the
+	 * holder cannot read has hidden its own way out. Switching is one press
+	 * of the button in the top right corner, or of L. */
 	const char *lang = getenv("APP_SETUP_LANG");
-	if (!lang) lang = getenv("LC_ALL");
-	if (!lang) lang = getenv("LC_MESSAGES");
-	if (!lang) lang = getenv("LANG");
 	if (lang && (strstr(lang, "zh") || strstr(lang, "ZH"))) g_zh = 1;
 
 	const char *enc = getenv("LC_ALL");
@@ -3053,6 +3733,7 @@ int main(int argc, char **argv)
 		if (!strcmp(argv[i], "--lang") && i + 1 < argc) {
 			g_zh = !strncmp(argv[++i], "zh", 2);
 		} else if (!strcmp(argv[i], "--no-color")) g_color = 0;
+		else if (!strcmp(argv[i], "--no-mouse")) g_mouse = 0;
 		else if (!strcmp(argv[i], "--ascii")) { g_utf8 = 0; g_zh = 0; pick_glyphs(); }
 		else if (!strcmp(argv[i], "--version")) { printf("app-setup %s\n", APP_VERSION); return 0; }
 		else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { usage(stdout); return 0; }
