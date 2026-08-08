@@ -62,7 +62,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define APP_VERSION   "2.7.0"
+#define APP_VERSION   "2.7.1"
 #define MAX_PKGS      512
 #define MAX_CATS      32
 #define MAX_PARAMS    12
@@ -1874,6 +1874,15 @@ static void pager(const char *title, const char *text)
 		}
 	}
 
+	/* Wrapped, not truncated. Every row used to be cut to the pane's width
+	 * with an ellipsis and there is no sideways scroll, so anything past the
+	 * edge was simply gone — in a window whose whole job is showing somebody
+	 * text they cannot otherwise see. Rewrapped only when the width changes,
+	 * because this also holds sixty kilobytes of log at eleven frames a
+	 * second. */
+	char **disp = NULL;
+	int nd = 0, wrapped_at = -1;
+
 	int scroll = 0;
 	for (;;) {
 		term_measure();
@@ -1893,7 +1902,36 @@ static void pager(const char *title, const char *text)
 		if (w > 96) w = 96;
 		if (w < 34) w = 34;
 		if (w > g_w - 2) w = g_w - 2;
-		int h = n + 3;
+		int inner = w - 4;
+
+		/* Wrap before choosing the height, or a paragraph that needs three
+		 * rows gets a box sized for the one line it was written as. */
+		if (inner != wrapped_at) {
+			static char wrap[64][512];
+			for (int i = 0; i < nd; i++) free(disp[i]);
+			free(disp);
+			disp = NULL; nd = 0;
+			int cap_d = 0;
+			for (int i = 0; i < n; i++) {
+				int k = u8wrap(raw[i], inner, wrap, 64);
+				if (k < 1) k = 1;               /* a blank line is still a line */
+				for (int j = 0; j < k; j++) {
+					if (nd == cap_d) {
+						cap_d = cap_d ? cap_d * 2 : 64;
+						disp = realloc(disp, (size_t)cap_d * sizeof(char *));
+						if (!disp) { nd = 0; break; }
+					}
+					const char *src = (k == 1 && !*raw[i]) ? "" : wrap[j];
+					size_t len = strlen(src);
+					disp[nd] = xmalloc(len + 1);
+					memcpy(disp[nd], src, len + 1);
+					nd++;
+				}
+			}
+			wrapped_at = inner;
+		}
+
+		int h = nd + 3;
 		if (h > g_h - 4) h = g_h - 4;
 		if (h < 7) h = 7;
 		if (h > g_h - 2) h = g_h - 2;
@@ -1901,19 +1939,17 @@ static void pager(const char *title, const char *text)
 		if (row < 1) row = 1;
 		if (col < 0) col = 0;
 		win_box(row, col, w, h, title);
-
 		int body = h - 3;
-		int inner = w - 4;
-		if (scroll > n - 1) scroll = n - 1;
+
+		if (scroll > nd - 1) scroll = nd - 1;
 		if (scroll < 0) scroll = 0;
-		for (int i = 0; i < body && scroll + i < n; i++) {
-			char cut[600];
-			u8ellipsis(cut, sizeof cut, raw[scroll + i], inner);
-			gput(row + 1 + i, col + 2, cut, P_WIN, inner);
-		}
-		if (n > body) {
+		for (int i = 0; i < body && scroll + i < nd; i++)
+			gput(row + 1 + i, col + 2, disp[scroll + i], P_WIN, inner);
+		scrollbar(row + 1, col + w - 2, body, scroll, body, nd,
+		          P_SBTHUMBW, P_SBTRACKW);
+		if (nd > body) {
 			char sb[32];
-			snprintf(sb, sizeof sb, " %d/%d ", scroll + 1, n);
+			snprintf(sb, sizeof sb, " %d/%d ", scroll + 1, nd);
 			int sw = u8width(sb);
 			gput(row + h - 1, col + w - 3 - sw, sb, P_TITLE, sw);
 		}
@@ -1931,8 +1967,10 @@ static void pager(const char *title, const char *text)
 		else if (k == K_PGDN || k == K_RIGHT) scroll += body;
 		else if (k == K_PGUP) scroll -= body;
 		else if (k == K_HOME) scroll = 0;
-		else if (k == K_END)  scroll = n - 1;
+		else if (k == K_END)  scroll = nd - 1;
 	}
+	for (int i = 0; i < nd; i++) free(disp[i]);
+	free(disp);
 	free(raw); free(copy);
 }
 
