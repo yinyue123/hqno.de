@@ -62,7 +62,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define APP_VERSION   "2.7.1"
+#define APP_VERSION   "2.7.2"
 #define MAX_PKGS      512
 #define MAX_CATS      32
 #define MAX_PARAMS    12
@@ -2869,6 +2869,29 @@ enum { A_INSTALL = 1, A_REMOVE, A_START, A_STOP, A_RESTART, A_BOOT,
 
 typedef struct { int act; char label[64]; char aux[32]; int dim; } Action;
 
+/* Fill in the Log entry: grey until something has been run on this package,
+ * carrying the file's size when there is one — which answers "is there
+ * anything in it" without opening it. */
+static void add_log_action(const Pkg *p, Action *a)
+{
+	char lp[600];
+	struct stat st;
+	snprintf(lp, sizeof lp, "%s/%s.log", log_dir(), p->id);
+	a->act = A_LOG;
+	copy_str(a->label, 64, S(T_LOG));
+	a->aux[0] = '\0';
+	a->dim = 1;
+	if (stat(lp, &st) == 0 && S_ISREG(st.st_mode)) {
+		a->dim = 0;
+		if (st.st_size > 0) human_size((long long)st.st_size, a->aux, sizeof a->aux);
+	}
+}
+
+/* The order is the order somebody needs them in, not the order they were
+ * written in. The verb that changes the thing comes first — Install, or Stop
+ * on something running — and **the log comes straight after it**, because "it
+ * is not running" and "why is it not running" are the same moment and the
+ * answer should not be at the far end of a wrapped row behind Details. */
 static int build_actions(const Pkg *p, Action *a)
 {
 	int n = 0;
@@ -2876,13 +2899,18 @@ static int build_actions(const Pkg *p, Action *a)
 
 	if (!inst) {
 		a[n].act = A_INSTALL; copy_str(a[n].label, 64, S(T_INSTALL)); a[n].aux[0] = 0; a[n].dim = 0; n++;
-	} else {
+	} else if (p->service[0]) {
+		if (p->status == ST_RUNNING) {
+			a[n].act = A_STOP; copy_str(a[n].label, 64, S(T_STOP)); a[n].aux[0] = 0; a[n].dim = 0; n++;
+		} else {
+			a[n].act = A_START; copy_str(a[n].label, 64, S(T_START)); a[n].aux[0] = 0; a[n].dim = 0; n++;
+		}
+	}
+
+	add_log_action(p, &a[n]); n++;
+
+	if (inst) {
 		if (p->service[0]) {
-			if (p->status == ST_RUNNING) {
-				a[n].act = A_STOP; copy_str(a[n].label, 64, S(T_STOP)); a[n].aux[0] = 0; a[n].dim = 0; n++;
-			} else {
-				a[n].act = A_START; copy_str(a[n].label, 64, S(T_START)); a[n].aux[0] = 0; a[n].dim = 0; n++;
-			}
 			a[n].act = A_RESTART; copy_str(a[n].label, 64, S(T_RESTART)); a[n].aux[0] = 0; a[n].dim = 0; n++;
 		}
 		a[n].act = A_STATUS; copy_str(a[n].label, 64, S(T_STATUS)); a[n].aux[0] = 0; a[n].dim = 0; n++;
@@ -2894,29 +2922,13 @@ static int build_actions(const Pkg *p, Action *a)
 			a[n].dim = 0; n++;
 		}
 	}
+
 	a[n].act = A_PARAMS; copy_str(a[n].label, 64, S(T_PARAMS));
 	snprintf(a[n].aux, sizeof a[n].aux, "%d", p->nparams);
 	if (!p->nparams) a[n].aux[0] = '\0';
 	a[n].dim = !p->nparams; n++;
 
 	a[n].act = A_DETAILS; copy_str(a[n].label, 64, S(T_DETAILS)); a[n].aux[0] = 0; a[n].dim = 0; n++;
-
-	/* Grey until something has been run on it, with the size of what is there
-	 * — which answers "is there anything in it" without opening it. */
-	{
-		char lp[600];
-		struct stat st;
-		snprintf(lp, sizeof lp, "%s/%s.log", log_dir(), p->id);
-		a[n].act = A_LOG; copy_str(a[n].label, 64, S(T_LOG));
-		a[n].aux[0] = '\0';
-		a[n].dim = 1;
-		if (stat(lp, &st) == 0 && S_ISREG(st.st_mode)) {
-			a[n].dim = 0;
-			if (st.st_size > 0)
-				human_size((long long)st.st_size, a[n].aux, sizeof a[n].aux);
-		}
-		n++;
-	}
 	a[n].act = A_DOCS;    copy_str(a[n].label, 64, S(T_DOCS));    a[n].aux[0] = 0; a[n].dim = 0; n++;
 	if (inst) { a[n].act = A_REMOVE; copy_str(a[n].label, 64, S(T_REMOVE)); a[n].aux[0] = 0; a[n].dim = 0; n++; }
 	return n;
