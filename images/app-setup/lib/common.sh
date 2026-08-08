@@ -31,8 +31,11 @@
 set -e
 
 APP_SETUP_LIB=1
-APP_SETUP_STATE=/var/lib/app-setup
-APP_SETUP_SECRETS=/root/.app-setup
+# Overridable so the demo recipes under images/app-setup/demo can be driven on
+# a workstation without writing anywhere a real install would. Nothing in a
+# published image sets either of these.
+APP_SETUP_STATE="${APP_SETUP_STATE:-/var/lib/app-setup}"
+APP_SETUP_SECRETS="${APP_SETUP_SECRETS:-/root/.app-setup}"
 
 # ---------------------------------------------------------------- output --
 # Colour only on a real terminal. Under the TUI the output is a pipe that is
@@ -46,6 +49,18 @@ fi
 
 step() { printf '%b==>%b %s\n' "$C_B" "$C_0" "$*"; }
 info() { printf '    %s\n' "$*"; }
+
+# The installer screen's progress bar is built out of these, and out of `step`
+# above, which every recipe already calls before each phase of its work. That
+# is deliberate: the sentence under the bar is the recipe's own, so it says
+# "fetching WordPress" rather than something this library invented.
+#
+# `step_total` is the single line a recipe adds to make the bar a true
+# fraction. A recipe that does not declare one still gets a bar — it just
+# approaches the end without claiming to know where the end is, which is the
+# honest rendering of not knowing. Declare it once, at the top of do_install,
+# and count the `step` calls on the path actually taken.
+step_total() { printf '==| total %s\n' "$1"; }
 ok()   { printf '%b  ok%b %s\n' "$C_G" "$C_0" "$*"; }
 warn() { printf '%b  ! %b %s\n' "$C_Y" "$C_0" "$*" >&2; }
 err()  { printf '%b  x %b %s\n' "$C_R" "$C_0" "$*" >&2; }
@@ -65,6 +80,40 @@ lang_zh() {
 
 need_root() {
 	[ "$(id -u)" = 0 ] || die "this needs root. Run app-setup as root, or with sudo."
+}
+
+# ------------------------------------------------------------- settings ---
+# A recipe declares what a holder is allowed to change in its header:
+#
+#   # param: port | 80            | Listen port | 监听端口 | number
+#   # param: root | /var/www/html | Document root | 网站目录
+#   # param: ssl  | off           | Enable HTTPS  | 启用 HTTPS | bool
+#   # param: level| info          | Log level     | 日志级别   | debug,info,warn
+#
+# and reads it back with `param port 80`. The Settings form in app-setup edits
+# those and saves them under $APP_SETUP_STATE/params/<id>.conf; every verb then
+# runs with APP_PARAM_PORT and friends in its environment.
+#
+# The default given here is what applies when nothing has been saved and when
+# somebody runs `sh /etc/app-setup/nginx.sh install` by hand, so a recipe never
+# depends on the form having been opened.
+param() {
+	local _n _v
+	# Explicit letters rather than a tr range: busybox tr and GNU tr disagree
+	# about ranges under some locales, and this runs under both.
+	_n="$(printf '%s' "$1" | tr 'abcdefghijklmnopqrstuvwxyz-' 'ABCDEFGHIJKLMNOPQRSTUVWXYZ_')"
+	eval "_v=\${APP_PARAM_$_n-}"
+	[ -n "$_v" ] || _v="${2-}"
+	printf '%s' "$_v"
+}
+
+# `param_on ssl && ...` — the bool form, accepting everything a person might
+# reasonably have typed into the file by hand.
+param_on() {
+	case "$(param "$1" "${2-}")" in
+		on|On|ON|1|yes|Yes|YES|true|True|TRUE) return 0 ;;
+	esac
+	return 1
 }
 
 # --------------------------------------------------------------- identity --
