@@ -62,7 +62,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define APP_VERSION   "2.4.0"
+#define APP_VERSION   "2.5.0"
 #define MAX_PKGS      512
 #define MAX_CATS      32
 #define MAX_PARAMS    12
@@ -1064,6 +1064,9 @@ enum {
 	 * and it should not have to share the cursor's cyan to be found. It keeps
 	 * its own cursor pair so the underline and the sweep still work on it. */
 	P_BACK, P_BACKCUR, P_BACKHOT,
+	/* the scroll indicator, in the two places anything scrolls: down the
+	 * right of the card grid, which is on the root, and inside a window */
+	P_SBTHUMB, P_SBTRACK, P_SBTHUMBW, P_SBTRACKW,
 	/* the two things still drawn straight onto the root and needing a
 	 * blue-backed colour: "nothing in this category", and "no recipes at all" */
 	P_ABSENTB, P_WARNB,
@@ -1114,6 +1117,10 @@ static const char *SGR[P_COUNT] = {
 	"0;1;37;41",     /* BACK      white on red — the way out          */
 	"0;1;4;37;41",   /* BACKCUR   …with the cursor on it              */
 	"0;1;4;33;41",   /* BACKHOT   …and the band sweeping along it     */
+	"0;1;37;44",     /* SBTHUMB   where you are, on the root          */
+	"0;34;44",       /* SBTRACK   how far there is to go              */
+	"0;1;34;47",     /* SBTHUMBW  the same, inside a grey window      */
+	"0;1;30;47",     /* SBTRACKW                                      */
 	"0;1;30;44",     /* ABSENTB   grey on blue                        */
 	"0;1;31;44",     /* WARNB     red on blue                         */
 	"0;37;45",       /* COV0      suites      on magenta              */
@@ -1554,6 +1561,30 @@ static void cursor_sweep(int row, int col, int w, int base, int hot)
 {
 	for (int i = 0; i < w; i++)
 		gtint(row, col + i, 1, sweep_hot(i, w) ? hot : base);
+}
+
+/* A scroll indicator: a track the height of the viewport with a thumb on it as
+ * long a fraction of the track as the viewport is of the whole. A count says
+ * where you are if you read it; a bar says it without being read, which is the
+ * point of having both.
+ *
+ * Nothing is drawn when it all fits — a full-length thumb is a scrollbar
+ * saying "there is nothing to scroll" in the most confusing way available. */
+static void scrollbar(int row, int col, int h, int first, int shown, int total,
+                      int thumb, int track)
+{
+	if (total <= shown || h < 2) return;
+	int len = h * shown / total;
+	if (len < 1) len = 1;
+	if (len > h) len = h;
+	int span = total - shown;
+	int pos = span > 0 ? (h - len) * first / span : 0;
+	if (pos < 0) pos = 0;
+	if (pos > h - len) pos = h - len;
+	for (int i = 0; i < h; i++) {
+		int on = (i >= pos && i < pos + len);
+		gput(row + i, col, on ? BAR_F : BAR_E, on ? thumb : track, 1);
+	}
 }
 
 /* ------------------------------------------------------------ hit testing --
@@ -2837,15 +2868,49 @@ enum { Z_BTN = 0, Z_BODY };
  * `screenshot --screen app` renders the real thing rather than a second
  * drawing of it that is free to drift — the last version had two, and the
  * copy is what a layout test would have been testing. */
+#define MAX_ACTS 14
+
 typedef struct {
 	int sel;          /* 0..na-1 a verb, na is Back */
 	int zone;         /* Z_BTN or Z_BODY */
-	int scroll;       /* first verb drawn, when they do not all fit */
 	int bscroll;      /* first line of prose drawn */
 	/* filled in by app_draw */
 	int na, brows, maxscroll;
-	Action acts[12];
+	Action acts[MAX_ACTS];
+	/* where each verb ended up, so Up and Down can move between the rows of
+	 * them rather than only along one. Index na is Back. */
+	int arow[MAX_ACTS + 1], acol[MAX_ACTS + 1], awid[MAX_ACTS + 1];
+	int nbrows;
 } AppView;
+
+/* Lay the verbs out left to right, wrapping. Back is pinned to the right of
+ * the first row and the verbs flow under it.
+ *
+ * They used to scroll sideways under a `›` instead, which meant a package with
+ * a service — stop, restart, running state, update, start at boot, settings,
+ * details, how to use it, uninstall — hid three of its own verbs off the right
+ * hand edge, on a screen with a completely empty middle. Wrapping costs a row
+ * or two of a panel that is sized to its contents anyway. */
+static int act_layout(AppView *v, int inner, int backw)
+{
+	int first = inner - backw - 2;   /* the first row stops short of Back */
+	if (first < 8) first = 8;
+	int x = 0, row = 0;
+
+	for (int i = 0; i < v->na; i++) {
+		int w = act_width(&v->acts[i]);
+		int limit = row ? inner : first;
+		if (x && x + w > limit) { row++; x = 0; limit = inner; }
+		v->arow[i] = row;
+		v->acol[i] = x;
+		v->awid[i] = w;
+		x += w + 1;
+	}
+	v->arow[v->na] = 0;                            /* Back */
+	v->acol[v->na] = inner - backw;
+	v->awid[v->na] = backw;
+	return row + 1;
+}
 
 static void app_draw(Pkg *p, AppView *v)
 {
@@ -2880,8 +2945,13 @@ static void app_draw(Pkg *p, AppView *v)
 	int nf = detail_facts(p, lab, val);
 	int nfrows = stacked ? (nf < 4 ? nf : 4) : 0;
 
+	char backl[64];
+	snprintf(backl, sizeof backl, " %s ", S(T_BACK));
+	int backw = u8width(backl);
+	v->nbrows = act_layout(v, inner, backw);
+
 	/* border, verbs, rule, state, cover, stacked facts, blank, prose, border */
-	int ph = 2 + 1 + 1 + 1 + coverh + nfrows + 1 + nb;
+	int ph = 2 + v->nbrows + 1 + 1 + coverh + nfrows + 1 + nb;
 	if (ph > room) ph = room;
 	if (ph < 8) ph = 8;
 
@@ -2890,43 +2960,22 @@ static void app_draw(Pkg *p, AppView *v)
 	if (prow < 1) prow = 1;
 	win_box(prow, px, pw, ph, pkg_name(p));
 
-	/* ---- the verb row, Back pinned to its right hand end ---------------- */
+	/* ---- the verbs, wrapping, with Back pinned to the first row --------- */
 	int y = prow + 1;
-	char backl[64];
-	snprintf(backl, sizeof backl, " %s ", S(T_BACK));
-	int backw = u8width(backl);
-	int avail = inner - backw - 2;
-	if (avail < 8) avail = 8;
-
-	if (v->sel >= v->na) v->scroll = 0;          /* Back does not scroll it */
-	else {
-		if (v->sel < v->scroll) v->scroll = v->sel;
-		for (;;) {
-			int used = 0;
-			for (int i = v->scroll; i <= v->sel; i++) used += act_width(&v->acts[i]) + 1;
-			if (used <= avail + 1 || v->scroll >= v->sel) break;
-			v->scroll++;
-		}
+	for (int i = 0; i < v->na; i++) {
+		int by = y + v->arow[i], bx = tx + v->acol[i];
+		act_draw(by, bx, &v->acts[i], v->zone == Z_BTN && i == v->sel, v->awid[i]);
+		hit_add(H_BTN, i, by, bx, 1, v->awid[i]);
 	}
-
-	int bx = tx, last = v->scroll - 1;
-	for (int i = v->scroll; i < v->na; i++) {
-		int wneed = act_width(&v->acts[i]);
-		if (bx - tx + wneed > avail) break;
-		act_draw(y, bx, &v->acts[i], v->zone == Z_BTN && i == v->sel, wneed);
-		hit_add(H_BTN, i, y, bx, 1, wneed);
-		bx += wneed + 1;
-		last = i;
-	}
-	if (last < v->na - 1) gput(y, tx + avail, CH_MORE, P_WIN, 1);
 
 	int bcur = (v->zone == Z_BTN && v->sel == v->na);
-	gput(y, tx + inner - backw, backl, bcur ? P_BACKCUR : P_BACK, backw);
-	if (bcur) cursor_sweep(y, tx + inner - backw, backw, P_BACKCUR, P_BACKHOT);
-	hit_add(H_BACK, 0, y, tx + inner - backw, 1, backw);
+	int backx = tx + v->acol[v->na];
+	gput(y, backx, backl, bcur ? P_BACKCUR : P_BACK, backw);
+	if (bcur) cursor_sweep(y, backx, backw, P_BACKCUR, P_BACKHOT);
+	hit_add(H_BACK, 0, y, backx, 1, backw);
 
-	/* ---- the rule under it ---------------------------------------------- */
-	y++;
+	/* ---- the rule under them -------------------------------------------- */
+	y += v->nbrows;
 	gput(y, px, BX_LT, P_BORDER, 1);
 	gfill(y, px + 1, pw - 2, BX_H, P_BORDER);
 	gput(y, px + pw - 1, BX_RT, P_BORDER, 1);
@@ -2995,6 +3044,8 @@ static void app_draw(Pkg *p, AppView *v)
 	g_clip_top = g_clip_bot = -1;
 
 	if (v->maxscroll) {
+		scrollbar(btop, px + pw - 2, v->brows, v->bscroll, v->brows, nb,
+		          v->zone == Z_BODY ? P_CURSOR : P_SBTHUMBW, P_SBTRACKW);
 		char sb[32];
 		snprintf(sb, sizeof sb, " %d%% ", (v->bscroll + v->brows) * 100 / nb);
 		int sw = u8width(sb);
@@ -3003,6 +3054,25 @@ static void app_draw(Pkg *p, AppView *v)
 	}
 
 	help_line_l(&T_HELPDET);
+}
+
+/* Move the cursor a row up or down through the wrapped verbs, landing on
+ * whichever one starts nearest the column it was already in — the same thing
+ * the eye does. Returns 0 when there is no row that way. */
+static int act_step(AppView *v, int dir)
+{
+	int row = v->arow[v->sel] + dir;
+	if (row < 0 || row >= v->nbrows) return 0;
+	int best = -1, bestd = 1 << 30;
+	for (int i = 0; i <= v->na; i++) {
+		if (v->arow[i] != row) continue;
+		int d = v->acol[i] - v->acol[v->sel];
+		if (d < 0) d = -d;
+		if (d < bestd) { bestd = d; best = i; }
+	}
+	if (best < 0) return 0;
+	v->sel = best;
+	return 1;
 }
 
 static void screen_app(Pkg *p)
@@ -3051,8 +3121,12 @@ static void screen_app(Pkg *p)
 		case K_RIGHT: v.sel = (v.sel + 1) % (v.na + 1); continue;
 		case K_HOME:  v.sel = 0; continue;
 		case K_END:   v.sel = v.na; continue;
-		case K_DOWN:  if (v.maxscroll) v.zone = Z_BODY; continue;
-		case K_UP:    continue;
+		case K_DOWN:
+			/* down a row of verbs if there is one, and into the prose off
+			 * the bottom of them */
+			if (!act_step(&v, +1) && v.maxscroll) v.zone = Z_BODY;
+			continue;
+		case K_UP:    act_step(&v, -1); continue;
 		}
 		if (k != K_ENTER && k != ' ') continue;
 		if (v.sel == v.na) return;                    /* Back */
@@ -3462,6 +3536,12 @@ static void render_home(void)
 	}
 	g_clip_top = g_clip_bot = -1;
 
+	/* measured in rows of cards, which is what the wheel and the arrows move
+	 * by — a thumb sized in screen rows would be a sliver against a pitch of
+	 * ten and would say nothing */
+	scrollbar(G_top, g_w - 1, G_rows * G_pitch - 1, g_cardrow, G_rows, nrows,
+	          P_SBTHUMB, P_SBTRACK);
+
 	if (!g_nview) {
 		const L *e = g_chipcat[g_chip] == CHIP_INSTALLED ? &T_NOINST : &T_EMPTY;
 		gput(G_top, 2, S(*e), P_ABSENTB, g_w - 4);
@@ -3566,8 +3646,22 @@ static void tui(void)
 			default: continue;
 			}
 		}
-		if (k == K_WHEELUP) { if (g_cardrow > 0) g_cardrow--; continue; }
-		if (k == K_WHEELDN) { g_cardrow++; continue; }
+		/* The wheel moves the cursor a row at a time, not the viewport on its
+		 * own. The viewport is pinned to the cursor every frame — scrolling it
+		 * by itself was undone before it could be drawn, which is why the
+		 * wheel appeared to do nothing at all here. */
+		if (k == K_WHEELUP) {
+			g_zone = Z_GRID;
+			if (g_card >= G_cols) g_card -= G_cols;
+			else if (g_cardrow > 0) g_cardrow--;
+			continue;
+		}
+		if (k == K_WHEELDN) {
+			g_zone = Z_GRID;
+			if (g_card + G_cols < g_nview) g_card += G_cols;
+			else if (g_nview) g_card = g_nview - 1;
+			continue;
+		}
 
 		switch (g_zone) {
 		case Z_STRIP:
