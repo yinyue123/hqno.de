@@ -62,7 +62,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define APP_VERSION   "2.5.0"
+#define APP_VERSION   "2.6.0"
 #define MAX_PKGS      512
 #define MAX_CATS      32
 #define MAX_PARAMS    12
@@ -1356,6 +1356,15 @@ static int g_mx = 0, g_my = 0;
 
 static void on_winch(int sig) { (void)sig; g_resized = 1; }
 
+/* Escape sequences go out by length, never by a counted literal. The entry
+ * sequence below used to be written as 17 bytes when it is 18, so the terminal
+ * got `ESC [ 2` and the clear it ends with never happened — the sort of thing
+ * that hides for a year behind a program that repaints every cell anyway. */
+static void emit(const char *s)
+{
+	if (write(STDOUT_FILENO, s, strlen(s)) < 0) { /* the terminal went away */ }
+}
+
 static void term_measure(void)
 {
 	struct winsize ws;
@@ -1393,7 +1402,7 @@ static void term_raw(void)
 	 * still selects in every terminal we know of, and `--no-mouse` is there
 	 * for the one that does not — the keyboard path is unaffected either way,
 	 * which is why this can be on by default. */
-	if (write(STDOUT_FILENO, "\x1b[?1049h\x1b[?25l\x1b[2J", 17) < 0) { }
+	emit("\x1b[?1049h\x1b[?25l\x1b[H\x1b[2J");
 	g_dirty_all = 1;                   /* the screen just got wiped */
 	if (g_mouse) {
 		if (write(STDOUT_FILENO, "\x1b[?1000h\x1b[?1006h", 16) < 0) { }
@@ -1405,10 +1414,17 @@ static void term_cooked(void)
 {
 	if (!g_raw) return;
 	if (g_mouse_on) {
-		if (write(STDOUT_FILENO, "\x1b[?1006l\x1b[?1000l", 16) < 0) { }
+		emit("\x1b[?1006l\x1b[?1000l");
 		g_mouse_on = 0;
 	}
-	if (write(STDOUT_FILENO, "\x1b[0m\x1b[?25h\x1b[?1049l", 18) < 0) { }
+	/* Reset, show the cursor, leave the alternate screen — and then clear,
+	 * because the alternate screen is not universal. A terminal that ignored
+	 * ?1049h drew the whole program on its main screen, and ignores ?1049l
+	 * too, so quitting left the last frame sitting there with a shell prompt
+	 * printed over the top of it. Clearing afterwards costs a screenful on the
+	 * terminals where the alternate screen did work, and is the only thing
+	 * that comes out clean on the ones where it did not. */
+	emit("\x1b[0m\x1b[?25h\x1b[?1049l\x1b[H\x1b[2J");
 	tcsetattr(STDIN_FILENO, TCSAFLUSH, &g_saved_tio);
 	g_raw = 0;
 }
@@ -1860,8 +1876,22 @@ static void pager(const char *title, const char *text)
 		draw_root();
 		hit_clear();
 
-		int w = g_w - 8; if (w > 96) w = 96; if (w < 30) w = g_w - 2;
-		int h = g_h - 4; if (h < 8) h = g_h - 2;
+		/* Sized to what it holds. It used to be g_h - 4 tall and g_w - 8 wide
+		 * whatever was in it, so eight lines about a running service got a
+		 * box the height of the terminal with a field of grey under them. */
+		int longest = 0;
+		for (int i = 0; i < n; i++) {
+			int lw = u8width(raw[i]);
+			if (lw > longest) longest = lw;
+		}
+		int w = longest + 6;
+		if (w > 96) w = 96;
+		if (w < 34) w = 34;
+		if (w > g_w - 2) w = g_w - 2;
+		int h = n + 3;
+		if (h > g_h - 4) h = g_h - 4;
+		if (h < 7) h = 7;
+		if (h > g_h - 2) h = g_h - 2;
 		int row = (g_h - h) / 2 - 1, col = (g_w - w) / 2;
 		if (row < 1) row = 1;
 		if (col < 0) col = 0;
@@ -1914,10 +1944,11 @@ static int confirm(const char *title, const char *msg)
 
 		int w = u8width(msg) + 8;
 		if (w > g_w - 6) w = g_w - 6;
+		if (w > 76) w = 76;
 		if (w < 34) w = 34;
 		int inner = w - 4;
-		char lines[4][512];
-		int nl = u8wrap(msg, inner, lines, 4);
+		char lines[6][512];
+		int nl = u8wrap(msg, inner, lines, 6);
 		int h = nl + 5;
 		int row = (g_h - h) / 2, col = (g_w - w) / 2;
 		if (row < 1) row = 1;
@@ -1953,10 +1984,11 @@ static void message(const char *title, const char *msg)
 		hit_clear();
 		int w = u8width(msg) + 8;
 		if (w > g_w - 6) w = g_w - 6;
+		if (w > 76) w = 76;
 		if (w < 30) w = 30;
 		int inner = w - 4;
-		char lines[5][512];
-		int nl = u8wrap(msg, inner, lines, 5);
+		char lines[8][512];
+		int nl = u8wrap(msg, inner, lines, 8);
 		int h = nl + 5;
 		int row = (g_h - h) / 2, col = (g_w - w) / 2;
 		if (row < 1) row = 1;
@@ -2925,8 +2957,12 @@ static void app_draw(Pkg *p, AppView *v)
 	draw_root();
 	hit_clear();
 
+	/* Wide enough to read and no wider. A hundred columns of prose is already
+	 * a long line to track back from; on a terminal twice that, filling it
+	 * spreads six facts and a paragraph across a screen of nothing. */
 	int px = 1, pw = g_w - 2, room = g_h - 3;
-	if (room < 10) { px = 0; pw = g_w; room = g_h - 1; }
+	if (pw > 100) { pw = 100; px = (g_w - pw) / 2; }
+	if (room < 10) { px = 0; pw = g_w > 100 ? 100 : g_w; room = g_h - 1; }
 	int tx = px + 2, inner = pw - 4;
 
 	/* Everything that goes in the panel is measured before the panel is
@@ -3190,7 +3226,6 @@ enum { Z_STRIP = 0, Z_GRID };
 static int g_zone = Z_GRID;
 static int g_chip = 1;                /* the category being shown */
 static int g_strip = 1;               /* the cursor's place along the bar */
-static int g_chipscroll = 0;
 static int g_card = 0, g_cardrow = 0;
 static int g_cat = 0;                 /* the category the current chip names */
 static int g_view[MAX_PKGS], g_nview = 0;
@@ -3209,7 +3244,10 @@ static int g_nchip = 0;
 #define S_BACK (g_nchip + 1)
 #define S_LEN  (g_nchip + 2)
 
-/* the grid, recomputed every frame so a resize needs no special case */
+/* the bar and the grid, both recomputed every frame so a resize needs no
+ * special case. The grid starts below whatever height the bar wrapped to. */
+static int SB_row[MAX_CATS + 4], SB_col[MAX_CATS + 4], SB_wid[MAX_CATS + 4];
+static int SB_rows = 1;
 static int G_cols, G_cardw, G_coverh, G_cardh, G_pitch, G_top, G_rows, G_chiprow;
 
 static int pkg_in_cat(const Pkg *p, const char *cat)
@@ -3295,7 +3333,7 @@ static void card_layout(void)
 	if (G_cardw > avail) G_cardw = avail;
 
 	G_chiprow = (g_h >= 18) ? 3 : 2;
-	G_top = G_chiprow + 3;                    /* the bar, its shadow, a blank */
+	G_top = G_chiprow + SB_rows + 2;          /* the bar, its shadow, a blank */
 	int space = (g_h - 1) - G_top;            /* the help line owns the last row */
 	if (space < 5) { G_top = G_chiprow + 2; space = (g_h - 1) - G_top; }
 	if (space < 4) space = 4;
@@ -3334,75 +3372,115 @@ static void draw_lang(int row, int col, int focused)
 	hit_add(H_LANG, 0, row, col, 1, lang_width());
 }
 
-/* The bar: a grey strip the width of the screen with a shadow under it, the
- * same object as every other window here. Categories from the left; the
- * position counter, the language switch and Back pinned to the right. */
+/* Where everything on the bar ended up. The bar wraps rather than scrolling
+ * sideways under a `›`: a category hidden off the right hand edge cannot be
+ * clicked, and a control you can only reach by walking the keyboard onto it is
+ * not a control on a toolbar. Rows are cheap; a hidden category is not. */
+static void strip_layout(void)
+{
+	char backl[64];
+	snprintf(backl, sizeof backl, " %s ", S(T_BACK));
+	int backw = u8width(backl);
+	int langw = lang_width();
+
+	/* Back is pinned to the top right corner and never moves; the language
+	 * switch sits to its left when there is room for it there. */
+	SB_row[S_BACK] = 0;
+	SB_col[S_BACK] = g_w - backw;
+	SB_wid[S_BACK] = backw;
+
+	int lx = g_w - backw - langw - 1;
+	int lang_inline = (lx >= 12);
+	SB_wid[S_LANG] = langw;
+	if (lang_inline) { SB_row[S_LANG] = 0; SB_col[S_LANG] = lx; }
+
+	int first = (lang_inline ? lx : g_w - backw) - 1;
+	int full  = g_w - 1;
+
+	int x = 1, row = 0;
+	for (int i = 0; i < g_nchip; i++) {
+		char lab[160];
+		chip_label(i, lab, sizeof lab);
+		int w = u8width(lab) + 2;
+		int limit = row ? full : first;
+		if (x > 1 && x + w > limit) { row++; x = 1; }
+		SB_row[i] = row;
+		SB_col[i] = x;
+		SB_wid[i] = w;
+		x += w + 1;
+	}
+	if (!lang_inline) {                 /* too narrow beside Back: own line */
+		if (x > 1 && x + langw > full) { row++; x = 1; }
+		SB_row[S_LANG] = row;
+		SB_col[S_LANG] = x;
+	}
+	SB_rows = row + 1;
+}
+
+/* The bar: a grey strip the width of the screen, as many rows as it takes,
+ * with a shadow under it — the same object as every other window here. */
 static void draw_strip(void)
 {
 	int y = G_chiprow;
-	gfill(y, 0, g_w, " ", P_CHIP);
-	gfill(y + 1, 2, g_w - 2, " ", P_SHADOW);
+	for (int r = 0; r < SB_rows; r++) gfill(y + r, 0, g_w, " ", P_CHIP);
+	gfill(y + SB_rows, 2, g_w - 2, " ", P_SHADOW);
 
-	int x = g_w;
-
-	char backl[64];
-	snprintf(backl, sizeof backl, " %s ", S(T_BACK));
-	int bw = u8width(backl);
-	x -= bw;
-	int bcur = (g_zone == Z_STRIP && g_strip == S_BACK);
-	gput(y, x, backl, bcur ? P_BACKCUR : P_BACK, bw);
-	if (bcur) cursor_sweep(y, x, bw, P_BACKCUR, P_BACKHOT);
-	hit_add(H_BACK, 0, y, x, 1, bw);
-
-	int lw = lang_width();
-	if (x - lw - 1 > 8) {
-		x -= lw + 1;
-		draw_lang(y, x, g_zone == Z_STRIP && g_strip == S_LANG);
-	}
-
-	/* how far down the grid you are, where it fits */
-	int nrows = G_cols ? (g_nview + G_cols - 1) / G_cols : 0;
-	if (nrows > G_rows && g_nview) {
-		char sb[40];
-		snprintf(sb, sizeof sb, " %d/%d ", g_card + 1, g_nview);
-		int sw = u8width(sb);
-		if (x - sw - 1 > 12) { x -= sw + 1; gput(y, x, sb, P_BTNDIM, sw); }
-	}
-
-	int room = x - 2;
-
-	/* Whole chips only. Half a category reads as a rendering fault, so the
-	 * bar scrolls by whole chips until the current one is inside it. */
-	if (g_strip < g_nchip) {
-		if (g_strip < g_chipscroll) g_chipscroll = g_strip;
-		for (;;) {
-			int used = 0;
-			char lab[160];
-			for (int i = g_chipscroll; i <= g_strip; i++) {
-				chip_label(i, lab, sizeof lab);
-				used += u8width(lab) + 3;
-			}
-			if (used <= room || g_chipscroll >= g_strip) break;
-			g_chipscroll++;
-		}
-	}
-
-	int cx = 1, last = g_chipscroll - 1;
-	for (int i = g_chipscroll; i < g_nchip; i++) {
+	for (int i = 0; i < g_nchip; i++) {
 		char lab[160], pill[168];
 		chip_label(i, lab, sizeof lab);
 		snprintf(pill, sizeof pill, " %s ", lab);
-		int w = u8width(pill);
-		if (cx - 1 + w > room) break;
 		int cur = (g_zone == Z_STRIP && g_strip == i);
-		gput(y, cx, pill, cur ? P_CURSOR : (i == g_chip ? P_CHIPSEL : P_CHIP), w);
-		if (cur) cursor_sweep(y, cx, w, P_CURSOR, P_CURSORHOT);
-		hit_add(H_CHIP, i, y, cx, 1, w);
-		cx += w + 1;
-		last = i;
+		int ry = y + SB_row[i], rx = SB_col[i], w = SB_wid[i];
+		gput(ry, rx, pill, cur ? P_CURSOR : (i == g_chip ? P_CHIPSEL : P_CHIP), w);
+		if (cur) cursor_sweep(ry, rx, w, P_CURSOR, P_CURSORHOT);
+		hit_add(H_CHIP, i, ry, rx, 1, w);
 	}
-	if (last < g_nchip - 1) gput(y, room, CH_MORE, P_CHIP, 1);
-	if (g_chipscroll > 0)   gput(y, 0, AR_L, P_CHIP, 1);
+
+	draw_lang(y + SB_row[S_LANG], SB_col[S_LANG],
+	          g_zone == Z_STRIP && g_strip == S_LANG);
+
+	char backl[64];
+	snprintf(backl, sizeof backl, " %s ", S(T_BACK));
+	int bcur = (g_zone == Z_STRIP && g_strip == S_BACK);
+	int bx = SB_col[S_BACK], bw = SB_wid[S_BACK];
+	gput(y, bx, backl, bcur ? P_BACKCUR : P_BACK, bw);
+	if (bcur) cursor_sweep(y, bx, bw, P_BACKCUR, P_BACKHOT);
+	hit_add(H_BACK, 0, y, bx, 1, bw);
+}
+
+/* Move the cursor along the bar. Landing on a category selects it, because a
+ * category is not a thing you do anything to — and the grid then goes back to
+ * its first card, since landing on card 14 of a category you have only just
+ * arrived in is disorienting and there is nothing there you were looking at. */
+static void strip_to(int i)
+{
+	if (i < 0) i = 0;
+	if (i >= S_LEN) i = S_LEN - 1;
+	g_strip = i;
+	if (i >= g_nchip || i == g_chip) return;
+	g_chip = i;
+	if (g_chipcat[i] >= 0) g_cat = g_chipcat[i];
+	g_card = 0;
+	g_cardrow = 0;
+	rebuild_lists();
+}
+
+/* Up and down between the bar's rows, landing on whichever control starts
+ * nearest the column already held. Returns 0 when there is no row that way. */
+static int strip_step(int dir)
+{
+	int row = SB_row[g_strip] + dir;
+	if (row < 0 || row >= SB_rows) return 0;
+	int best = -1, bestd = 1 << 30;
+	for (int i = 0; i < S_LEN; i++) {
+		if (SB_row[i] != row) continue;
+		int d = SB_col[i] - SB_col[g_strip];
+		if (d < 0) d = -d;
+		if (d < bestd) { bestd = d; best = i; }
+	}
+	if (best < 0) return 0;
+	strip_to(best);
+	return 1;
 }
 
 /* One card: a cover with the id across it and the disk footprint in the
@@ -3505,6 +3583,7 @@ static void render_home(void)
 	grid_size(g_w, g_h);
 	hit_clear();
 	draw_root();
+	strip_layout();          /* the grid starts below however tall it came out */
 	card_layout();
 
 	if (g_npkg == 0) {
@@ -3571,22 +3650,6 @@ static void probe_all(int quiet)
 	if (!quiet) fprintf(stderr, "\r\x1b[K");
 }
 
-/* Move the cursor along the bar. Landing on a category selects it, because a
- * category is not a thing you do anything to — and the grid then goes back to
- * its first card, since landing on card 14 of a category you have only just
- * arrived in is disorienting and there is nothing there you were looking at. */
-static void strip_to(int i)
-{
-	if (i < 0) i = 0;
-	if (i >= S_LEN) i = S_LEN - 1;
-	g_strip = i;
-	if (i >= g_nchip || i == g_chip) return;
-	g_chip = i;
-	if (g_chipcat[i] >= 0) g_cat = g_chipcat[i];
-	g_card = 0;
-	g_cardrow = 0;
-	rebuild_lists();
-}
 
 static void tui(void)
 {
@@ -3670,12 +3733,14 @@ static void tui(void)
 			case K_RIGHT: strip_to(g_strip + 1); break;
 			case K_HOME:  strip_to(0); break;
 			case K_END:   strip_to(S_BACK); break;
-			/* Up from anywhere on the bar goes to the way out, so holding
-			 * Up from a card still walks out of the program. */
-			case K_UP:    strip_to(S_BACK); break;
+			/* Up a row of the bar if there is one, and off the top of it to
+			 * the way out — so holding Up from a card still walks out of the
+			 * program however many rows the bar wrapped onto. */
+			case K_UP:    if (!strip_step(-1)) strip_to(S_BACK); break;
 			case K_TAB:   g_zone = Z_GRID; break;
 			case K_ESC:   strip_to(S_BACK); break;
 			case K_DOWN:
+				if (strip_step(+1)) break;
 				if (g_nview) g_zone = Z_GRID;
 				break;
 			case K_ENTER: case ' ':
