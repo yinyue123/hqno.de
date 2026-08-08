@@ -62,7 +62,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define APP_VERSION   "2.6.0"
+#define APP_VERSION   "2.7.0"
 #define MAX_PKGS      512
 #define MAX_CATS      32
 #define MAX_PARAMS    12
@@ -70,6 +70,7 @@
 #define DEFAULT_STATE "/var/lib/app-setup"
 #define LOG_DIR       "/var/log/app-setup"
 #define LOG_KEEP      400        /* lines of a running action held for the pane */
+#define LOG_TAIL      60000      /* bytes of a log file the viewer reads back */
 #define LOG_COLS      512
 
 /* ------------------------------------------------------------------ text --
@@ -163,6 +164,10 @@ static const L T_SERVICE   = {"Service",      "服务"};
 static const L T_VERSION   = {"Version",      "版本"};
 static const L T_INCLUDES  = {"Includes",     "包含"};
 static const L T_LOG       = {"Log",          "日志"};
+static const L T_NOLOG     = {"No log yet. One appears at %s the first time something is run on it.",
+                             "还没有日志。对它做过一次操作之后，日志就在 %s。"};
+static const L T_LOGEMPTY  = {"The log file is empty.", "日志文件是空的。"};
+static const L T_LOGTAIL   = {"── the last %s of %s ──", "── %s／共 %s，只显示末尾 ──"};
 static const L T_NITEMS    = {"%d",           "%d 项"};
 static const L T_HELPFORM  = {"↑↓ field   Space toggle   ←→ choose   Enter OK   Esc cancel   (or click)",
                              "↑↓ 换行   空格 切换   ←→ 选值   回车 确定   Esc 取消   （也能点）"};
@@ -2060,7 +2065,11 @@ static void strip_ansi(char *s)
 			continue;
 		}
 		if (*p == '\r') { p++; continue; }
-		if ((unsigned char)*p < 32 && *p != '\t') { p++; continue; }
+		/* Newlines survive. They did not, and the two callers that hand this
+		 * whole files rather than single lines came out as one enormous line:
+		 * `detail=demo-web 1.4.2, port 9090enabled=1` is two fields of a
+		 * recipe's status output with the newline between them eaten. */
+		if ((unsigned char)*p < 32 && *p != '\t' && *p != '\n') { p++; continue; }
 		*w++ = *p++;
 	}
 	*w = '\0';
@@ -2679,6 +2688,72 @@ static void screen_status(Pkg *p)
 	pager(title, t);
 }
 
+/* What actually happened, the last few times anything was run on this package.
+ *
+ * The detail page has always named this file and, until now, naming it was all
+ * it did — the one thing on that page you could not get to without leaving the
+ * program, which is backwards for the page somebody is on when an install has
+ * just failed. Every package has the button; it is grey until there is a file
+ * behind it.
+ *
+ * Only the tail is read. Installing a suite runs to tens of thousands of lines
+ * and the end is the part that says how it went. */
+static void screen_log(Pkg *p)
+{
+	char path[600], title[256];
+	snprintf(path, sizeof path, "%s/%s.log", log_dir(), p->id);
+	snprintf(title, sizeof title, "%s %s %s", pkg_name(p), MK_DOT, S(T_LOG));
+
+	int fd = open(path, O_RDONLY);
+	if (fd < 0) {
+		char msg[700];
+		snprintf(msg, sizeof msg, S(T_NOLOG), path);
+		message(title, msg);
+		return;
+	}
+
+	off_t size = lseek(fd, 0, SEEK_END);
+	off_t from = size > LOG_TAIL ? size - LOG_TAIL : 0;
+	if (lseek(fd, from, SEEK_SET) < 0) from = 0;
+
+	char *buf = xmalloc(LOG_TAIL + 2);
+	ssize_t n = read(fd, buf, LOG_TAIL);
+	close(fd);
+	if (n < 0) n = 0;
+	buf[n] = '\0';
+
+	char *start = buf;
+	if (from > 0) {                      /* never begin half way through a line */
+		char *nl = strchr(buf, '\n');
+		if (nl) start = nl + 1;
+	}
+	strip_ansi(start);
+
+	if (!*start) {
+		message(title, S(T_LOGEMPTY));
+		free(buf);
+		return;
+	}
+
+	if (from > 0) {
+		/* say so, rather than let somebody scroll to the top and believe
+		 * that is where the install began */
+		char shown[16], total[16], head[200];
+		human_size((long long)(n), shown, sizeof shown);
+		human_size((long long)size, total, sizeof total);
+		snprintf(head, sizeof head, S(T_LOGTAIL), shown, total);
+
+		size_t len = strlen(start), hl = strlen(head);
+		char *joined = xmalloc(hl + len + 3);
+		snprintf(joined, hl + len + 3, "%s\n\n%s", head, start);
+		pager(title, joined);
+		free(joined);
+	} else {
+		pager(title, start);
+	}
+	free(buf);
+}
+
 static void screen_docs(Pkg *p)
 {
 	char out[32768];
@@ -2752,7 +2827,7 @@ static void draw_cover(int row, int col, int w, int rows, const Pkg *p, const ch
  * Choosing what to do is the same gesture as choosing what to do it to.
  */
 enum { A_INSTALL = 1, A_REMOVE, A_START, A_STOP, A_RESTART, A_BOOT,
-       A_STATUS, A_DETAILS, A_PARAMS, A_DOCS };
+       A_STATUS, A_DETAILS, A_PARAMS, A_DOCS, A_LOG };
 
 typedef struct { int act; char label[64]; char aux[32]; int dim; } Action;
 
@@ -2787,6 +2862,23 @@ static int build_actions(const Pkg *p, Action *a)
 	a[n].dim = !p->nparams; n++;
 
 	a[n].act = A_DETAILS; copy_str(a[n].label, 64, S(T_DETAILS)); a[n].aux[0] = 0; a[n].dim = 0; n++;
+
+	/* Grey until something has been run on it, with the size of what is there
+	 * — which answers "is there anything in it" without opening it. */
+	{
+		char lp[600];
+		struct stat st;
+		snprintf(lp, sizeof lp, "%s/%s.log", log_dir(), p->id);
+		a[n].act = A_LOG; copy_str(a[n].label, 64, S(T_LOG));
+		a[n].aux[0] = '\0';
+		a[n].dim = 1;
+		if (stat(lp, &st) == 0 && S_ISREG(st.st_mode)) {
+			a[n].dim = 0;
+			if (st.st_size > 0)
+				human_size((long long)st.st_size, a[n].aux, sizeof a[n].aux);
+		}
+		n++;
+	}
 	a[n].act = A_DOCS;    copy_str(a[n].label, 64, S(T_DOCS));    a[n].aux[0] = 0; a[n].dim = 0; n++;
 	if (inst) { a[n].act = A_REMOVE; copy_str(a[n].label, 64, S(T_REMOVE)); a[n].aux[0] = 0; a[n].dim = 0; n++; }
 	return n;
@@ -3170,6 +3262,7 @@ static void screen_app(Pkg *p)
 
 		switch (v.acts[v.sel].act) {
 		case A_DETAILS: screen_details(p); break;
+		case A_LOG:     screen_log(p); break;
 		case A_DOCS:    screen_docs(p); break;
 		case A_STATUS:  screen_status(p); break;
 		case A_PARAMS:  if (screen_params(p)) message(S(T_PARAMS), S(T_PARAMSAVED)); break;
