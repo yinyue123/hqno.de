@@ -62,7 +62,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define APP_VERSION   "2.1.0"
+#define APP_VERSION   "2.2.0"
 #define MAX_PKGS      512
 #define MAX_CATS      32
 #define MAX_PARAMS    12
@@ -333,6 +333,14 @@ static void mkdir_p(const char *path)
  * rather than with the screen because the width and truncation helpers below
  * need it: what they emit has to be drawable, not merely the right width. */
 static int g_color = 1, g_utf8 = 1;
+
+/* The cursor highlight moves; see "the cursor" below for why. Declared here
+ * because the key reader needs the tick length and it comes first. */
+#define ANIM_MS    90            /* ~11 frames a second */
+#define SWEEP_MS 1100            /* one pass along an element */
+
+static int g_anim = 1;
+static unsigned g_phase = 0;
 
 /* ------------------------------------------------------------------- utf8 --
  *
@@ -1047,9 +1055,9 @@ enum {
 	P_BARFULL, P_BAREMPTY,
 	/* the card screen: chips along the top, cards under them, and the two
 	 * buttons that live on the root itself */
-	P_CHIP, P_CHIPSEL, P_CHIPCUR,
-	P_CARDB, P_CARDBSEL, P_BTNDIM,
-	P_RBTN, P_RBTNACT,
+	P_CHIP, P_CHIPSEL,
+	P_CARDB, P_CARDBSEL, P_CARDBHOT, P_BTNDIM,
+	P_RBTN, P_CURSOR, P_CURSORHOT,
 	/* the state words again, on blue: a card is drawn on the root rather than
 	 * in a window, so every colour it uses needs a blue-backed twin */
 	P_RUNB, P_STOPPEDB, P_ABSENTB, P_ERRB, P_WARNB,
@@ -1074,9 +1082,9 @@ static const char *SGR[P_COUNT] = {
 	"0;34;46",       /* SELDIM    blue on cyan — its second line      */
 	"0;34;47",       /* IDLE      blue on grey — selected, not focused*/
 	"0;30;46",       /* BTN       black on cyan                       */
-	"0;1;37;46",     /* BTNACT    bold white on cyan                  */
+	"0;1;4;37;46",   /* BTNACT    the cursor, on a grey window        */
 	"0;30;47",       /* ENTRY     black on grey                       */
-	"0;30;46",       /* ENTRYACT  black on cyan                       */
+	"0;4;30;46",     /* ENTRYACT  the cursor, in a form field         */
 	"0;37;40",       /* HELP      white on black                      */
 	"0;32;47",       /* RUN       green on grey                       */
 	"0;33;47",       /* STOPPED   yellow on grey                      */
@@ -1087,13 +1095,14 @@ static const char *SGR[P_COUNT] = {
 	"0;1;34;44",     /* BARFULL   blue on blue                        */
 	"0;37;47",       /* BAREMPTY  grey on grey                        */
 	"0;37;44",       /* CHIP      a category, not the current one     */
-	"0;34;46",       /* CHIPSEL   the current category               */
-	"0;30;46",       /* CHIPCUR   …and the cursor is on the strip     */
+	"0;1;37;44",     /* CHIPSEL   the current category, cursor elsewhere */
 	"0;37;44",       /* CARDB     card border                         */
 	"0;1;36;44",     /* CARDBSEL  card border under the cursor        */
+	"0;1;37;44",     /* CARDBHOT  …the band sweeping around it        */
 	"0;1;30;44",     /* BTNDIM    a button that cannot be pressed yet */
 	"0;37;44",       /* RBTN      Back / language, on the root        */
-	"0;30;46",       /* RBTNACT   …with the cursor on it              */
+	"0;4;30;46",     /* CURSOR    the cursor is on this               */
+	"0;1;4;37;46",   /* CURSORHOT …the band sweeping along it         */
 	"0;1;32;44",     /* RUNB      green on blue                       */
 	"0;1;33;44",     /* STOPPEDB  yellow on blue                      */
 	"0;1;30;44",     /* ABSENTB   grey on blue                        */
@@ -1116,6 +1125,11 @@ static const char *SGR[P_COUNT] = {
 typedef struct { char ch[5]; unsigned char attr; unsigned char cont; } Cell;
 
 static Cell *g_grid = NULL;
+/* What the terminal is currently showing, so a frame can send only the cells
+ * that differ from it. Invalidated whenever the size changes or the terminal
+ * has been written to behind our back. */
+static Cell *g_shadow = NULL;
+static int g_dirty_all = 1;
 static int g_w = 80, g_h = 24, g_gw = 0, g_gh = 0;
 
 static const char *BX_TL, *BX_TR, *BX_BL, *BX_BR, *BX_H, *BX_V;
@@ -1159,8 +1173,11 @@ static void grid_size(int w, int h)
 	if (h < 8)  h = 8;
 	if (w != g_gw || h != g_gh || !g_grid) {
 		free(g_grid);
+		free(g_shadow);
 		g_grid = xmalloc((size_t)w * (size_t)h * sizeof(Cell));
+		g_shadow = xmalloc((size_t)w * (size_t)h * sizeof(Cell));
 		g_gw = w; g_gh = h;
+		g_dirty_all = 1;         /* nothing on screen can be relied on now */
 	}
 }
 
@@ -1221,10 +1238,29 @@ static void gfill(int row, int col, int w, const char *glyph, int attr)
 	for (int i = 0; i < w; i++) gput(row, col + i, glyph, attr, 1);
 }
 
+/* Repaint a run's colour without disturbing the characters already composed on
+ * it — how the moving band of the cursor highlight is laid over a label that
+ * has already been drawn and centred. */
+static void gtint(int row, int col, int w, int attr)
+{
+	if (row < 0 || row >= g_gh || !row_visible(row)) return;
+	for (int i = 0; i < w; i++) {
+		int c = col + i;
+		if (c < 0 || c >= g_gw) continue;
+		g_grid[row * g_gw + c].attr = (unsigned char)attr;
+	}
+}
 
-/* Every cell is emitted, background included: a blue root that stopped at the
- * last non-space column would show the terminal's own background for the rest
- * of the line, which is the one thing that makes this look unlike nmtui. */
+/* Only what changed, because the cursor highlight now moves and so the screen
+ * redraws about eleven times a second whether or not anybody typed. A full
+ * frame is six kilobytes; over ssh, at that rate, it would be a visible waste
+ * of somebody's link for an animation. A frame in which only the highlight
+ * moved is a few dozen bytes.
+ *
+ * Every cell is still emitted the first time and after a resize, background
+ * included: a blue root that stopped at the last non-space column would show
+ * the terminal's own background for the rest of the line, which is the one
+ * thing that makes this look unlike nmtui. */
 static void grid_flush(void)
 {
 	static char *out = NULL;
@@ -1233,13 +1269,24 @@ static void grid_flush(void)
 	if (need > cap) { free(out); out = xmalloc(need); cap = need; }
 
 	size_t n = 0;
-	n += (size_t)sprintf(out + n, "\x1b[H");
+	int attr = -1;                    /* what the terminal is set to */
+	int at_r = -1, at_c = -1;         /* and where its cursor is */
+
 	for (int r = 0; r < g_gh; r++) {
-		int attr = -1;
-		n += (size_t)sprintf(out + n, "\x1b[%d;1H", r + 1);
 		for (int c = 0; c < g_gw; c++) {
 			Cell *cell = &g_grid[r * g_gw + c];
 			if (cell->cont) continue;
+			int wide = (c + 1 < g_gw && g_grid[r * g_gw + c + 1].cont);
+
+			if (!g_dirty_all) {
+				Cell *was = &g_shadow[r * g_gw + c];
+				if (was->attr == cell->attr && was->cont == cell->cont &&
+				    !memcmp(was->ch, cell->ch, sizeof cell->ch))
+					continue;
+			}
+
+			if (r != at_r || c != at_c)
+				n += (size_t)sprintf(out + n, "\x1b[%d;%dH", r + 1, c + 1);
 			if (g_color && cell->attr != attr) {
 				attr = cell->attr;
 				n += (size_t)sprintf(out + n, "\x1b[%sm", SGR[attr]);
@@ -1248,10 +1295,21 @@ static void grid_flush(void)
 			size_t len = strlen(ch);
 			memcpy(out + n, ch, len);
 			n += len;
+
+			at_r = r;
+			at_c = c + (wide ? 2 : 1);
+			/* Writing the last column leaves the cursor somewhere the
+			 * terminal decides — wrapped or not — so stop trusting it. */
+			if (at_c >= g_gw) at_c = -1;
 		}
-		if (g_color) n += (size_t)sprintf(out + n, "\x1b[0m");
 	}
-	if (write(STDOUT_FILENO, out, n) < 0) { /* the terminal went away */ }
+
+	if (n) {
+		if (g_color) n += (size_t)sprintf(out + n, "\x1b[0m");
+		if (write(STDOUT_FILENO, out, n) < 0) { /* the terminal went away */ }
+	}
+	memcpy(g_shadow, g_grid, (size_t)g_gw * (size_t)g_gh * sizeof(Cell));
+	g_dirty_all = 0;
 }
 
 static void grid_dump(FILE *f)
@@ -1321,6 +1379,7 @@ static void term_raw(void)
 	 * for the one that does not — the keyboard path is unaffected either way,
 	 * which is why this can be on by default. */
 	if (write(STDOUT_FILENO, "\x1b[?1049h\x1b[?25l\x1b[2J", 17) < 0) { }
+	g_dirty_all = 1;                   /* the screen just got wiped */
 	if (g_mouse) {
 		if (write(STDOUT_FILENO, "\x1b[?1000h\x1b[?1006h", 16) < 0) { }
 		g_mouse_on = 1;
@@ -1438,7 +1497,56 @@ static int read_key_to(int timeout_ms)
 	return K_ESC;
 }
 
-static int read_key(void) { return read_key_to(-1); }
+/* Blocks for a key, but wakes on the animation tick so the cursor keeps
+ * moving while nobody is typing. Callers treat K_TIMEOUT as "redraw". With
+ * --no-blink there is no tick and this blocks the way it always did. */
+static int read_key(void)
+{
+	int k = read_key_to(g_anim ? ANIM_MS : -1);
+	if (k == K_TIMEOUT) g_phase++;
+	return k;
+}
+
+/* ------------------------------------------------------------- the cursor --
+ *
+ * Where the cursor is, said four ways at once, because colour alone was not
+ * enough. It used to be that the chip under the cursor and the merely-current
+ * category were both cyan and differed only in whether the text on them was
+ * black or blue — which on most terminals is barely a difference, and to
+ * somebody colour-blind is none at all. You could not find your own cursor.
+ *
+ * So the thing under the cursor is filled, underlined, and has a band of
+ * brighter colour sweeping along it about once a second; cards keep their
+ * double rule as well. Motion is the channel that survives every kind of
+ * colour blindness, and unlike colour every terminal renders it the same. The
+ * double rule is the one that survives --ascii on a monochrome link.
+ *
+ * The band takes the same time to cross a narrow chip as a wide card, so the
+ * screen pulses at one rate rather than at one rate per element size.
+ *
+ * `--no-blink` stops the motion for anybody who finds moving text worse than
+ * the problem it solves. The fill and the underline stay.
+ */
+/* True for the two or three cells the bright band is passing over. It runs the
+ * length of the element and then waits, so it reads as a sweep and not as a
+ * flicker — nothing here ever blinks on and off. */
+static int sweep_hot(int i, int w)
+{
+	if (!g_anim || w <= 0) return 0;
+	int span = w + 8;                       /* the pause between passes */
+	int ticks = SWEEP_MS / ANIM_MS;
+	if (ticks < 1) ticks = 1;
+	int head = (int)((g_phase % (unsigned)ticks) * (unsigned)span / (unsigned)ticks);
+	int d = head - i;
+	return d >= 0 && d < 3;
+}
+
+/* Lay the moving band over a run that has already been composed. */
+static void cursor_sweep(int row, int col, int w, int base, int hot)
+{
+	for (int i = 0; i < w; i++)
+		gtint(row, col + i, 1, sweep_hot(i, w) ? hot : base);
+}
 
 /* ------------------------------------------------------------ hit testing --
  *
@@ -1519,6 +1627,7 @@ static void btn_draw(int row, int col, const char *label, int focused)
 	char t[128];
 	snprintf(t, sizeof t, "<%s>", label);
 	gput(row, col, t, a, btn_width(label));
+	if (focused) cursor_sweep(row, col, btn_width(label), P_BTNACT, P_CURSORHOT);
 }
 
 static void help_line(const char *text)
@@ -1590,14 +1699,16 @@ static void draw_root(void)
 		int bw = u8width(b);
 		if (bw < g_w / 3) {
 			rightedge -= bw;
-			gput(0, rightedge, b, g_topsel == 1 ? P_RBTNACT : P_RBTN, bw);
+			gput(0, rightedge, b, g_topsel == 1 ? P_CURSOR : P_RBTN, bw);
+			if (g_topsel == 1) cursor_sweep(0, rightedge, bw, P_CURSOR, P_CURSORHOT);
 			hit_add(H_BACK, 0, 0, rightedge, 1, bw);
 		}
 		snprintf(b, sizeof b, " %s ", lang_other());
 		bw = u8width(b);
 		if (offer_lang && bw < g_w / 3) {
 			rightedge -= bw + 1;
-			gput(0, rightedge, b, g_topsel == 0 ? P_RBTNACT : P_RBTN, bw);
+			gput(0, rightedge, b, g_topsel == 0 ? P_CURSOR : P_RBTN, bw);
+			if (g_topsel == 0) cursor_sweep(0, rightedge, bw, P_CURSOR, P_CURSORHOT);
 			hit_add(H_LANG, 0, 0, rightedge, 1, bw);
 		}
 		rightedge -= 2;
@@ -2056,7 +2167,10 @@ static void progress_draw(Runner *r, const char *title, int log_scroll,
 	snprintf(backl, sizeof backl, " %s ", S(T_BACK));
 	int backw = u8width(backl);
 	gput(y, x + inner - backw, backl, r->done ? P_BTNACT : P_DIM, backw);
-	if (r->done) hit_add(H_BACK, 0, y, x + inner - backw, 1, backw);
+	if (r->done) {
+		cursor_sweep(y, x + inner - backw, backw, P_BTNACT, P_CURSORHOT);
+		hit_add(H_BACK, 0, y, x + inner - backw, 1, backw);
+	}
 
 	gput(y, x, head, r->done && r->rc ? P_ERR : P_DIM, inner - backw - 2);
 	y++;
@@ -2140,9 +2254,10 @@ static void screen_progress(Pkg *p, const char *verb)
 
 		/* While it runs the screen has to keep moving, so the wait is short
 		 * and a timeout is just another redraw. When it is done, block. */
-		int k = read_key_to(r.done ? -1 : 120);
+		int k = read_key_to(r.done && !g_anim ? -1 : (r.done ? ANIM_MS : 120));
 		if (k == K_TIMEOUT || k == K_RESIZE || k == K_NONE) {
-			if (k != K_TIMEOUT) esc_armed = 0;
+			if (k == K_TIMEOUT) g_phase++;
+			else esc_armed = 0;
 			continue;
 		}
 
@@ -2606,7 +2721,8 @@ static int act_draw(int row, int col, const Action *a, int focused, int maxw)
 	else           snprintf(t, sizeof t, " %s ", a->label);
 	int w = u8width(t);
 	if (w > maxw) return 0;
-	gput(row, col, t, focused ? P_RBTNACT : (a->dim ? P_BTNDIM : P_RBTN), w);
+	gput(row, col, t, focused ? P_CURSOR : (a->dim ? P_BTNDIM : P_RBTN), w);
+	if (focused) cursor_sweep(row, col, w, P_CURSOR, P_CURSORHOT);
 	return w;
 }
 
@@ -2780,7 +2896,9 @@ static void app_draw(Pkg *p, AppView *v)
 	if (last < v->na - 1) gput(y, tx + avail, CH_MORE, P_RBTN, 1);
 
 	gput(y, tx + inner - backw, backl,
-	     v->zone == Z_BTN && v->sel == v->na ? P_RBTNACT : P_RBTN, backw);
+	     v->zone == Z_BTN && v->sel == v->na ? P_CURSOR : P_RBTN, backw);
+	if (v->zone == Z_BTN && v->sel == v->na)
+		cursor_sweep(y, tx + inner - backw, backw, P_CURSOR, P_CURSORHOT);
 	hit_add(H_BACK, 0, y, tx + inner - backw, 1, backw);
 
 	/* ---- the rule under it ---------------------------------------------- */
@@ -2857,7 +2975,7 @@ static void app_draw(Pkg *p, AppView *v)
 		snprintf(sb, sizeof sb, " %d%% ", (v->bscroll + v->brows) * 100 / nb);
 		int sw = u8width(sb);
 		gput(prow + ph - 1, px + pw - 3 - sw, sb,
-		     v->zone == Z_BODY ? P_RBTNACT : P_CARDB, sw);
+		     v->zone == Z_BODY ? P_CURSOR : P_CARDB, sw);
 	}
 
 	help_line_l(&T_HELPDET);
@@ -2875,7 +2993,7 @@ static void screen_app(Pkg *p)
 		grid_flush();
 
 		int k = read_key();
-		if (k == K_RESIZE) continue;
+		if (k == K_RESIZE || k == K_TIMEOUT || k == K_NONE) continue;
 		if (k == K_ESC || k == 'q') return;
 		if (k == 'L') { g_zh = !g_zh; continue; }
 
@@ -3102,7 +3220,8 @@ static void draw_chips(void)
 		int w = u8width(pill);
 		if (x - 1 + w > room) break;
 		int on = (i == g_chip);
-		gput(y, x, pill, on ? (g_zone == Z_CHIP ? P_CHIPCUR : P_CHIPSEL) : P_CHIP, w);
+		gput(y, x, pill, on ? (g_zone == Z_CHIP ? P_CURSOR : P_CHIPSEL) : P_CHIP, w);
+		if (on && g_zone == Z_CHIP) cursor_sweep(y, x, w, P_CURSOR, P_CURSORHOT);
 		hit_add(H_CHIP, i, y, x, 1, w);
 		x += w + 1;
 		last = i;
@@ -3180,6 +3299,15 @@ static void draw_card(int row, int col, Pkg *p, int focused)
 	gput(by, col, bl, b, 1);
 	gfill(by, col + 1, inner, hz, b);
 	gput(by, col + inner + 1, br, b, 1);
+
+	/* The band runs along the top and bottom rules of the card under the
+	 * cursor. Sweeping the whole rectangle would mean chasing it round four
+	 * sides to work out where it is; two parallel runs read as one card
+	 * lighting up. */
+	if (focused) {
+		cursor_sweep(row, col, G_cardw, P_CARDBSEL, P_CARDBHOT);
+		cursor_sweep(by, col, G_cardw, P_CARDBSEL, P_CARDBHOT);
+	}
 }
 
 static void render_home(void)
@@ -3580,6 +3708,7 @@ static int cli_screenshot(int n, char **rest)
 	}
 	g_w = w > 24 ? w : 24;
 	g_h = h > 10 ? h : 10;
+	g_anim = 0;              /* a frame that moves is not a frame you can diff */
 
 	rebuild_lists();
 	if (cat) {
@@ -3697,6 +3826,9 @@ static void usage(FILE *f)
 	  "  --no-mouse      do not ask the terminal to report clicks. Everything is\n"
 	  "                  reachable from four arrow keys and Enter either way; use\n"
 	  "                  this if your terminal will not Shift-drag to select text\n"
+	  "  --no-blink      hold the cursor highlight still. It normally has a\n"
+	  "                  band of light sweeping along it, because a fill and\n"
+	  "                  an underline alone are hard to find on some terminals\n"
 	  "  --no-color      no escape sequences in the CLI output\n"
 	  "  --version\n"
 	  "\n"
@@ -3734,6 +3866,7 @@ int main(int argc, char **argv)
 			g_zh = !strncmp(argv[++i], "zh", 2);
 		} else if (!strcmp(argv[i], "--no-color")) g_color = 0;
 		else if (!strcmp(argv[i], "--no-mouse")) g_mouse = 0;
+		else if (!strcmp(argv[i], "--no-blink")) g_anim = 0;
 		else if (!strcmp(argv[i], "--ascii")) { g_utf8 = 0; g_zh = 0; pick_glyphs(); }
 		else if (!strcmp(argv[i], "--version")) { printf("app-setup %s\n", APP_VERSION); return 0; }
 		else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) { usage(stdout); return 0; }
