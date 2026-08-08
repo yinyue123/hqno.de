@@ -62,7 +62,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define APP_VERSION   "2.2.0"
+#define APP_VERSION   "2.3.0"
 #define MAX_PKGS      512
 #define MAX_CATS      32
 #define MAX_PARAMS    12
@@ -136,6 +136,8 @@ static const L T_ROOTWARN  = {"not root: actions will be run through sudo",
 static const L T_LOGPANE   = {"Details", "详细日志"};
 static const L T_STEPOF    = {"Step %d of %d", "第 %d 步，共 %d 步"};
 static const L T_WORKING   = {"Working…", "正在处理…"};
+static const L T_FINISHED  = {"%s finished. The full output is in %s",
+                             "%s 完成了。完整输出在 %s"};
 static const L T_FAILED    = {"%s failed — exit %d. The log is %s",
                              "%s 失败，退出码 %d。日志在 %s"};
 static const L T_VERB_INS  = {"Installing %s", "正在安装 %s"};
@@ -1058,12 +1060,14 @@ enum {
 	P_CHIP, P_CHIPSEL,
 	P_CARDB, P_CARDBSEL, P_CARDBHOT, P_BTNDIM,
 	P_RBTN, P_CURSOR, P_CURSORHOT,
-	/* the state words again, on blue: a card is drawn on the root rather than
-	 * in a window, so every colour it uses needs a blue-backed twin */
-	P_RUNB, P_STOPPEDB, P_ABSENTB, P_ERRB, P_WARNB,
-	/* one cover colour per category, and the same hue bold for the wordmark
-	 * printed on it. Indexed by cover_of() — six is one more than the built-in
-	 * categories, so a source that invents its own still gets a colour. */
+	/* the two things still drawn straight onto the root and needing a
+	 * blue-backed colour: "nothing in this category", and "no recipes at all" */
+	P_ABSENTB, P_WARNB,
+	/* one cover colour per category — a solid background rather than coloured
+	 * text, so the cover reads as a block of colour the way a thumbnail does —
+	 * and the same background bold for the wordmark printed on it. Indexed by
+	 * cover_of(); six is one more than the built-in categories, so a source
+	 * that invents its own still gets a colour. */
 	P_COV0, P_COV1, P_COV2, P_COV3, P_COV4, P_COV5,
 	P_LOGO0, P_LOGO1, P_LOGO2, P_LOGO3, P_LOGO4, P_LOGO5,
 	P_COUNT
@@ -1073,7 +1077,7 @@ enum {
 static const char *SGR[P_COUNT] = {
 	"0;37;44",       /* ROOT      white on blue                       */
 	"0;1;37;44",     /* ROOTTITLE bold white on blue                  */
-	"0;36;44",       /* ROOTDIM   cyan on blue — the facts line       */
+	"0;1;36;44",     /* ROOTDIM   bold cyan on blue — the facts line  */
 	"0;30;47",       /* WIN       black on light grey                 */
 	"0;30;47",       /* BORDER    black on light grey                 */
 	"0;1;34;47",     /* TITLE     bold blue on light grey             */
@@ -1096,30 +1100,27 @@ static const char *SGR[P_COUNT] = {
 	"0;37;47",       /* BAREMPTY  grey on grey                        */
 	"0;37;44",       /* CHIP      a category, not the current one     */
 	"0;1;37;44",     /* CHIPSEL   the current category, cursor elsewhere */
-	"0;37;44",       /* CARDB     card border                         */
-	"0;1;36;44",     /* CARDBSEL  card border under the cursor        */
-	"0;1;37;44",     /* CARDBHOT  …the band sweeping around it        */
-	"0;1;30;44",     /* BTNDIM    a button that cannot be pressed yet */
+	"0;30;47",       /* CARDB     card border, on the card's own grey */
+	"0;30;46",       /* CARDBSEL  the whole frame lights up cyan      */
+	"0;1;37;46",     /* CARDBHOT  …the band sweeping around it        */
+	"0;1;30;47",     /* BTNDIM    a button that cannot be pressed yet */
 	"0;37;44",       /* RBTN      Back / language, on the root        */
 	"0;4;30;46",     /* CURSOR    the cursor is on this               */
 	"0;1;4;37;46",   /* CURSORHOT …the band sweeping along it         */
-	"0;1;32;44",     /* RUNB      green on blue                       */
-	"0;1;33;44",     /* STOPPEDB  yellow on blue                      */
 	"0;1;30;44",     /* ABSENTB   grey on blue                        */
-	"0;1;31;44",     /* ERRB      red on blue                         */
-	"0;31;44",       /* WARNB     red on blue — a size that will not fit */
-	"0;35;44",       /* COV0      suites      magenta                 */
-	"0;36;44",       /* COV1      web servers cyan                    */
-	"0;32;44",       /* COV2      databases   green                   */
-	"0;33;44",       /* COV3      dev tools   yellow                  */
-	"0;37;44",       /* COV4      system      grey                    */
-	"0;31;44",       /* COV5      anything else                       */
-	"0;1;35;44",     /* LOGO0..5  the wordmark, same hue, bold        */
-	"0;1;36;44",
-	"0;1;32;44",
-	"0;1;33;44",
+	"0;1;31;44",     /* WARNB     red on blue                         */
+	"0;37;45",       /* COV0      suites      on magenta              */
+	"0;30;46",       /* COV1      web servers on cyan                 */
+	"0;30;42",       /* COV2      databases   on green                */
+	"0;30;43",       /* COV3      dev tools   on yellow               */
+	"0;37;44",       /* COV4      system      on blue                 */
+	"0;37;41",       /* COV5      anything else on red                */
+	"0;1;37;45",     /* LOGO0..5  the wordmark, bold, same background */
+	"0;1;37;46",
+	"0;1;37;42",
+	"0;1;30;43",
 	"0;1;37;44",
-	"0;1;31;44",
+	"0;1;37;41",
 };
 
 typedef struct { char ch[5]; unsigned char attr; unsigned char cont; } Cell;
@@ -1757,15 +1758,17 @@ static const L *status_label(const Pkg *p)
 }
 
 
-/* The same five colours over the blue root, for the card grid. */
-static int status_attr_root(const Pkg *p)
+
+/* The state word's colour, on the light grey every window and card is made
+ * of. Green up, yellow down, grey absent, red broken. */
+static int status_attr(const Pkg *p)
 {
 	switch (p->status) {
-	case ST_RUNNING: case ST_INSTALLED: return P_RUNB;
-	case ST_STOPPED: return P_STOPPEDB;
-	case ST_BROKEN:  return P_ERRB;
-	case ST_ABSENT:  return P_ABSENTB;
-	default:         return P_ABSENTB;
+	case ST_RUNNING: case ST_INSTALLED: return P_RUN;
+	case ST_STOPPED: return P_STOPPED;
+	case ST_BROKEN:  return P_ERR;
+	case ST_ABSENT:  return P_ABSENT;
+	default:         return P_DIM;
 	}
 }
 
@@ -2159,18 +2162,16 @@ static void progress_draw(Runner *r, const char *title, int log_scroll,
 	                                r->step > r->total ? r->total : r->step, r->total);
 	else                   snprintf(head, sizeof head, "%s", S(T_WORKING));
 
-	/* Back sits in the corner it occupies everywhere else, but it is grey and
-	 * does nothing until the child has exited. Letting somebody leave half an
-	 * install behind a screen that said Back is how a container comes to be
-	 * believed to have a package it does not have. */
+	/* Back sits in the corner it occupies everywhere else, and on this screen
+	 * it is always grey: while the child is alive there is no leaving, and the
+	 * moment it exits this screen is replaced by the dialog that says what
+	 * happened. So it is here to say "there is a way out, not yet" — letting
+	 * somebody leave half an install behind a screen that said Back is how a
+	 * container comes to be believed to hold a package it does not. */
 	char backl[64];
 	snprintf(backl, sizeof backl, " %s ", S(T_BACK));
 	int backw = u8width(backl);
-	gput(y, x + inner - backw, backl, r->done ? P_BTNACT : P_DIM, backw);
-	if (r->done) {
-		cursor_sweep(y, x + inner - backw, backw, P_BTNACT, P_CURSORHOT);
-		hit_add(H_BACK, 0, y, x + inner - backw, 1, backw);
-	}
+	gput(y, x + inner - backw, backl, P_DIM, backw);
 
 	gput(y, x, head, r->done && r->rc ? P_ERR : P_DIM, inner - backw - 2);
 	y++;
@@ -2252,9 +2253,15 @@ static void screen_progress(Pkg *p, const char *verb)
 		progress_draw(&r, title, log_scroll, esc_armed, &rows, &first);
 		grid_flush();
 
+		/* The moment the child has exited, stop and say so. Leaving somebody
+		 * on a finished progress screen to work out for themselves that it
+		 * ended, and which of the buttons ends it, is the state this screen
+		 * used to sit in. */
+		if (r.done) break;
+
 		/* While it runs the screen has to keep moving, so the wait is short
-		 * and a timeout is just another redraw. When it is done, block. */
-		int k = read_key_to(r.done && !g_anim ? -1 : (r.done ? ANIM_MS : 120));
+		 * and a timeout is just another redraw. */
+		int k = read_key_to(120);
 		if (k == K_TIMEOUT || k == K_RESIZE || k == K_NONE) {
 			if (k == K_TIMEOUT) g_phase++;
 			else esc_armed = 0;
@@ -2273,20 +2280,11 @@ static void screen_progress(Pkg *p, const char *verb)
 		}
 		if (k == K_CLICK) {
 			esc_armed = 0;
-			int what = hit_test(g_my, g_mx, NULL);
-			if (what == H_BACK && r.done) break;
-			if (what == H_BODY && log_scroll < 0) log_scroll = first;
+			if (hit_test(g_my, g_mx, NULL) == H_BODY && log_scroll < 0)
+				log_scroll = first;
 			continue;
 		}
 
-		if (r.done) {
-			if (k == K_ENTER || k == K_ESC || k == ' ' || k == K_LEFT) break;
-			if (k == K_UP)   { if (first > 0) log_scroll = first - 1; }
-			if (k == K_DOWN) { log_scroll = first + 1; if (log_scroll > r.nlog - rows) log_scroll = -1; }
-			if (k == K_PGUP) { log_scroll = first - rows; if (log_scroll < 0) log_scroll = 0; }
-			if (k == K_PGDN) { log_scroll = -1; }
-			continue;
-		}
 		if (k == K_UP)   { if (first > 0) log_scroll = first - 1; esc_armed = 0; continue; }
 		if (k == K_DOWN) { log_scroll = first + 1; if (log_scroll > r.nlog - rows) log_scroll = -1; esc_armed = 0; continue; }
 		if (k == K_ESC) {
@@ -2317,11 +2315,16 @@ static void screen_progress(Pkg *p, const char *verb)
 	if (r.logfd >= 0) close(r.logfd);
 	if (r.fd >= 0) close(r.fd);
 
-	if (r.rc != 0) {
-		char msg[600], logpath[600];
+	{
+		char msg[700], logpath[600];
 		snprintf(logpath, sizeof logpath, "%s/%s.log", log_dir(), p->id);
-		snprintf(msg, sizeof msg, S(T_FAILED), pkg_name(p), r.rc, logpath);
-		message(S(T_BROKEN), msg);
+		if (r.rc != 0) {
+			snprintf(msg, sizeof msg, S(T_FAILED), pkg_name(p), r.rc, logpath);
+			message(S(T_BROKEN), msg);
+		} else {
+			snprintf(msg, sizeof msg, S(T_FINISHED), title, logpath);
+			message(S(T_DONE), msg);
+		}
 	}
 	probe_pkg(p);
 }
@@ -2615,6 +2618,8 @@ static void draw_cover(int row, int col, int w, int rows, const Pkg *p, const ch
 {
 	int cv = cover_of(p);
 	for (int r = 0; r < rows; r++) gfill(row + r, col, w, TH_COVER, P_COV0 + cv);
+	/* the wordmark sits on a solid run of the same colour, so it reads as a
+	 * label printed on the block rather than as more of the texture */
 
 	char mark[96], lg[104];
 	cover_wordmark(mark, sizeof mark, p);
@@ -2679,31 +2684,6 @@ static int build_actions(const Pkg *p, Action *a)
 	return n;
 }
 
-/* A panel drawn straight onto the root: a border and a title, no grey fill and
- * no shadow. What fills the terminal is not a dialog sitting on a screen, it
- * is the screen, and giving it a dialog's drop shadow says otherwise. */
-static void root_box(int row, int col, int w, int h, const char *title)
-{
-	gput(row, col, BX_TL, P_CARDB, 1);
-	gfill(row, col + 1, w - 2, BX_H, P_CARDB);
-	gput(row, col + w - 1, BX_TR, P_CARDB, 1);
-	for (int r = 1; r < h - 1; r++) {
-		gput(row + r, col, BX_V, P_CARDB, 1);
-		gfill(row + r, col + 1, w - 2, " ", P_ROOT);
-		gput(row + r, col + w - 1, BX_V, P_CARDB, 1);
-	}
-	gput(row + h - 1, col, BX_BL, P_CARDB, 1);
-	gfill(row + h - 1, col + 1, w - 2, BX_H, P_CARDB);
-	gput(row + h - 1, col + w - 1, BX_BR, P_CARDB, 1);
-
-	if (title && *title) {
-		char t[256];
-		snprintf(t, sizeof t, " %s ", title);
-		int tw = u8width(t);
-		if (tw > w - 4) { u8ellipsis(t, sizeof t, title, w - 6); tw = u8width(t); }
-		gput(row, col + (w - tw) / 2, t, P_ROOTTITLE, tw);
-	}
-}
 
 static int act_width(const Action *a)
 {
@@ -2721,7 +2701,7 @@ static int act_draw(int row, int col, const Action *a, int focused, int maxw)
 	else           snprintf(t, sizeof t, " %s ", a->label);
 	int w = u8width(t);
 	if (w > maxw) return 0;
-	gput(row, col, t, focused ? P_CURSOR : (a->dim ? P_BTNDIM : P_RBTN), w);
+	gput(row, col, t, focused ? P_CURSOR : (a->dim ? P_BTNDIM : P_WIN), w);
 	if (focused) cursor_sweep(row, col, w, P_CURSOR, P_CURSORHOT);
 	return w;
 }
@@ -2777,7 +2757,7 @@ static int detail_body(const Pkg *p, int cols, DetLine *out)
 
 	int nw = u8wrap(pkg_summary(p), cols, wrap, 24);
 	for (int i = 0; i < nw && n < DET_LINES; i++) {
-		copy_str(out[n].t, sizeof out[n].t, wrap[i]); out[n].a = P_ROOT; n++;
+		copy_str(out[n].t, sizeof out[n].t, wrap[i]); out[n].a = P_WIN; n++;
 	}
 
 	int labw = u8width(S(T_INCLUDES));
@@ -2786,19 +2766,19 @@ static int detail_body(const Pkg *p, int cols, DetLine *out)
 
 	char gutter[64];
 	if (pkg_includes(p)[0] && n < DET_LINES) {
-		out[n].t[0] = '\0'; out[n].a = P_ROOT; n++;
+		out[n].t[0] = '\0'; out[n].a = P_WIN; n++;
 		nw = u8wrap(pkg_includes(p), cols - labw, wrap, 8);
 		for (int i = 0; i < nw && n < DET_LINES; i++) {
 			u8pad(gutter, sizeof gutter, i == 0 ? S(T_INCLUDES) : "", labw);
 			snprintf(out[n].t, sizeof out[n].t, "%s%s", gutter, wrap[i]);
-			out[n].a = P_ROOTDIM; n++;
+			out[n].a = P_DIM; n++;
 		}
 	}
 	if (n < DET_LINES) {
-		out[n].t[0] = '\0'; out[n].a = P_ROOT; n++;
+		out[n].t[0] = '\0'; out[n].a = P_WIN; n++;
 		u8pad(gutter, sizeof gutter, S(T_LOG), labw);
 		snprintf(out[n].t, sizeof out[n].t, "%s%s/%s.log", gutter, log_dir(), p->id);
-		out[n].a = P_ROOTDIM; n++;
+		out[n].a = P_DIM; n++;
 	}
 	return n;
 }
@@ -2863,7 +2843,7 @@ static void app_draw(Pkg *p, AppView *v)
 	int prow = 2 + (room - ph) / 2;
 	if (prow + ph > g_h - 1) prow = g_h - 1 - ph;
 	if (prow < 1) prow = 1;
-	root_box(prow, px, pw, ph, pkg_name(p));
+	win_box(prow, px, pw, ph, pkg_name(p));
 
 	/* ---- the verb row, Back pinned to its right hand end ---------------- */
 	int y = prow + 1;
@@ -2893,19 +2873,19 @@ static void app_draw(Pkg *p, AppView *v)
 		bx += wneed + 1;
 		last = i;
 	}
-	if (last < v->na - 1) gput(y, tx + avail, CH_MORE, P_RBTN, 1);
+	if (last < v->na - 1) gput(y, tx + avail, CH_MORE, P_WIN, 1);
 
 	gput(y, tx + inner - backw, backl,
-	     v->zone == Z_BTN && v->sel == v->na ? P_CURSOR : P_RBTN, backw);
+	     v->zone == Z_BTN && v->sel == v->na ? P_CURSOR : P_BTN, backw);
 	if (v->zone == Z_BTN && v->sel == v->na)
 		cursor_sweep(y, tx + inner - backw, backw, P_CURSOR, P_CURSORHOT);
 	hit_add(H_BACK, 0, y, tx + inner - backw, 1, backw);
 
 	/* ---- the rule under it ---------------------------------------------- */
 	y++;
-	gput(y, px, BX_LT, P_CARDB, 1);
-	gfill(y, px + 1, pw - 2, BX_H, P_CARDB);
-	gput(y, px + pw - 1, BX_RT, P_CARDB, 1);
+	gput(y, px, BX_LT, P_BORDER, 1);
+	gfill(y, px + 1, pw - 2, BX_H, P_BORDER);
+	gput(y, px + pw - 1, BX_RT, P_BORDER, 1);
 	y++;
 
 	/* Everything from here down belongs inside the panel. Clipping rather
@@ -2916,7 +2896,7 @@ static void app_draw(Pkg *p, AppView *v)
 	/* ---- state, then the cover with the hard numbers beside it ---------- */
 	char st[192];
 	snprintf(st, sizeof st, "%s %s", status_mark(p), S(*status_label(p)));
-	gput(y, tx, st, status_attr_root(p), inner);
+	gput(y, tx, st, status_attr(p), inner);
 	y++;
 
 	if (!stacked) {
@@ -2939,7 +2919,7 @@ static void app_draw(Pkg *p, AppView *v)
 			char f[160], cut[160];
 			snprintf(f, sizeof f, "%s %s", lab[i], val[i]);
 			u8ellipsis(cut, sizeof cut, f, colw - 1);
-			gput(fr, fc, cut, P_ROOTDIM, colw - 1);
+			gput(fr, fc, cut, P_DIM, colw - 1);
 		}
 		y += coverh;
 	} else {
@@ -2949,7 +2929,7 @@ static void app_draw(Pkg *p, AppView *v)
 			char f[160], cut[192];
 			snprintf(f, sizeof f, "%s %s", lab[i], val[i]);
 			u8ellipsis(cut, sizeof cut, f, inner);
-			gput(y, tx, cut, P_ROOTDIM, inner);
+			gput(y, tx, cut, P_DIM, inner);
 			y++;
 		}
 	}
@@ -2975,7 +2955,7 @@ static void app_draw(Pkg *p, AppView *v)
 		snprintf(sb, sizeof sb, " %d%% ", (v->bscroll + v->brows) * 100 / nb);
 		int sw = u8width(sb);
 		gput(prow + ph - 1, px + pw - 3 - sw, sb,
-		     v->zone == Z_BODY ? P_CURSOR : P_CARDB, sw);
+		     v->zone == Z_BODY ? P_CURSOR : P_TITLE, sw);
 	}
 
 	help_line_l(&T_HELPDET);
@@ -3171,10 +3151,14 @@ static void rebuild_lists(void)
  * a time, it does not show unreadable ones. */
 static void card_layout(void)
 {
-	int avail = g_w - 2;
+	/* A card is a window with a shadow two columns wide, and the shadow of
+	 * the last card in a row has to land on screen — hence the 3 held back
+	 * on the right, and the 3-column gap: two for the shadow, one of blue so
+	 * two cards never look joined. */
+	int avail = g_w - 4;
 	G_cols = 3;
-	while (G_cols > 1 && (avail - 2 * (G_cols - 1)) / G_cols < 28) G_cols--;
-	G_cardw = (avail - 2 * (G_cols - 1)) / G_cols;
+	while (G_cols > 1 && (avail - 3 * (G_cols - 1)) / G_cols < 28) G_cols--;
+	G_cardw = (avail - 3 * (G_cols - 1)) / G_cols;
 	if (G_cardw < 14) G_cardw = 14;
 	if (G_cardw > avail) G_cardw = avail;
 
@@ -3233,9 +3217,20 @@ static void draw_chips(void)
 }
 
 /* One card: a cover with the id across it and the disk footprint in the
- * corner, then the name, what it is for, and where it stands. Under the cursor
- * the border doubles as well as changing colour, because a terminal that is
- * showing this over a monochrome ssh session still has to say which one. */
+ * corner, then the name, what it is for, and where it stands.
+ *
+ * A card is a window, not a region of the page — grey, bordered, with a black
+ * shadow down and to the right, the same object the dialogs in here have
+ * always been. The first version drew them straight onto the blue root, and
+ * everything written on them was then light text on a mid blue: the summary
+ * line in particular was barely there. Black on light grey is the strongest
+ * pairing sixteen colours can make, and it is the reason this program looked
+ * legible everywhere else and did not look legible here.
+ *
+ * Under the cursor the whole frame goes cyan and doubles its rule, because a
+ * terminal showing this over a monochrome ssh session still has to say which
+ * card is which.
+ */
 static void draw_card(int row, int col, Pkg *p, int focused)
 {
 	int inner = G_cardw - 2;
@@ -3244,6 +3239,11 @@ static void draw_card(int row, int col, Pkg *p, int focused)
 	const char *bl = focused ? B2_BL : BX_BL, *br = focused ? B2_BR : BX_BR;
 	const char *hz = focused ? B2_H  : BX_H,  *vt = focused ? B2_V  : BX_V;
 	const char *lt = focused ? B2_LT : BX_LT, *rt = focused ? B2_RT : BX_RT;
+
+	/* the shadow first, so the card and its border land on top of it */
+	for (int r = row + 1; r <= row + G_cardh; r++)
+		gfill(r, col + G_cardw, 2, " ", P_SHADOW);
+	gfill(row + G_cardh, col + 2, G_cardw - 2, " ", P_SHADOW);
 
 	gput(row, col, tl, b, 1);
 	gfill(row, col + 1, inner, hz, b);
@@ -3262,15 +3262,16 @@ static void draw_card(int row, int col, Pkg *p, int focused)
 
 	for (int r = 1; r <= 3; r++) {
 		gput(sy + r, col, vt, b, 1);
+		gfill(sy + r, col + 1, inner, " ", P_WIN);
 		gput(sy + r, col + inner + 1, vt, b, 1);
 	}
 
 	int tw = inner - 2, tcol = col + 2;
 	char buf[700];
 	u8ellipsis(buf, sizeof buf, pkg_name(p), tw);
-	gput(sy + 1, tcol, buf, P_ROOTTITLE, tw);
+	gput(sy + 1, tcol, buf, P_WIN, tw);
 	u8ellipsis(buf, sizeof buf, pkg_summary(p), tw);
-	gput(sy + 2, tcol, buf, P_ROOTDIM, tw);
+	gput(sy + 2, tcol, buf, P_DIM, tw);
 
 	/* The last line answers the question being asked at that moment: while it
 	 * is not installed, what it will cost; once it is, which version is
@@ -3293,7 +3294,7 @@ static void draw_card(int row, int col, Pkg *p, int focused)
 	u8ellipsis(buf, sizeof buf, meta, tw);
 	int ds = 0, ms = 0;
 	gput(sy + 3, tcol, buf,
-	     resource_short(p, &ds, &ms) ? P_WARNB : status_attr_root(p), tw);
+	     resource_short(p, &ds, &ms) ? P_WARN : status_attr(p), tw);
 
 	int by = sy + 4;
 	gput(by, col, bl, b, 1);
@@ -3341,7 +3342,7 @@ static void render_home(void)
 		for (int c = 0; c < G_cols; c++) {
 			int i = (g_cardrow + r) * G_cols + c;
 			if (i >= g_nview) break;
-			int row = G_top + r * G_pitch, col = 1 + c * (G_cardw + 2);
+			int row = G_top + r * G_pitch, col = 1 + c * (G_cardw + 3);
 			draw_card(row, col, &g_pkg[g_view[i]], g_zone == Z_GRID && i == g_card);
 			hit_add(H_CARD, i, row, col, G_cardh, G_cardw);
 		}
