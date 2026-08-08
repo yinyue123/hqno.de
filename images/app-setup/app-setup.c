@@ -62,7 +62,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define APP_VERSION   "2.3.0"
+#define APP_VERSION   "2.4.0"
 #define MAX_PKGS      512
 #define MAX_CATS      32
 #define MAX_PARAMS    12
@@ -155,7 +155,7 @@ static const L T_PARAMSAVED= {"Settings saved. They apply the next time it is in
 /* The home screen and the detail page. Both say which way is out, because the
  * way out is a button you walk to rather than a key you have to know. */
 static const L T_ALL       = {"All",           "全部"};
-static const L T_HELPHOME  = {"↑↓←→ move    Enter open    ↑ to the top row",
+static const L T_HELPHOME  = {"↑↓←→ move    Enter open    ↑ at the top is Back",
                              "↑↓←→ 移动    回车 打开    ↑ 走到顶是「返回」"};
 static const L T_HELPDET   = {"←→ button    Enter run    ↓ into the text",
                              "←→ 选按钮    回车 执行    ↓ 进正文滚动"};
@@ -164,8 +164,8 @@ static const L T_VERSION   = {"Version",      "版本"};
 static const L T_INCLUDES  = {"Includes",     "包含"};
 static const L T_LOG       = {"Log",          "日志"};
 static const L T_NITEMS    = {"%d",           "%d 项"};
-static const L T_HELPFORM  = {"↑↓ field   Space toggle   ←→ choose   Enter OK   Esc cancel",
-                             "↑↓ 换行   空格 切换   ←→ 选值   回车 确定   Esc 取消"};
+static const L T_HELPFORM  = {"↑↓ field   Space toggle   ←→ choose   Enter OK   Esc cancel   (or click)",
+                             "↑↓ 换行   空格 切换   ←→ 选值   回车 确定   Esc 取消   （也能点）"};
 static const L T_HELPPAGE  = {"↑↓ scroll   Enter / Esc back", "↑↓ 滚动   回车/Esc 返回"};
 static const L T_HELPRUN   = {"Working — Esc twice to force a stop", "执行中 —— 按两次 Esc 可强行中止"};
 static const L T_HELPDONE  = {"Enter to go back", "回车返回"};
@@ -1060,6 +1060,10 @@ enum {
 	P_CHIP, P_CHIPSEL,
 	P_CARDB, P_CARDBSEL, P_CARDBHOT, P_BTNDIM,
 	P_RBTN, P_CURSOR, P_CURSORHOT,
+	/* Back is red wherever it appears — it is the one control that leaves,
+	 * and it should not have to share the cursor's cyan to be found. It keeps
+	 * its own cursor pair so the underline and the sweep still work on it. */
+	P_BACK, P_BACKCUR, P_BACKHOT,
 	/* the two things still drawn straight onto the root and needing a
 	 * blue-backed colour: "nothing in this category", and "no recipes at all" */
 	P_ABSENTB, P_WARNB,
@@ -1098,8 +1102,8 @@ static const char *SGR[P_COUNT] = {
 	"0;1;30;47",     /* DIM       grey on grey                        */
 	"0;1;34;44",     /* BARFULL   blue on blue                        */
 	"0;37;47",       /* BAREMPTY  grey on grey                        */
-	"0;37;44",       /* CHIP      a category, not the current one     */
-	"0;1;37;44",     /* CHIPSEL   the current category, cursor elsewhere */
+	"0;30;47",       /* CHIP      a category, on the grey bar         */
+	"0;1;34;47",     /* CHIPSEL   the current category, on the grey bar */
 	"0;30;47",       /* CARDB     card border, on the card's own grey */
 	"0;30;46",       /* CARDBSEL  the whole frame lights up cyan      */
 	"0;1;37;46",     /* CARDBHOT  …the band sweeping around it        */
@@ -1107,6 +1111,9 @@ static const char *SGR[P_COUNT] = {
 	"0;37;44",       /* RBTN      Back / language, on the root        */
 	"0;4;30;46",     /* CURSOR    the cursor is on this               */
 	"0;1;4;37;46",   /* CURSORHOT …the band sweeping along it         */
+	"0;1;37;41",     /* BACK      white on red — the way out          */
+	"0;1;4;37;41",   /* BACKCUR   …with the cursor on it              */
+	"0;1;4;33;41",   /* BACKHOT   …and the band sweeping along it     */
 	"0;1;30;44",     /* ABSENTB   grey on blue                        */
 	"0;1;31;44",     /* WARNB     red on blue                         */
 	"0;37;45",       /* COV0      suites      on magenta              */
@@ -1622,12 +1629,13 @@ static void win_box(int row, int col, int w, int h, const char *title)
 /* A button in newt's shape — <Label>, cyan, brighter when it has the focus. */
 static int btn_width(const char *label) { return u8width(label) + 2; }
 
-static void btn_draw(int row, int col, const char *label, int focused)
+static void btn_draw(int row, int col, const char *label, int focused, int idx)
 {
 	int a = focused ? P_BTNACT : P_BTN;
 	char t[128];
 	snprintf(t, sizeof t, "<%s>", label);
 	gput(row, col, t, a, btn_width(label));
+	hit_add(H_BTN, idx, row, col, 1, btn_width(label));
 	if (focused) cursor_sweep(row, col, btn_width(label), P_BTNACT, P_CURSORHOT);
 }
 
@@ -1819,6 +1827,7 @@ static void pager(const char *title, const char *text)
 		term_measure();
 		grid_size(g_w, g_h);
 		draw_root();
+		hit_clear();
 
 		int w = g_w - 8; if (w > 96) w = 96; if (w < 30) w = g_w - 2;
 		int h = g_h - 4; if (h < 8) h = g_h - 2;
@@ -1842,11 +1851,14 @@ static void pager(const char *title, const char *text)
 			int sw = u8width(sb);
 			gput(row + h - 1, col + w - 3 - sw, sb, P_TITLE, sw);
 		}
-		btn_draw(row + h - 1, col + 2, S(T_CLOSE), 1);
+		btn_draw(row + h - 1, col + 2, S(T_CLOSE), 1, 0);
 		help_line_l(&T_HELPPAGE);
 		grid_flush();
 
 		int k = read_key();
+		if (k == K_CLICK) { if (hit_test(g_my, g_mx, NULL) == H_BTN) break; continue; }
+		if (k == K_WHEELUP) { scroll--; continue; }
+		if (k == K_WHEELDN) { scroll++; continue; }
 		if (k == K_ENTER || k == K_ESC || k == ' ' || k == 'q' || k == K_LEFT) break;
 		else if (k == K_DOWN) scroll++;
 		else if (k == K_UP)   scroll--;
@@ -1867,6 +1879,7 @@ static int confirm(const char *title, const char *msg)
 		term_measure();
 		grid_size(g_w, g_h);
 		draw_root();
+		hit_clear();
 
 		int w = u8width(msg) + 8;
 		if (w > g_w - 6) w = g_w - 6;
@@ -1883,12 +1896,17 @@ static int confirm(const char *title, const char *msg)
 
 		int bw = btn_width(S(T_OK)) + 2 + btn_width(S(T_CANCEL));
 		int bx = col + (w - bw) / 2;
-		btn_draw(row + h - 2, bx, S(T_OK), focus == 0);
-		btn_draw(row + h - 2, bx + btn_width(S(T_OK)) + 2, S(T_CANCEL), focus == 1);
+		btn_draw(row + h - 2, bx, S(T_OK), focus == 0, 0);
+		btn_draw(row + h - 2, bx + btn_width(S(T_OK)) + 2, S(T_CANCEL), focus == 1, 1);
 		help_line(S(T_CONFIRM));
 		grid_flush();
 
 		int k = read_key();
+		if (k == K_CLICK) {
+			int idx = 0;
+			if (hit_test(g_my, g_mx, &idx) == H_BTN) return idx == 0;
+			continue;
+		}
 		if (k == K_ESC) return 0;
 		if (k == K_LEFT || k == K_RIGHT || k == K_TAB) focus = !focus;
 		else if (k == K_ENTER || k == ' ') return focus == 0;
@@ -1901,6 +1919,7 @@ static void message(const char *title, const char *msg)
 		term_measure();
 		grid_size(g_w, g_h);
 		draw_root();
+		hit_clear();
 		int w = u8width(msg) + 8;
 		if (w > g_w - 6) w = g_w - 6;
 		if (w < 30) w = 30;
@@ -1914,10 +1933,11 @@ static void message(const char *title, const char *msg)
 		win_box(row, col, w, h, title);
 		for (int i = 0; i < nl; i++) gput(row + 1 + i, col + 2, lines[i], P_WIN, inner);
 		int bx = col + (w - btn_width(S(T_OK))) / 2;
-		btn_draw(row + h - 2, bx, S(T_OK), 1);
+		btn_draw(row + h - 2, bx, S(T_OK), 1, 0);
 		help_line_l(&T_HELPDONE);
 		grid_flush();
 		int k = read_key();
+		if (k == K_CLICK) { if (hit_test(g_my, g_mx, NULL) == H_BTN) return; continue; }
 		if (k == K_ENTER || k == K_ESC || k == ' ' || k == K_LEFT) return;
 	}
 }
@@ -2351,6 +2371,7 @@ static int screen_params(Pkg *p)
 		term_measure();
 		grid_size(g_w, g_h);
 		draw_root();
+		hit_clear();
 
 		int labw = 12;
 		for (int i = 0; i < p->nparams; i++) {
@@ -2377,6 +2398,7 @@ static int screen_params(Pkg *p)
 
 			int fx = col + 3 + labw;
 			int a = focused ? P_ENTRYACT : P_ENTRY;
+			hit_add(H_BODY, i, y, col + 2, 1, labw + 1 + fieldw + 1);
 			if (pm->type == PT_BOOL) {
 				int on = !strcmp(pm->value, "on") || !strcmp(pm->value, "1") ||
 				         !strcmp(pm->value, "yes") || !strcmp(pm->value, "true");
@@ -2388,6 +2410,10 @@ static int screen_params(Pkg *p)
 				snprintf(ch, sizeof ch, "%s %s %s", AR_L, pm->value, AR_R);
 				gfill(y, fx, fieldw, " ", a);
 				gput(y, fx, ch, a, fieldw);
+				/* the two arrows are their own targets, so a choice can be
+				 * stepped with the mouse and not only with the keys */
+				hit_add(H_BTN, 1000 + i, y, fx, 1, 1);
+				hit_add(H_BTN, 2000 + i, y, fx + u8width(ch) - 1, 1, 1);
 			} else {
 				gfill(y, fx, fieldw, " ", a);
 				char cut[256];
@@ -2402,12 +2428,31 @@ static int screen_params(Pkg *p)
 
 		int bw = btn_width(S(T_OK)) + 2 + btn_width(S(T_CANCEL));
 		int bx = col + (w - bw) / 2;
-		btn_draw(row + h - 2, bx, S(T_OK), sel == p->nparams);
-		btn_draw(row + h - 2, bx + btn_width(S(T_OK)) + 2, S(T_CANCEL), sel == p->nparams + 1);
+		btn_draw(row + h - 2, bx, S(T_OK), sel == p->nparams, p->nparams);
+		btn_draw(row + h - 2, bx + btn_width(S(T_OK)) + 2, S(T_CANCEL),
+		         sel == p->nparams + 1, p->nparams + 1);
 		help_line_l(&T_HELPFORM);
 		grid_flush();
 
 		int k = read_key();
+		if (k == K_CLICK) {
+			int idx = 0;
+			switch (hit_test(g_my, g_mx, &idx)) {
+			case H_BODY:
+				sel = idx;
+				/* a checkbox is a thing you click, not a thing you select
+				 * and then press space on */
+				if (p->params[idx].type == PT_BOOL) k = ' ';
+				else continue;
+				break;
+			case H_BTN:
+				if (idx >= 2000) { sel = idx - 2000; k = K_RIGHT; }
+				else if (idx >= 1000) { sel = idx - 1000; k = K_LEFT; }
+				else { sel = idx; k = K_ENTER; }
+				break;
+			default: continue;
+			}
+		}
 		Param *pm = (sel < p->nparams) ? &p->params[sel] : NULL;
 
 		if (k == K_ESC) { memcpy(p->params, before, sizeof before); return 0; }
@@ -2875,10 +2920,9 @@ static void app_draw(Pkg *p, AppView *v)
 	}
 	if (last < v->na - 1) gput(y, tx + avail, CH_MORE, P_WIN, 1);
 
-	gput(y, tx + inner - backw, backl,
-	     v->zone == Z_BTN && v->sel == v->na ? P_CURSOR : P_BTN, backw);
-	if (v->zone == Z_BTN && v->sel == v->na)
-		cursor_sweep(y, tx + inner - backw, backw, P_CURSOR, P_CURSORHOT);
+	int bcur = (v->zone == Z_BTN && v->sel == v->na);
+	gput(y, tx + inner - backw, backl, bcur ? P_BACKCUR : P_BACK, backw);
+	if (bcur) cursor_sweep(y, tx + inner - backw, backw, P_BACKCUR, P_BACKHOT);
 	hit_add(H_BACK, 0, y, tx + inner - backw, 1, backw);
 
 	/* ---- the rule under it ---------------------------------------------- */
@@ -3047,25 +3091,31 @@ static void screen_app(Pkg *p)
 
 /* --------------------------------------------------------- the home screen
  *
- * A strip of categories along the top and a grid of cards under it, laid out
- * the way a video site lays out videos — which is the one arrangement that
- * anybody who has used a browser can already drive, without being told.
+ * A grey toolbar along the top and a grid of cards under it, laid out the way
+ * a video site lays out videos — which is the one arrangement anybody who has
+ * used a browser can already drive, without being told.
+ *
+ * Everything you can reach that is not a card lives on that one bar: the
+ * categories, the language switch, and the way out. The first version put the
+ * last two on the blue root above it, in white on blue, and they were simply
+ * not seen — a language switch nobody finds is a program that only has one
+ * language. On the bar they are grey-backed controls among other grey-backed
+ * controls, and Left and Right walk the whole row.
  *
  * Installed is the first chip rather than a pane of its own. Coming back to
- * see whether things are still running is the common visit, so it is the first
+ * see whether things are still up is the common visit, so it is the first
  * thing the cursor reaches; but it is the same kind of thing as every other
- * chip, and making it one costs a whole column of screen less than making it
- * special did.
+ * chip, which costs a whole column of screen less than making it special did.
  *
- * Three zones, stacked. Up from the cards is the strip, up from the strip is
- * the pair of buttons in the top right corner, and up from there is nowhere:
- * holding Up walks you to the way out. There is no key to know.
+ * Two zones, and Up from the cards reaches the bar. Up again jumps to Back,
+ * so holding Up still walks you out of the program without knowing that `q`
+ * exists.
  */
-enum { Z_TOP = 0, Z_CHIP, Z_GRID };
+enum { Z_STRIP = 0, Z_GRID };
 
 static int g_zone = Z_GRID;
-static int g_topbtn = 1;              /* in Z_TOP: 0 language, 1 back */
-static int g_chip = 1;                /* All, until something is installed */
+static int g_chip = 1;                /* the category being shown */
+static int g_strip = 1;               /* the cursor's place along the bar */
 static int g_chipscroll = 0;
 static int g_card = 0, g_cardrow = 0;
 static int g_cat = 0;                 /* the category the current chip names */
@@ -3078,6 +3128,12 @@ static char g_msg[256] = "";
 #define CHIP_ALL       (-1)
 static int g_chipcat[MAX_CATS + 2];
 static int g_nchip = 0;
+
+/* The bar is chips, then the language switch, then Back — one cursor over all
+ * of it, so there is no separate "now you are among the buttons" mode. */
+#define S_LANG (g_nchip)
+#define S_BACK (g_nchip + 1)
+#define S_LEN  (g_nchip + 2)
 
 /* the grid, recomputed every frame so a resize needs no special case */
 static int G_cols, G_cardw, G_coverh, G_cardh, G_pitch, G_top, G_rows, G_chiprow;
@@ -3098,9 +3154,9 @@ static int cat_count(int i)
 }
 
 /* An empty category is not shown at all — a source that ships no databases
- * should not put an empty Databases on the strip. Which means the strip
- * changes shape as things are installed, so the cursor is kept on the category
- * it was on rather than on the index it was at. */
+ * should not put an empty Databases on the bar. Which means the bar changes
+ * shape as things are installed, so the cursor is kept on the category it was
+ * on rather than on the index it was at. */
 static void rebuild_chips(void)
 {
 	int keep = g_nchip ? g_chipcat[g_chip] : CHIP_ALL;
@@ -3115,6 +3171,8 @@ static void rebuild_chips(void)
 	if (g_chip >= g_nchip) g_chip = g_nchip - 1;
 	if (g_chip < 0) g_chip = 0;
 	if (g_chipcat[g_chip] >= 0) g_cat = g_chipcat[g_chip];
+	if (g_strip >= S_LEN) g_strip = S_LEN - 1;
+	if (g_strip < 0) g_strip = 0;
 }
 
 static void chip_label(int i, char *out, size_t cap)
@@ -3146,7 +3204,7 @@ static void rebuild_lists(void)
 	if (g_card < 0) g_card = 0;
 }
 
-/* Three columns when a card can still be 28 columns wide, then two, then one.
+/* Three columns while a card can still be 28 columns wide, then two, then one.
  * The card never shrinks below that: a narrow terminal shows fewer of them at
  * a time, it does not show unreadable ones. */
 static void card_layout(void)
@@ -3163,7 +3221,7 @@ static void card_layout(void)
 	if (G_cardw > avail) G_cardw = avail;
 
 	G_chiprow = (g_h >= 18) ? 3 : 2;
-	G_top = G_chiprow + 3;                    /* the rule, a blank, the cards */
+	G_top = G_chiprow + 3;                    /* the bar, its shadow, a blank */
 	int space = (g_h - 1) - G_top;            /* the help line owns the last row */
 	if (space < 5) { G_top = G_chiprow + 2; space = (g_h - 1) - G_top; }
 	if (space < 4) space = 4;
@@ -3178,42 +3236,99 @@ static void card_layout(void)
 	if (G_rows < 1) G_rows = 1;
 }
 
-static void draw_chips(void)
-{
-	int y = G_chiprow, room = g_w - 3;
+/* The language switch shows both languages side by side with the one you are
+ * in lit, rather than naming the one you would get. A button reading 中文 only
+ * tells you what it does if you already know; EN | 中文 is a switch, and looks
+ * like one whichever language you can read. It is also a fixed width, so the
+ * bar does not reflow when you press it. */
+static int lang_width(void) { return 2 + 2 + 3 + 4 + 1; }   /* " EN | 中文 " */
 
-	/* Whole chips only. Half a category reads as a rendering fault, so the
-	 * strip scrolls by whole chips until the current one is inside it. */
-	if (g_chip < g_chipscroll) g_chipscroll = g_chip;
-	for (;;) {
-		int used = 0;
-		char lab[160];
-		for (int i = g_chipscroll; i <= g_chip; i++) {
-			chip_label(i, lab, sizeof lab);
-			used += u8width(lab) + 3;
-		}
-		if (used <= room || g_chipscroll >= g_chip) break;
-		g_chipscroll++;
+static void draw_lang(int row, int col, int focused)
+{
+	int base = focused ? P_CURSOR : P_CHIP;
+	int on   = focused ? P_CURSOR : P_CHIPSEL;
+	int off  = focused ? P_CURSOR : P_BTNDIM;
+	int x = col;
+	gput(row, x++, " ", base, 1);
+	gput(row, x, "EN", g_zh ? off : on, 2);        x += 2;
+	gput(row, x, " ", base, 1);                    x += 1;
+	gput(row, x, MK_DOT, base, 1);                 x += 1;
+	gput(row, x, " ", base, 1);                    x += 1;
+	gput(row, x, "中文", g_zh ? on : off, 4);      x += 4;
+	gput(row, x, " ", base, 1);
+	if (focused) cursor_sweep(row, col, lang_width(), P_CURSOR, P_CURSORHOT);
+	hit_add(H_LANG, 0, row, col, 1, lang_width());
+}
+
+/* The bar: a grey strip the width of the screen with a shadow under it, the
+ * same object as every other window here. Categories from the left; the
+ * position counter, the language switch and Back pinned to the right. */
+static void draw_strip(void)
+{
+	int y = G_chiprow;
+	gfill(y, 0, g_w, " ", P_CHIP);
+	gfill(y + 1, 2, g_w - 2, " ", P_SHADOW);
+
+	int x = g_w;
+
+	char backl[64];
+	snprintf(backl, sizeof backl, " %s ", S(T_BACK));
+	int bw = u8width(backl);
+	x -= bw;
+	int bcur = (g_zone == Z_STRIP && g_strip == S_BACK);
+	gput(y, x, backl, bcur ? P_BACKCUR : P_BACK, bw);
+	if (bcur) cursor_sweep(y, x, bw, P_BACKCUR, P_BACKHOT);
+	hit_add(H_BACK, 0, y, x, 1, bw);
+
+	int lw = lang_width();
+	if (x - lw - 1 > 8) {
+		x -= lw + 1;
+		draw_lang(y, x, g_zone == Z_STRIP && g_strip == S_LANG);
 	}
 
-	int x = 1, last = g_chipscroll - 1;
+	/* how far down the grid you are, where it fits */
+	int nrows = G_cols ? (g_nview + G_cols - 1) / G_cols : 0;
+	if (nrows > G_rows && g_nview) {
+		char sb[40];
+		snprintf(sb, sizeof sb, " %d/%d ", g_card + 1, g_nview);
+		int sw = u8width(sb);
+		if (x - sw - 1 > 12) { x -= sw + 1; gput(y, x, sb, P_BTNDIM, sw); }
+	}
+
+	int room = x - 2;
+
+	/* Whole chips only. Half a category reads as a rendering fault, so the
+	 * bar scrolls by whole chips until the current one is inside it. */
+	if (g_strip < g_nchip) {
+		if (g_strip < g_chipscroll) g_chipscroll = g_strip;
+		for (;;) {
+			int used = 0;
+			char lab[160];
+			for (int i = g_chipscroll; i <= g_strip; i++) {
+				chip_label(i, lab, sizeof lab);
+				used += u8width(lab) + 3;
+			}
+			if (used <= room || g_chipscroll >= g_strip) break;
+			g_chipscroll++;
+		}
+	}
+
+	int cx = 1, last = g_chipscroll - 1;
 	for (int i = g_chipscroll; i < g_nchip; i++) {
 		char lab[160], pill[168];
 		chip_label(i, lab, sizeof lab);
 		snprintf(pill, sizeof pill, " %s ", lab);
 		int w = u8width(pill);
-		if (x - 1 + w > room) break;
-		int on = (i == g_chip);
-		gput(y, x, pill, on ? (g_zone == Z_CHIP ? P_CURSOR : P_CHIPSEL) : P_CHIP, w);
-		if (on && g_zone == Z_CHIP) cursor_sweep(y, x, w, P_CURSOR, P_CURSORHOT);
-		hit_add(H_CHIP, i, y, x, 1, w);
-		x += w + 1;
+		if (cx - 1 + w > room) break;
+		int cur = (g_zone == Z_STRIP && g_strip == i);
+		gput(y, cx, pill, cur ? P_CURSOR : (i == g_chip ? P_CHIPSEL : P_CHIP), w);
+		if (cur) cursor_sweep(y, cx, w, P_CURSOR, P_CURSORHOT);
+		hit_add(H_CHIP, i, y, cx, 1, w);
+		cx += w + 1;
 		last = i;
 	}
-	if (last < g_nchip - 1) gput(y, g_w - 2, CH_MORE, P_CHIP, 1);
+	if (last < g_nchip - 1) gput(y, room, CH_MORE, P_CHIP, 1);
 	if (g_chipscroll > 0)   gput(y, 0, AR_L, P_CHIP, 1);
-
-	gfill(y + 1, 1, g_w - 2, BX_H, P_ROOTDIM);
 }
 
 /* One card: a cover with the id across it and the disk footprint in the
@@ -3315,8 +3430,6 @@ static void render_home(void)
 {
 	grid_size(g_w, g_h);
 	hit_clear();
-	g_showtop = 1;
-	g_topsel = (g_zone == Z_TOP) ? g_topbtn : -1;
 	draw_root();
 	card_layout();
 
@@ -3326,7 +3439,7 @@ static void render_home(void)
 		return;
 	}
 
-	draw_chips();
+	draw_strip();
 
 	/* Follow the cursor with the viewport, then pin the viewport inside the
 	 * list — in that order, so a shrinking list cannot leave it past the end. */
@@ -3352,21 +3465,16 @@ static void render_home(void)
 	if (!g_nview) {
 		const L *e = g_chipcat[g_chip] == CHIP_INSTALLED ? &T_NOINST : &T_EMPTY;
 		gput(G_top, 2, S(*e), P_ABSENTB, g_w - 4);
-	} else if (nrows > G_rows) {
-		char sb[40];
-		snprintf(sb, sizeof sb, " %d/%d ", g_card + 1, g_nview);
-		int sw = u8width(sb);
-		gput(G_chiprow + 1, g_w - 2 - sw, sb, P_CHIPSEL, sw);
 	}
 
-	if (g_msg[0]) {
+	help_line_l(&T_HELPHOME);
+	if (g_msg[0]) {          /* after the help line, which fills its row */
 		char m[300];
 		snprintf(m, sizeof m, " %s ", g_msg);
 		int mw = u8width(m);
 		if (mw > g_w - 4) mw = g_w - 4;
-		gput(G_chiprow + 1, 2, m, P_CHIPSEL, mw);
+		gput(g_h - 1, g_w - 1 - mw, m, P_HELP, mw);
 	}
-	help_line_l(&T_HELPHOME);
 }
 
 static void probe_all(int quiet)
@@ -3383,14 +3491,16 @@ static void probe_all(int quiet)
 	if (!quiet) fprintf(stderr, "\r\x1b[K");
 }
 
-/* Changing the chip changes what the grid holds, so the cursor goes back to
- * the start of it — landing on card 14 of a category you have just arrived in
- * is disorienting, and there is nothing there you were looking at. */
-static void chip_to(int i)
+/* Move the cursor along the bar. Landing on a category selects it, because a
+ * category is not a thing you do anything to — and the grid then goes back to
+ * its first card, since landing on card 14 of a category you have only just
+ * arrived in is disorienting and there is nothing there you were looking at. */
+static void strip_to(int i)
 {
 	if (i < 0) i = 0;
-	if (i >= g_nchip) i = g_nchip - 1;
-	if (i == g_chip) return;
+	if (i >= S_LEN) i = S_LEN - 1;
+	g_strip = i;
+	if (i >= g_nchip || i == g_chip) return;
 	g_chip = i;
 	if (g_chipcat[i] >= 0) g_cat = g_chipcat[i];
 	g_card = 0;
@@ -3419,7 +3529,7 @@ static void tui(void)
 	rebuild_lists();
 	/* Something is already installed: that is what this visit is probably
 	 * about, so start on that chip rather than on the whole catalogue. */
-	if (g_ninst) chip_to(0);
+	if (g_ninst) strip_to(0);
 
 	for (;;) {
 		term_measure();
@@ -3444,8 +3554,8 @@ static void tui(void)
 			int idx = 0;
 			switch (hit_test(g_my, g_mx, &idx)) {
 			case H_BACK: term_cooked(); return;
-			case H_LANG: g_zh = !g_zh; g_zone = Z_TOP; g_topbtn = 0; continue;
-			case H_CHIP: g_zone = Z_CHIP; chip_to(idx); continue;
+			case H_LANG: g_zh = !g_zh; g_zone = Z_STRIP; g_strip = S_LANG; continue;
+			case H_CHIP: g_zone = Z_STRIP; strip_to(idx); continue;
 			/* A card opens on a single click, anywhere on it, the way a
 			 * thumbnail does. Moving the cursor there first would be a
 			 * second gesture for something already pointed at. */
@@ -3460,30 +3570,25 @@ static void tui(void)
 		if (k == K_WHEELDN) { g_cardrow++; continue; }
 
 		switch (g_zone) {
-		case Z_TOP:
+		case Z_STRIP:
 			switch (k) {
-			case K_LEFT: case K_RIGHT: g_topbtn = !g_topbtn; break;
-			case K_DOWN: g_zone = Z_CHIP; break;
-			case K_ENTER: case ' ':
-				if (g_topbtn) { term_cooked(); return; }
-				g_zh = !g_zh;
-				break;
-			case K_ESC: g_zone = Z_CHIP; break;
-			}
-			break;
-
-		case Z_CHIP:
-			switch (k) {
-			case K_LEFT:  chip_to(g_chip - 1); break;
-			case K_RIGHT: chip_to(g_chip + 1); break;
-			case K_HOME:  chip_to(0); break;
-			case K_END:   chip_to(g_nchip - 1); break;
-			case K_UP:    g_zone = Z_TOP; break;
-			case K_DOWN: case K_ENTER: case ' ':
+			case K_LEFT:  strip_to(g_strip - 1); break;
+			case K_RIGHT: strip_to(g_strip + 1); break;
+			case K_HOME:  strip_to(0); break;
+			case K_END:   strip_to(S_BACK); break;
+			/* Up from anywhere on the bar goes to the way out, so holding
+			 * Up from a card still walks out of the program. */
+			case K_UP:    strip_to(S_BACK); break;
+			case K_TAB:   g_zone = Z_GRID; break;
+			case K_ESC:   strip_to(S_BACK); break;
+			case K_DOWN:
 				if (g_nview) g_zone = Z_GRID;
 				break;
-			case K_TAB:   g_zone = Z_GRID; break;
-			case K_ESC:   g_zone = Z_TOP; break;
+			case K_ENTER: case ' ':
+				if (g_strip == S_BACK) { term_cooked(); return; }
+				if (g_strip == S_LANG) { g_zh = !g_zh; break; }
+				if (g_nview) g_zone = Z_GRID;
+				break;
 			}
 			break;
 
@@ -3493,7 +3598,7 @@ static void tui(void)
 			case K_RIGHT: if (g_card < g_nview - 1) g_card++; break;
 			case K_UP:
 				if (g_card >= G_cols) g_card -= G_cols;
-				else g_zone = Z_CHIP;
+				else { g_zone = Z_STRIP; g_strip = g_chip; }
 				break;
 			case K_DOWN:
 				if (g_card + G_cols < g_nview) g_card += G_cols;
@@ -3509,8 +3614,8 @@ static void tui(void)
 				break;
 			case K_HOME: g_card = 0; break;
 			case K_END:  g_card = g_nview ? g_nview - 1 : 0; break;
-			case K_TAB:  g_zone = Z_CHIP; break;
-			case K_ESC:  g_zone = Z_CHIP; g_msg[0] = '\0'; break;
+			case K_TAB:  g_zone = Z_STRIP; g_strip = g_chip; break;
+			case K_ESC:  g_zone = Z_STRIP; g_strip = g_chip; g_msg[0] = '\0'; break;
 			case K_ENTER: case ' ':
 				g_msg[0] = '\0';
 				if (g_nview) screen_app(&g_pkg[g_view[g_card]]);
@@ -3691,7 +3796,7 @@ static int cli_doctor(void)
  */
 static int cli_screenshot(int n, char **rest)
 {
-	int w = 100, h = 30, sel = 0, zone = -1;
+	int w = 100, h = 30, sel = 0, zone = -1, want = 0;
 	const char *cat = NULL, *screen = "home", *pick = NULL;
 	for (int i = 1; i < n; i++) {
 		if (!strcmp(rest[i], "--width") && i + 1 < n) w = atoi(rest[++i]);
@@ -3702,8 +3807,10 @@ static int cli_screenshot(int n, char **rest)
 		else if (!strcmp(rest[i], "--select") && i + 1 < n) sel = atoi(rest[++i]);
 		else if (!strcmp(rest[i], "--focus") && i + 1 < n) {
 			const char *f = rest[++i];
-			zone = !strcmp(f, "back") || !strcmp(f, "top") ? Z_TOP
-			     : !strcmp(f, "chips") ? Z_CHIP : Z_GRID;
+			if (!strcmp(f, "back"))       { zone = Z_STRIP; want = -1; }
+			else if (!strcmp(f, "lang"))  { zone = Z_STRIP; want = -2; }
+			else if (!strcmp(f, "chips")) { zone = Z_STRIP; want = -3; }
+			else                            zone = Z_GRID;
 		}
 		else if (!strcmp(rest[i], "--probe")) probe_all(1);
 	}
@@ -3718,10 +3825,15 @@ static int cli_screenshot(int n, char **rest)
 			int c = g_chipcat[i];
 			if ((ci >= 0 && c == ci) ||
 			    (c == CHIP_INSTALLED && !strcmp(cat, "installed")) ||
-			    (c == CHIP_ALL && !strcmp(cat, "all"))) { chip_to(i); break; }
+			    (c == CHIP_ALL && !strcmp(cat, "all"))) { strip_to(i); break; }
 		}
 	}
-	if (zone >= 0) g_zone = zone;
+	if (zone >= 0) {
+		g_zone = zone;
+		if (want == -1) g_strip = S_BACK;
+		else if (want == -2) g_strip = S_LANG;
+		else if (want == -3) g_strip = g_chip;
+	}
 	if (sel > 0 && sel <= g_nview) g_card = sel - 1;
 
 	Pkg *p = pick ? find_pkg(pick) : (g_nview ? &g_pkg[g_view[g_card]] : NULL);
@@ -3785,8 +3897,8 @@ static int cli_screenshot(int n, char **rest)
 		}
 		int bw = btn_width(S(T_OK)) + 2 + btn_width(S(T_CANCEL));
 		int bx = col + (ww - bw) / 2;
-		btn_draw(row + hh - 2, bx, S(T_OK), 1);
-		btn_draw(row + hh - 2, bx + btn_width(S(T_OK)) + 2, S(T_CANCEL), 0);
+		btn_draw(row + hh - 2, bx, S(T_OK), 1, 0);
+		btn_draw(row + hh - 2, bx + btn_width(S(T_OK)) + 2, S(T_CANCEL), 0, 1);
 		help_line_l(&T_HELPFORM);
 	} else {
 		render_home();
