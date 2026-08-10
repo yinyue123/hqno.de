@@ -62,7 +62,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define APP_VERSION   "2.8.0"
+#define APP_VERSION   "2.8.1"
 #define MAX_PKGS      512
 #define MAX_CATS      32
 #define MAX_PARAMS    12
@@ -817,11 +817,14 @@ static void add_param(Pkg *p, const char *spec)
 		pm->type = PT_ENUM;
 		char tmp[256];
 		copy_str(tmp, sizeof tmp, ty);
-		char *tok = strtok(tmp, ",");
+		/* strtok_r here too: this runs while scan_all is walking the
+		 * search path, and one global cursor cannot serve both. */
+		char *sv = NULL;
+		char *tok = strtok_r(tmp, ",", &sv);
 		while (tok && pm->nchoices < 8) {
 			trim(tok);
 			if (*tok) copy_str(pm->choices[pm->nchoices++], sizeof pm->choices[0], tok);
-			tok = strtok(NULL, ",");
+			tok = strtok_r(NULL, ",", &sv);
 		}
 		if (pm->nchoices < 2) pm->type = PT_TEXT;
 	} else pm->type = PT_TEXT;
@@ -848,12 +851,13 @@ static void set_field(Pkg *p, const char *k, const char *v)
 	else if (!strcmp(k, "category")) {
 		char tmp[192];
 		copy_str(tmp, sizeof tmp, v);
-		char *tok = strtok(tmp, ", \t");
+		char *sv = NULL;
+		char *tok = strtok_r(tmp, ", \t", &sv);
 		while (tok && p->ncats < 6) {
 			copy_str(p->cats[p->ncats], sizeof p->cats[0], tok);
 			cat_add(tok);
 			p->ncats++;
-			tok = strtok(NULL, ", \t");
+			tok = strtok_r(NULL, ", \t", &sv);
 		}
 	}
 }
@@ -999,11 +1003,15 @@ static void scan_all(void)
 	const char *env = getenv("APP_SETUP_PATH");
 	char path[1024];
 	copy_str(path, sizeof path, env && *env ? env : DEFAULT_PATH);
-	char *tok = strtok(path, ":");
-	while (tok) {
+	/* strtok_r, and not strtok, because scan_dir parses a recipe on the way
+	 * past and every recipe with a `category:` line splits it — with strtok
+	 * that inner call resets this loop's cursor and the walk ends after the
+	 * first directory. Which meant /usr/local/etc/app-setup was never read:
+	 * no overriding a shipped recipe, and no keeping your own under /data.
+	 * The one-directory case looked perfect, so it survived a long time. */
+	char *save = NULL;
+	for (char *tok = strtok_r(path, ":", &save); tok; tok = strtok_r(NULL, ":", &save))
 		scan_dir(tok);
-		tok = strtok(NULL, ":");
-	}
 	qsort(g_pkg, (size_t)g_npkg, sizeof g_pkg[0], pkg_cmp);
 	for (int i = 0; i < g_npkg; i++) params_load(&g_pkg[i]);
 }
