@@ -62,7 +62,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define APP_VERSION   "2.7.2"
+#define APP_VERSION   "2.8.0"
 #define MAX_PKGS      512
 #define MAX_CATS      32
 #define MAX_PARAMS    12
@@ -150,8 +150,17 @@ static const L T_VERB_BOOT = {"Changing boot setting for %s", "正在修改 %s �
 static const L T_NODOC     = {"This source ships no documentation.", "这个软件源没有写说明。"};
 static const L T_NOPARAM   = {"This software has no settings to change.",
                              "这个软件没有可以改的参数。"};
-static const L T_PARAMSAVED= {"Settings saved. They apply the next time it is installed.",
-                             "参数已保存，下次安装时生效。"};
+static const L T_PARAMSAVED= {"Settings saved, but not in effect yet. Use Save & Apply, or install again.",
+                             "参数已保存，但还没生效。用「保存并应用」，或下次安装时生效。"};
+
+/* The form's three buttons, which are LuCI's: the primary one writes the
+ * settings *and* runs the install verb, because for every recipe here that
+ * verb is also the reconfigure path — it rewrites the config from the
+ * parameters and restarts the service. Save on its own is for somebody
+ * setting up three things before applying any of them, and for the case where
+ * applying means a download they would rather start later. */
+static const L T_SAVEAPPLY = {"Save & Apply", "保存并应用"};
+static const L T_SAVE      = {"Save",         "保存"};
 
 /* The home screen and the detail page. Both say which way is out, because the
  * way out is a button you walk to rather than a key you have to know. */
@@ -169,8 +178,8 @@ static const L T_NOLOG     = {"No log yet. One appears at %s the first time some
 static const L T_LOGEMPTY  = {"The log file is empty.", "日志文件是空的。"};
 static const L T_LOGTAIL   = {"── the last %s of %s ──", "── %s／共 %s，只显示末尾 ──"};
 static const L T_NITEMS    = {"%d",           "%d 项"};
-static const L T_HELPFORM  = {"↑↓ field   Space toggle   ←→ choose   Enter OK   Esc cancel   (or click)",
-                             "↑↓ 换行   空格 切换   ←→ 选值   回车 确定   Esc 取消   （也能点）"};
+static const L T_HELPFORM  = {"↑↓ field   Space toggle   ←→ choose   Enter save & apply   Esc cancel",
+                             "↑↓ 换行   空格 切换   ←→ 选值   回车 保存并应用   Esc 取消"};
 static const L T_HELPPAGE  = {"↑↓ scroll   Enter / Esc back", "↑↓ 滚动   回车/Esc 返回"};
 static const L T_HELPRUN   = {"Working — Esc twice to force a stop", "执行中 —— 按两次 Esc 可强行中止"};
 static const L T_HELPDONE  = {"Enter to go back", "回车返回"};
@@ -2472,8 +2481,10 @@ static int screen_params(Pkg *p)
 	Param before[MAX_PARAMS];
 	memcpy(before, p->params, sizeof before);
 
-	int sel = 0;                       /* 0..nparams-1 fields, then OK, Cancel */
-	int nitems = p->nparams + 2;
+	/* 0..nparams-1 are the fields; then Save & Apply, Save, Cancel. */
+	int sel = 0;
+	const int B_APPLY = p->nparams, B_SAVE = p->nparams + 1, B_CANCEL = p->nparams + 2;
+	int nitems = p->nparams + 3;
 	char title[256];
 	snprintf(title, sizeof title, "%s %s %s", pkg_name(p), MK_DOT, S(T_PARAMS));
 
@@ -2493,6 +2504,11 @@ static int screen_params(Pkg *p)
 		int w = labw + fieldw + 8;
 		if (w > g_w - 6) { w = g_w - 6; fieldw = w - labw - 8; }
 		if (fieldw < 10) fieldw = 10;
+		/* Three buttons are wider than two, and in Chinese wider again. The
+		 * box grows to hold them rather than letting them run off its edge —
+		 * everything else in here is sized to its contents too. */
+		int bw = btn_width(S(T_SAVEAPPLY)) + 2 + btn_width(S(T_SAVE)) + 2 + btn_width(S(T_CANCEL));
+		if (w < bw + 4) { w = bw + 4; if (w > g_w - 2) w = g_w - 2; }
 		int h = p->nparams + 6;
 		if (h > g_h - 2) h = g_h - 2;
 		int row = (g_h - h) / 2, col = (g_w - w) / 2;
@@ -2536,11 +2552,13 @@ static int screen_params(Pkg *p)
 			}
 		}
 
-		int bw = btn_width(S(T_OK)) + 2 + btn_width(S(T_CANCEL));
 		int bx = col + (w - bw) / 2;
-		btn_draw(row + h - 2, bx, S(T_OK), sel == p->nparams, p->nparams);
-		btn_draw(row + h - 2, bx + btn_width(S(T_OK)) + 2, S(T_CANCEL),
-		         sel == p->nparams + 1, p->nparams + 1);
+		if (bx < col + 1) bx = col + 1;
+		btn_draw(row + h - 2, bx, S(T_SAVEAPPLY), sel == B_APPLY, B_APPLY);
+		bx += btn_width(S(T_SAVEAPPLY)) + 2;
+		btn_draw(row + h - 2, bx, S(T_SAVE), sel == B_SAVE, B_SAVE);
+		bx += btn_width(S(T_SAVE)) + 2;
+		btn_draw(row + h - 2, bx, S(T_CANCEL), sel == B_CANCEL, B_CANCEL);
 		help_line_l(&T_HELPFORM);
 		grid_flush();
 
@@ -2569,21 +2587,21 @@ static int screen_params(Pkg *p)
 		if (k == K_UP || k == K_BTAB) { sel = (sel - 1 + nitems) % nitems; continue; }
 		if (k == K_DOWN || k == K_TAB) { sel = (sel + 1) % nitems; continue; }
 		if (k == K_ENTER) {
-			if (sel == p->nparams + 1) { memcpy(p->params, before, sizeof before); return 0; }
-			if (sel == p->nparams) {
+			if (sel == B_CANCEL) { memcpy(p->params, before, sizeof before); return 0; }
+			if (sel == B_APPLY || sel == B_SAVE) {
 				if (!params_save(p)) {
 					message(title, g_zh ? "保存失败：写不了参数文件。"
 					                    : "could not write the settings file");
 					return 0;
 				}
-				return 1;
+				return sel == B_APPLY ? 2 : 1;
 			}
-			sel = p->nparams;      /* Enter in a field moves on to OK */
+			sel = B_APPLY;         /* Enter in a field moves on to the primary */
 			continue;
 		}
 		if (!pm) {
-			if (k == K_LEFT)  sel = p->nparams;
-			if (k == K_RIGHT) sel = p->nparams + 1;
+			if (k == K_LEFT)  sel = (sel - 1 < B_APPLY) ? B_CANCEL : sel - 1;
+			if (k == K_RIGHT) sel = (sel + 1 > B_CANCEL) ? B_APPLY : sel + 1;
 			continue;
 		}
 		if (pm->type == PT_BOOL) {
@@ -3253,6 +3271,20 @@ static int act_step(AppView *v, int dir)
 	return 1;
 }
 
+/* Install, with the question about free space in front of it. Two callers:
+ * the Install row, and Save & Apply in the settings form. */
+static void action_install(Pkg *p)
+{
+	int ds = 0, ms = 0;
+	if (resource_short(p, &ds, &ms)) {
+		char have[16], q[500];
+		human_size(ds ? g_sys.disk_free : g_sys.mem_total, have, sizeof have);
+		snprintf(q, sizeof q, S(T_TIGHTQ), pkg_name(p), ds ? p->disk : p->memory, have);
+		if (!confirm(pkg_name(p), q)) return;
+	}
+	screen_progress(p, "install");
+}
+
 static void screen_app(Pkg *p)
 {
 	AppView v;
@@ -3315,18 +3347,16 @@ static void screen_app(Pkg *p)
 		case A_LOG:     screen_log(p); break;
 		case A_DOCS:    screen_docs(p); break;
 		case A_STATUS:  screen_status(p); break;
-		case A_PARAMS:  if (screen_params(p)) message(S(T_PARAMS), S(T_PARAMSAVED)); break;
-		case A_INSTALL: {
-			int ds = 0, ms = 0;
-			if (resource_short(p, &ds, &ms)) {
-				char have[16], q[500];
-				human_size(ds ? g_sys.disk_free : g_sys.mem_total, have, sizeof have);
-				snprintf(q, sizeof q, S(T_TIGHTQ), pkg_name(p), ds ? p->disk : p->memory, have);
-				if (!confirm(pkg_name(p), q)) break;
+		/* Apply is the install verb, so it goes through the same free-space
+		 * question: on a package that is not installed yet, "apply these
+		 * settings" and "install this" are the same action. */
+		case A_PARAMS:
+			switch (screen_params(p)) {
+			case 2: action_install(p); break;
+			case 1: message(S(T_PARAMS), S(T_PARAMSAVED)); break;
 			}
-			screen_progress(p, "install");
 			break;
-		}
+		case A_INSTALL: action_install(p); break;
 		case A_REMOVE: {
 			char q[400];
 			snprintf(q, sizeof q, S(T_REMOVEQ), pkg_name(p));
@@ -4173,6 +4203,11 @@ static int cli_screenshot(int n, char **rest)
 		}
 		int fieldw = 30, ww = labw + fieldw + 8;
 		if (ww > g_w - 6) { ww = g_w - 6; fieldw = ww - labw - 8; }
+		/* Same growth rule as the live form, or the screenshot would be a
+		 * picture of a box the form never draws. */
+		int bfit = btn_width(S(T_SAVEAPPLY)) + 2 + btn_width(S(T_SAVE)) + 2 +
+		           btn_width(S(T_CANCEL)) + 4;
+		if (ww < bfit) { ww = bfit; if (ww > g_w - 2) ww = g_w - 2; }
 		int hh = p->nparams + 6; if (hh > g_h - 2) hh = g_h - 2;
 		int row = (g_h - hh) / 2, col = (g_w - ww) / 2;
 		if (row < 1) row = 1;
@@ -4197,10 +4232,14 @@ static int cli_screenshot(int n, char **rest)
 				gput(y, fx, ch, a, fieldw);
 			} else gput(y, fx, pm->value, a, fieldw - 1);
 		}
-		int bw = btn_width(S(T_OK)) + 2 + btn_width(S(T_CANCEL));
+		int bw = btn_width(S(T_SAVEAPPLY)) + 2 + btn_width(S(T_SAVE)) + 2 + btn_width(S(T_CANCEL));
 		int bx = col + (ww - bw) / 2;
-		btn_draw(row + hh - 2, bx, S(T_OK), 1, 0);
-		btn_draw(row + hh - 2, bx + btn_width(S(T_OK)) + 2, S(T_CANCEL), 0, 1);
+		if (bx < col + 1) bx = col + 1;
+		btn_draw(row + hh - 2, bx, S(T_SAVEAPPLY), 1, 0);
+		bx += btn_width(S(T_SAVEAPPLY)) + 2;
+		btn_draw(row + hh - 2, bx, S(T_SAVE), 0, 1);
+		bx += btn_width(S(T_SAVE)) + 2;
+		btn_draw(row + hh - 2, bx, S(T_CANCEL), 0, 2);
 		help_line_l(&T_HELPFORM);
 	} else {
 		render_home();

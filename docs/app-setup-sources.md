@@ -171,6 +171,14 @@ form has been opened.**
 Saved values live in `/var/lib/app-setup/params/<id>.conf`, one `name=value` a
 line, and `app-setup set myapp port=9090` edits them from a script.
 
+The form has three buttons, and they are LuCI's: **Save & Apply** writes the
+settings and then runs your `install`, **Save** writes them and stops, and
+**Cancel** throws the edit away. So `do_install` is also the reconfigure path,
+and it is worth making it a fast one — if the binary is already the right
+version, rewrite the config, restart the service and return. A holder who
+changes a port should not wait for a download, and one who changes it back
+should not wait twice.
+
 Four kinds of field is the whole of it, deliberately. If your software needs
 more configuration than that, it has a config file, and the useful thing to do
 is say where it is in `do_help` rather than grow a wizard here.

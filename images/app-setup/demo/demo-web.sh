@@ -120,8 +120,8 @@ do_help() {
 
   · 装一次大约八秒，能看清进度条、当前步骤和下面的详细日志
   · 装完之后它会出现在左边"已安装"那一栏，可以启动、停止、重启
-  · "参数设置"里有四种控件：数字、文本、开关、可选项，
-    改完保存，再装一次就能在日志里看到新的值
+  · "参数设置"里有四种控件：数字、文本、开关、可选项，改完点
+    "保存并应用"就直接生效，日志里能看到新的值；只点"保存"是存下来不生效
 
 想看失败长什么样，装一下"演示 · 会失败的软件"。
 
@@ -143,8 +143,9 @@ container that matters.
   · once installed it appears in the Installed column on the left, where it
     can be started, stopped and restarted
   · Settings has one of each kind of field: a number, a text box, a switch
-    and a chooser. Change them, install again, and the new values show up in
-    the log
+    and a chooser. Change them and press Save & Apply and the new values show
+    up in the log straight away; Save on its own writes them down without
+    running anything
 
 To see what a failure looks like, install "Demo Failing Install".
 
