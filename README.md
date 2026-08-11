@@ -18,9 +18,20 @@ npm run docs:dev      # http://localhost:5173
 npm run docs:build    # → docs/.vitepress/dist
 ```
 
-Cloudflare Pages builds it with the VitePress preset, which is
-`npx vitepress build docs` into `docs/.vitepress/dist` — the layout above is
-chosen so that preset needs nothing typed in by hand.
+Cloudflare Pages builds it. Two settings, and the first one has to carry the
+`docs` argument:
+
+| Setting | Value |
+|---|---|
+| Build command | `npx vitepress build docs` |
+| Build output directory | `docs/.vitepress/dist` |
+
+Without the argument VitePress takes the repository root as its root, which
+means it never loads `docs/.vitepress/config.ts` and treats every markdown file
+in the tree as a page — including `images/README.md`, whose link to the
+`app-setup/` directory is correct on GitHub and not a page anywhere. The build
+fails on that link, which is the right thing for it to do: the alternative is
+publishing the whole repository as an unthemed site and finding out later.
 
 It also builds and publishes the system images a container is installed from —
 one public package, `ghcr.io/yinyue123/hqnode`, one tag per system. See
