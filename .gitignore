@@ -1,3 +1,5 @@
 node_modules/
-docs/.vitepress/dist/
-docs/.vitepress/cache/
+
+# The site is built to one place whichever command runs; see .vitepress/config.ts.
+.vitepress/dist/
+.vitepress/cache/

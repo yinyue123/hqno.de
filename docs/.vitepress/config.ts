@@ -23,6 +23,13 @@ export default defineConfig({
   description: 'Help for people who hold a container.',
   lang: 'en',
 
+  // Out to `<repo>/.vitepress/dist`, which is where the root config sends a
+  // rootless build too. One output directory for every way of starting the
+  // build: Cloudflare Pages is given one path and it has to be true whichever
+  // command runs, and a deploy already failed on it being true for only one.
+  outDir: '../.vitepress/dist',
+  cacheDir: '../.vitepress/cache',
+
   // A page per file, addressed by its own name: /using-your-container rather
   // than /using-your-container.html. Cloudflare Pages serves the directory
   // form without a redirect, so the address someone pastes into a message is

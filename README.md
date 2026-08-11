@@ -18,27 +18,33 @@ npm run docs:dev      # http://localhost:5173
 npm run docs:build    # → docs/.vitepress/dist
 ```
 
-Cloudflare Pages builds it. One setting has to be right:
+Cloudflare Pages builds it:
 
 | Setting | Value |
 |---|---|
-| Build output directory | `docs/.vitepress/dist` |
-| Build command | `npx vitepress build docs`, or `npx vitepress build` |
+| Build output directory | `.vitepress/dist` |
+| Build command | anything below |
 
-Either command works and both produce the same site. That is deliberate, and it
-was not always true: the argument names the VitePress root, and without it
-VitePress takes the *repository* root, loads no configuration at all, and treats
-every markdown file in the tree as a page — including `images/README.md`, whose
-link to the `app-setup/` source directory is correct on GitHub and is not a page
-anywhere. Three deploys died on that link.
+`npx vitepress build`, `npx vitepress build docs` and `npm run docs:build` all
+produce the same five themed pages in `.vitepress/dist`. That is deliberate, and
+neither half of it used to be true.
 
-Failing was better than publishing the whole repository unthemed, but both are
-wrong, and the build command lives in a dashboard rather than in this
-repository — so the repository is the wrong place to keep being right about it.
-`.vitepress/config.ts` at the root now points a rootless build back at `docs/`
-and at the same output directory. It holds `srcDir` and `outDir` and nothing
-else; the configuration itself stays in `docs/.vitepress/config.ts`, next to the
-pages, with one root-level shim beside it for the theme.
+The argument names the VitePress root. Without it VitePress takes the
+*repository* root, loads no configuration at all, and treats every markdown file
+in the tree as a page — including `images/README.md`, whose link to the
+`app-setup/` source directory is correct on GitHub and is not a page anywhere.
+Three deploys died on that link. Failing was better than publishing the whole
+repository unthemed, but neither is a site, and the build command lives in a
+dashboard rather than in this repository — so this is the wrong place to keep
+being right about it. `.vitepress/config.ts` at the root points a rootless build
+back at `docs/`; it holds `srcDir` and `outDir` and nothing else, with a
+one-line shim beside it for the theme. The configuration itself stays in
+`docs/.vitepress/config.ts`, next to the pages.
+
+Then the fourth deploy built and still failed, because the output was written
+where the *command* implied rather than where Pages was told to look. So both
+configurations now name one directory, `<repo>/.vitepress/dist`. One path can be
+wrong, but it cannot be right for one command and wrong for another.
 
 It also builds and publishes the system images a container is installed from —
 one public package, `ghcr.io/yinyue123/hqnode`, one tag per system. See

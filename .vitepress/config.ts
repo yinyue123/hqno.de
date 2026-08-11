@@ -20,10 +20,16 @@ import baseConfig from '../docs/.vitepress/config';
  * than a different, worse thing: same pages, same theme, same output
  * directory. There is no second copy of the configuration — only `srcDir` and
  * `outDir`, which are the two settings that depend on where the build started.
+ *
+ * `outDir` is `<repo>/.vitepress/dist`, and `docs/.vitepress/config.ts` aims at
+ * the same place from its own root. Every command puts the site in one
+ * directory, so the Pages "build output directory" setting is right for all of
+ * them and cannot be right for one and wrong for another — which is exactly
+ * how the deploy after the last one failed.
  */
 export default {
   ...baseConfig,
   srcDir: 'docs',
-  outDir: 'docs/.vitepress/dist',
-  cacheDir: 'docs/.vitepress/cache',
+  outDir: '.vitepress/dist',
+  cacheDir: '.vitepress/cache',
 };
