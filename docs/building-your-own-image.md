@@ -31,4 +31,5 @@ page needs to get them from nothing to a reference their host can boot.
 - **Private registries.** What the host can and cannot authenticate to, and
   who to ask.
 
-See [image.md](../image.md) §1 and §3.2 for the behaviour this describes.
+See [image.md](https://github.com/yinyue123/hqnode/blob/main/image.md) §1 and
+§3.2 for the behaviour this describes.

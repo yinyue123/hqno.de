@@ -130,7 +130,7 @@ its files but moves your uploads to `/root/` first, and says so.
 
 Adding your own software to the menu is writing one shell script and dropping
 it into `/etc/app-setup/` — see
-[adding your own software](docs/app-setup-sources.md).
+[adding your own software](app-setup-sources.md).
 
 **`/data` is the part that survives.** Everything else is the image plus your
 changes to it, and a reinstall replaces exactly that. Databases, uploads,

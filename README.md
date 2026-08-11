@@ -5,8 +5,22 @@ given a container and has never seen the panel before: how it becomes theirs,
 how to get in, what the limits do when they are reached, and what expiry and
 reinstall actually take away.
 
-- [Using your container](using-your-container.md)
+Published as a VitePress site at [hqno.de](https://hqno.de). Every page lives
+under [`docs/`](docs/), which is what the site is built from:
+
+- [Using your container](docs/using-your-container.md)
 - [Adding your own software to app-setup](docs/app-setup-sources.md)
+- [Building your own image](docs/building-your-own-image.md)
+
+```sh
+npm install
+npm run docs:dev      # http://localhost:5173
+npm run docs:build    # → docs/.vitepress/dist
+```
+
+Cloudflare Pages builds it with the VitePress preset, which is
+`npx vitepress build docs` into `docs/.vitepress/dist` — the layout above is
+chosen so that preset needs nothing typed in by hand.
 
 It also builds and publishes the system images a container is installed from —
 one public package, `ghcr.io/yinyue123/hqnode`, one tag per system. See
