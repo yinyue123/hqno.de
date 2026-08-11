@@ -18,20 +18,27 @@ npm run docs:dev      # http://localhost:5173
 npm run docs:build    # → docs/.vitepress/dist
 ```
 
-Cloudflare Pages builds it. Two settings, and the first one has to carry the
-`docs` argument:
+Cloudflare Pages builds it. One setting has to be right:
 
 | Setting | Value |
 |---|---|
-| Build command | `npx vitepress build docs` |
 | Build output directory | `docs/.vitepress/dist` |
+| Build command | `npx vitepress build docs`, or `npx vitepress build` |
 
-Without the argument VitePress takes the repository root as its root, which
-means it never loads `docs/.vitepress/config.ts` and treats every markdown file
-in the tree as a page — including `images/README.md`, whose link to the
-`app-setup/` directory is correct on GitHub and not a page anywhere. The build
-fails on that link, which is the right thing for it to do: the alternative is
-publishing the whole repository as an unthemed site and finding out later.
+Either command works and both produce the same site. That is deliberate, and it
+was not always true: the argument names the VitePress root, and without it
+VitePress takes the *repository* root, loads no configuration at all, and treats
+every markdown file in the tree as a page — including `images/README.md`, whose
+link to the `app-setup/` source directory is correct on GitHub and is not a page
+anywhere. Three deploys died on that link.
+
+Failing was better than publishing the whole repository unthemed, but both are
+wrong, and the build command lives in a dashboard rather than in this
+repository — so the repository is the wrong place to keep being right about it.
+`.vitepress/config.ts` at the root now points a rootless build back at `docs/`
+and at the same output directory. It holds `srcDir` and `outDir` and nothing
+else; the configuration itself stays in `docs/.vitepress/config.ts`, next to the
+pages, with one root-level shim beside it for the theme.
 
 It also builds and publishes the system images a container is installed from —
 one public package, `ghcr.io/yinyue123/hqnode`, one tag per system. See
