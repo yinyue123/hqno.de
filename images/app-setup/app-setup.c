@@ -4304,21 +4304,37 @@ static void usage(FILE *f)
 
 /* --------------------------------------------------------------- passwd ---
  *
- * /usr/bin/passwd is a symlink to this binary (image build — docs/passwd.md).
- * The SSH gateway on the host never reads a container's own /etc/shadow, so
- * `passwd` changing it looked like it worked and changed nothing about how
- * the tenant logs back in. The original tool is still here, renamed to
- * .passwd rather than replaced, and this only special-cases one shape of the
- * call — everything else falls straight through to it, untouched.
+ * /usr/local/bin/passwd is a symlink to this binary (image build —
+ * docs/passwd.md). The SSH gateway on the host never reads a container's own
+ * /etc/shadow, so `passwd` changing it looked like it worked and changed
+ * nothing about how the tenant logs back in. The real tool is untouched at
+ * /usr/bin/passwd, and this only special-cases one shape of the call —
+ * everything else falls straight through to it, untouched.
  *
- * That one shape is root, changing a password, no flags: bare `passwd` or
- * `passwd NAME`. It is the only login shape an hqnode container's SSH
- * mapping produces (ContainerUser defaults to root — agent/internal/store/
- * sshusers.go), and it is the one case that never needs the old password —
- * which is what makes it possible to collect the new one here and hand it to
- * both sides in a controlled order, rather than trying to observe it inside
- * .passwd's own interactive session. Nothing here ever reads a password back
- * out of .passwd.
+ * /usr/local/bin, and not /usr/bin, because no package manager owns that
+ * directory. The first shape of this shipped by renaming the real tool to
+ * .passwd and taking over /usr/bin/passwd, which held for exactly as long as
+ * nobody installed anything: Alpine's busybox trigger runs `bbsuid --install`
+ * on *every* apk transaction, and that recreates /usr/bin/passwd as a symlink
+ * to /bin/bbsuid whenever it finds a symlink there — silently restoring the
+ * bug this file exists to fix, on the same `apk add` that app-setup's own
+ * pkg_install runs. (It leaves a regular file alone, which is why the real
+ * tool is safe sitting there and a symlink never was.) dpkg and rpm do the
+ * same thing more slowly: upgrading the package that owns /usr/bin/passwd
+ * writes its own binary back over anything else at that path. Winning on
+ * PATH instead of owning the path takes us out of that fight — /usr/local/bin
+ * precedes /usr/bin in the login PATH and in sudo's secure_path on every
+ * image we publish, and it is the same trick this Dockerfile already uses for
+ * sftp-server.
+ *
+ * The one shape handled here is root, changing a password, no flags: bare
+ * `passwd` or `passwd NAME`. It is the only login shape an hqnode container's
+ * SSH mapping produces (ContainerUser defaults to root — agent/internal/
+ * store/sshusers.go), and it is the one case that never needs the old
+ * password — which is what makes it possible to collect the new one here and
+ * hand it to both sides in a controlled order, rather than trying to observe
+ * it inside the real passwd's own interactive session. Nothing here ever
+ * reads a password back out of it.
  */
 #define PWSYNC_SOCK "/etc/hqnode/pwsync.sock"
 
@@ -4449,7 +4465,7 @@ static const char *passwd_target_account(int argc, char **argv, char *self, size
 
 /* The one shape this file handles itself: no flags, at most one positional
  * argument. Everything else — passwd -l, -S, -d, any other flag — falls
- * through to .passwd unmodified in passwd_main, further down. */
+ * through to the real tool unmodified in passwd_main, further down. */
 static int passwd_is_plain(int argc, char **argv)
 {
 	if (argc <= 1) return 1;
@@ -4457,16 +4473,28 @@ static int passwd_is_plain(int argc, char **argv)
 	return 0;
 }
 
+/* Hand off to the distribution's own passwd, by absolute path rather than by
+ * PATH lookup — a PATH search would find this binary again at
+ * /usr/local/bin/passwd and fork-bomb the tenant's session. Both names are
+ * tried because /bin is only a symlink to /usr/bin on a usrmerged image, and
+ * the catalog still carries two that are not (CentOS 7, Ubuntu 16.04).
+ * Returns only on failure; on success this process *becomes* the real tool. */
+static void passwd_exec_real(char **argv)
+{
+	execv("/usr/bin/passwd", argv);
+	execv("/bin/passwd", argv);
+}
+
 static int passwd_main(int argc, char **argv)
 {
 	if (geteuid() != 0 || !passwd_is_plain(argc, argv)) {
 		/* Not root, or a shape this does not special-case: run the real tool,
 		 * inheriting this process's own stdin/stdout/stderr — already the
-		 * tenant's real terminal, so .passwd's own prompts (a non-root user's
-		 * old-password check among them) behave exactly as if `.passwd` had
-		 * been typed directly. */
-		execv("/usr/bin/.passwd", argv);
-		fprintf(stderr, "passwd: could not run /usr/bin/.passwd: %s\n", strerror(errno));
+		 * tenant's real terminal, so its own prompts (a non-root user's
+		 * old-password check among them) behave exactly as if the real passwd
+		 * had been typed directly. */
+		passwd_exec_real(argv);
+		fprintf(stderr, "passwd: could not run /usr/bin/passwd: %s\n", strerror(errno));
 		return 1;
 	}
 

@@ -140,21 +140,31 @@ COPY --from=app-setup-build /app-setup /bin/app-setup
 COPY app-setup/lib/     /usr/lib/app-setup/
 COPY app-setup/recipes/ /etc/app-setup/
 #
-# app-setup answers to `passwd` too (docs/passwd.md): the original binary is
-# renamed rather than replaced, so every existing invocation — flags, a
-# non-root user's own change, all of it — still runs exactly as it always
-# has. app-setup only adds a step after it succeeds: the same new password
-# also reaches the SSH gateway (agent/internal/sshgw), which otherwise never
-# reads this container's own /etc/shadow. `mv`, not a mount, so this carries
-# whatever passwd already was unexamined — here, the `shadow` package's own
-# standalone binary, installed above, not busybox's multi-call applet, so
-# there is nothing else riding on the same inode to take down with it.
+# app-setup answers to `passwd` too (docs/passwd.md): the real tool is left
+# exactly where it is and app-setup is put *in front of it on PATH*, so every
+# existing invocation — flags, a non-root user's own change, all of it — still
+# runs exactly as it always has. app-setup only adds a step after it succeeds:
+# the same new password also reaches the SSH gateway (agent/internal/sshgw),
+# which otherwise never reads this container's own /etc/shadow.
+#
+# /usr/local/bin rather than /usr/bin, and on Alpine this is not a preference.
+# The first version of this renamed the real binary to .passwd and put a
+# symlink at /usr/bin/passwd, which survived exactly until the container's
+# holder installed anything: apk fires the busybox trigger on *every*
+# transaction, `bbsuid --install` recreates /usr/bin/passwd -> /bin/bbsuid
+# whenever it finds a symlink at that path, and the container silently went
+# back to busybox's passwd — the exact bug docs/passwd.md exists to fix,
+# reintroduced by app-setup's own `apk add`. A regular file it leaves alone,
+# which is why the `shadow` package's binary is safe sitting at /usr/bin/passwd
+# and a symlink there never was. Nothing owns /usr/local/bin, and it precedes
+# /usr/bin in the login PATH and in sudo's secure_path — the same reason
+# sftp-server is installed there above.
 RUN set -eux; \
     chmod 0755 /bin/app-setup /etc/app-setup/*.sh; \
     chmod 0644 /usr/lib/app-setup/*.sh; \
-    mkdir -p /var/log/app-setup /var/lib/app-setup; \
-    mv /usr/bin/passwd /usr/bin/.passwd; \
-    ln -sf /bin/app-setup /usr/bin/passwd; \
+    mkdir -p /var/log/app-setup /var/lib/app-setup /usr/local/bin; \
+    test -x /usr/bin/passwd; \
+    ln -sf /bin/app-setup /usr/local/bin/passwd; \
     app-setup doctor >/dev/null
 
 # How anybody finds out it exists. The gateway starts a login shell, and

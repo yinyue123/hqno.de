@@ -163,20 +163,26 @@ COPY --from=app-setup-build /app-setup /bin/app-setup
 COPY app-setup/lib/     /usr/lib/app-setup/
 COPY app-setup/recipes/ /etc/app-setup/
 #
-# app-setup answers to `passwd` too (docs/passwd.md): the original binary is
-# renamed rather than replaced, so every existing invocation — flags, a
-# non-root user's own change, all of it — still runs exactly as it always
-# has. app-setup only adds a step after it succeeds: the same new password
-# also reaches the SSH gateway (agent/internal/sshgw), which otherwise never
-# reads this container's own /etc/shadow. `mv`, not a mount, so this carries
-# whatever passwd already was unexamined; nothing else on the system looks
-# for `.passwd` by that name.
+# app-setup answers to `passwd` too (docs/passwd.md): the real tool is left
+# exactly where it is and app-setup is put *in front of it on PATH*, so every
+# existing invocation — flags, a non-root user's own change, all of it — still
+# runs exactly as it always has. app-setup only adds a step after it succeeds:
+# the same new password also reaches the SSH gateway (agent/internal/sshgw),
+# which otherwise never reads this container's own /etc/shadow.
+#
+# /usr/local/bin rather than /usr/bin, because dpkg owns /usr/bin/passwd: the
+# first version of this renamed the real binary to .passwd and put a symlink
+# in its place, and any later upgrade of the `passwd` package writes the real
+# binary straight back over that symlink, silently restoring the bug this is
+# here to fix. (Alpine has the same failure on a much shorter fuse — every
+# single apk transaction; see that Dockerfile.) Nothing owns /usr/local/bin,
+# and it precedes /usr/bin in the login PATH and in sudo's secure_path.
 RUN set -eux; \
     chmod 0755 /bin/app-setup /etc/app-setup/*.sh; \
     chmod 0644 /usr/lib/app-setup/*.sh; \
-    mkdir -p /var/log/app-setup /var/lib/app-setup; \
-    mv /usr/bin/passwd /usr/bin/.passwd; \
-    ln -sf /bin/app-setup /usr/bin/passwd; \
+    mkdir -p /var/log/app-setup /var/lib/app-setup /usr/local/bin; \
+    test -x /usr/bin/passwd; \
+    ln -sf /bin/app-setup /usr/local/bin/passwd; \
     app-setup doctor >/dev/null
 
 # How anybody finds out it exists. The gateway starts a login shell, so
