@@ -23,22 +23,23 @@ features:
   - title: Understand it in seven pictures
     details: >-
       What you were given, why your login is yours, why your website is yours,
-      and the two ways to get a padlock.
+      and the two ways to get a padlock. Start here, and it sends you to
+      whichever of the next two is yours.
     link: /how-it-works
-  - title: Get a website up
+  - title: Somebody sent you a code
     details: >-
-      Claim the code, log in, install a web server from a menu, point your
-      domain at it, turn on HTTPS. One step at a time, with what you should see
-      at each.
+      Claim it, log in, install a web server from a menu, point your domain at
+      it, turn on HTTPS. Twelve steps, each with a picture and what you should
+      see.
     link: /quick-start
-  - title: Live in it
+  - title: You have a machine
     details: >-
-      Limits, expiry, restart and rebuild — what happens when, and what it
-      costs. Plus adding your own software to the menu.
-    link: /using-your-container
-  - title: Have hardware instead?
-    details: >-
-      Attach your own machine, cut it into containers, and hand one to a friend
-      with a code.
+      Attach it, cut it into containers, set what each one gets, and hand one to
+      a friend with a code.
     link: /running-a-machine
+  - title: Living in it, and the deep end
+    details: >-
+      Limits, expiry, restart and rebuild — what happens when. And, for the
+      curious only, building your own image or adding your own software.
+    link: /using-your-container
 ---

@@ -1,11 +1,21 @@
 # How this works
 
-You have been given a piece of somebody else's machine. Seven pictures, and you
-will know which parts of it are yours.
+Somebody sells a Linux machine in pieces. Each piece behaves like a small
+computer of its own, and this page is the seven pictures that say which parts of
+one are yours.
 
-If you would rather start doing than reading, go to the
-[quick start](quick-start.md) — it takes you from the code somebody sent you to a
-website with a padlock on it.
+**Or skip it — take whichever of these you are:**
+
+```
+  somebody gave you a code  ──▶  Quick start
+  you have a machine        ──▶  Running a machine of your own
+```
+
+- [**Quick start**](quick-start.md) — you were sent a share code. Claim it, log
+  in, install a website, point your domain at it, get the padlock. Twelve steps,
+  each with a picture.
+- [**Running a machine of your own**](running-a-machine.md) — you have hardware,
+  or a rented server, and you want to cut it into containers and hand them out.
 
 ---
 
@@ -188,7 +198,14 @@ answering, your login keeps working, and everything you have installed carries o
 ## Where next
 
 - [Quick start](quick-start.md) — a share code to a working website.
-- [Using your container](using-your-container.md) — limits, expiry, rebuilds:
-  what happens when, and what it costs.
 - [Running a machine of your own](running-a-machine.md) — the other side of all
   of this.
+- [Using your container](using-your-container.md) — limits, expiry, rebuilds:
+  what happens when, and what it costs.
+
+Under **Systems and software** there are two more, and almost nobody needs
+them: [building your own image](building-your-own-image.md) if the system you
+want is not on the published list, and
+[adding your own software](app-setup-sources.md) if you want your own entry in
+the install menu. Everything ordinary is done from inside the container the
+ordinary way.

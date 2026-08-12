@@ -10,12 +10,19 @@ itself is `hqno.de`, and the panel links here by one constant, `DOCS_BASE` in
 `web/lib/docs.ts`, so this address is changed in two places and no more. Every
 page lives under [`docs/`](docs/), which is what the site is built from:
 
+**Start here**, which is the sidebar's first group and the order somebody needs
+them in — the first page ends by sending a reader to whichever of the next two
+is theirs:
+
 - [How this works](docs/how-it-works.md)
 - [Quick start](docs/quick-start.md)
 - [Using your container](docs/using-your-container.md)
-- [Adding your own software to app-setup](docs/app-setup-sources.md)
-- [Building your own image](docs/building-your-own-image.md)
 - [Running a machine of your own](docs/running-a-machine.md)
+
+**Systems and software**, one group down because almost nobody needs it:
+
+- [Building your own image](docs/building-your-own-image.md)
+- [Adding your own software to app-setup](docs/app-setup-sources.md)
 
 Chinese lives beside them in [`docs/zh/`](docs/zh/), one file per translated
 page, and the theme grows a language menu from the `locales` block in
