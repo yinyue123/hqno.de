@@ -825,7 +825,96 @@ class of bug as the ragged boxes in §8 and it belongs beside it in `README.md`.
 
 1. **Six figures, or fewer?** Every beat of the brief got one. Say if the
    section now delays the seven figures too long.
+
 2. **`app-setup` is drawn as four chips** (nginx, MariaDB, PHP, Node) rather
    than the menu the later section already draws in full. Enough of a promise?
 3. **Should the quick start open the same way** — one drawn figure of what the
    twelve steps add up to?
+
+---
+
+## 11. Every figure drawn, not typed
+
+**Status: built.** All three pages, both languages. 131 figures; the plain-text
+boxes are gone from everything except the ten transcripts named below.
+
+### What §0 got wrong, and what stays right about it
+
+§0 said plain text in a code block, for four reasons, and §10 kept it for
+everything except one comparison. Read on a page rather than argued about, it
+was wrong: a `┌────┐` frame is a picture of a dialog drawn by somebody who has
+only a keyboard, and it looks like one. Worse in Chinese, where §8's rule — no
+right-hand border, because CJK is not exactly two columns — meant every screen
+on the Chinese pages was a box with one side missing.
+
+One reason survives intact and decides the whole split:
+
+> **A transcript is not a figure.** What you type, and what the machine typed
+> back, has to be selectable, copyable, and identical to the character.
+
+So the line is: **anything you would copy stays a code block; anything that is a
+picture of a screen became a drawing.** Ten blocks are left, all of them a
+terminal — `ssh`, `free -h`, `app-setup docs nginx`, `nginx -t`, `nslookup`,
+`systemctl status`. They keep the copy button. Nothing else does, because
+nothing else was ever meant to be copied.
+
+### They are built, not drawn
+
+Hand-writing 131 SVGs with coordinates in them would have produced 131 chances
+to be wrong, in two languages that need different widths for the same figure.
+So `docs/.vitepress/theme/figures/` is a small kit and the pages carry data:
+
+| | |
+|---|---|
+| `measure.ts` | how wide a string will be, with no browser to ask |
+| `cells.ts` | the vocabulary: text, a field, a button, a radio, a bar |
+| `Cell.vue` | draws one of those |
+| `FigScreen.vue` | a titled frame with lines on a shared column grid |
+| `FigRows.vue` | rows with an arrow in one of the gaps |
+
+A figure in a page is now the *content* and nothing else — which is why the two
+languages cannot drift apart in geometry, and why a new kind of cell appears in
+every figure at once:
+
+```
+<FigRows :arrow="0" :rows="[
+  ['change the password in the panel', 'changes how you get in'],
+  ['change it inside your box', { t: 'changes nothing', tone: 'mute' }],
+]" />
+```
+
+Figures size themselves to their contents and are left-aligned at their natural
+width, so they only shrink when the column is narrower than they are.
+
+### The one hard part: SVG has no text layout
+
+A `<text>` is placed at a point and is however wide it is. Every box drawn round
+a label is sized from an estimate, and an estimate that is *under* clips real
+words off the end of real sentences.
+
+It shipped under. Three rounds of hand-tuning a per-character table — `i` a
+third of an em, `W` most of one — measured against the real face as out by up to
+9% **in both directions**, so it clipped labels *and* padded them. What fixed it
+was measuring instead of reasoning: `getBBox()` on the site's own strings, in
+the site's own font, said the widest per-character average anywhere is 0.591 em.
+The table is now one number, 0.60, flat, plus 2% — over by a predictable amount
+in one direction only, which is the entire requirement. Left-aligned figures
+spend the surplus on air nobody sees.
+
+The check that proved it is worth keeping: build, inline all 131 figures into
+one page, and measure every `<text>` against its own `viewBox` in a real
+browser. It found thirteen clipped labels the eye had walked straight past,
+including two in figures that had already been reviewed. **A figure that is
+wrong is wrong by four pixels, and four pixels is exactly what a reviewer's eye
+is worst at.** Anybody adding a figure should re-run it.
+
+### Questions
+
+1. **The ten transcripts** keep their monospace block and copy button. Right
+   line, or should the short ones (`root@wp-1:~# app-setup`, one line) be drawn
+   too?
+2. **Screens are drawn, not photographed** — still the §9 question, but the
+   drawing is much closer now. Worth matching the panel's real wording field for
+   field?
+3. **`Cell.vue` has no icon kind.** The badges use `✓ ✕ ·` as text and the
+   padlock is an emoji. Fine, or do those want to be drawn?

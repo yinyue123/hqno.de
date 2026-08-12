@@ -142,6 +142,45 @@
   margin: 28px auto;
   font-family: var(--vp-font-family-base);
 }
+
+/* The built figures size themselves to their own contents, so they carry real
+   width and height attributes and only shrink when the column is narrower than
+   they are. Left-aligned, because a screen mock-up that centres itself reads as
+   a picture of nothing in particular. */
+.fig-fit {
+  width: auto;
+  max-width: 100%;
+  margin-left: 0;
+}
+
+.f-t { fill: var(--vp-c-text-2); font-size: 13px; }
+.f-sm { font-size: 11.5px; }
+.f-mono { font-family: var(--vp-font-family-mono); font-size: 12px; }
+.f-title { fill: var(--vp-c-text-1); font-weight: 600; }
+.f-mid { text-anchor: middle; }
+.f-mute { fill: var(--vp-c-text-3); }
+.f-strong { fill: var(--vp-c-text-1); font-weight: 600; }
+.f-accent, .f-on { fill: var(--vp-c-brand-1); }
+.f-ok { fill: #3d8168; }
+.f-bad { fill: #b4462f; }
+.dark .f-ok { fill: #6cb79a; }
+.dark .f-bad { fill: #e08a72; }
+
+/* A frame, and the patch of page colour that punches the gap its title sits in
+   — the same trick the plain-text boxes were imitating with `┌ Title ──`. */
+.f-frame { fill: var(--vp-c-bg-soft); stroke: var(--vp-c-divider); stroke-width: 1; }
+.f-legend { fill: var(--vp-c-bg); }
+.f-field { fill: var(--vp-c-bg); stroke: var(--vp-c-divider); stroke-width: 1; }
+.f-btn { fill: var(--vp-c-bg); stroke: var(--vp-c-text-3); stroke-width: 1; }
+.f-tag { fill: none; stroke: var(--vp-c-divider); stroke-width: 1; }
+.f-ring { fill: none; stroke: var(--vp-c-text-3); stroke-width: 1.2; }
+.f-dot { fill: var(--vp-c-brand-3); }
+.f-tick { fill: none; stroke: var(--vp-c-brand-3); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.f-track { fill: var(--vp-c-divider); }
+.f-fill { fill: var(--vp-c-brand-3); }
+.f-ln { fill: none; stroke: var(--vp-c-text-3); stroke-width: 1.3; }
+.f-head { fill: var(--vp-c-text-3); }
+.f-rule { fill: none; stroke: var(--vp-c-divider); stroke-width: 1; }
 .fig text { fill: var(--vp-c-text-2); font-size: 13px; }
 /* t titles · s asides · m a literal you could type · c centred · a accented */
 .fig .t { fill: var(--vp-c-text-1); font-size: 13px; font-weight: 600; }

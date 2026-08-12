@@ -6,22 +6,22 @@ your own, on your own domain name, with a padlock in the address bar.
 One example runs all the way through, so you can compare your screen with this
 one line by line:
 
-```
-  account    ana
-  container  wp-1, on the machine hk-1.example.com
-  domain     example.com, and www.example.com
-  the machine's address   203.0.113.7
-```
+<FigRows :rows="[
+  [{ t: 'account', tone: 'mute' }, { m: 'ana' }],
+  [{ t: 'container', tone: 'mute' }, { m: 'wp-1' }, { t: 'on the machine', tone: 'mute' }, { m: 'hk-1.example.com' }],
+  [{ t: 'domain', tone: 'mute' }, { m: 'example.com' }, { t: 'and', tone: 'mute' }, { m: 'www.example.com' }],
+  [{ t: 'the machine', tone: 'mute' }, { m: '203.0.113.7' }],
+]" />
 
 Every value will be different for you, and nothing else will.
 
-```
-  1  claim the code        5  add your domain
-  2  the two passwords     6  point the name at the machine
-  3  log in                7  send each name to a service
-  4  install a website     8  turn on HTTPS
-                           9  read the logs when it breaks
-```
+<FigRows :rows="[
+  [{ t: '1', tone: 'accent' }, 'claim the code', { t: '5', tone: 'accent' }, 'add your domain'],
+  [{ t: '2', tone: 'accent' }, 'the two passwords', { t: '6', tone: 'accent' }, 'point the name at the machine'],
+  [{ t: '3', tone: 'accent' }, 'log in', { t: '7', tone: 'accent' }, 'send each name to a service'],
+  [{ t: '4', tone: 'accent' }, 'install a website', { t: '8', tone: 'accent' }, 'turn on HTTPS'],
+  [null, null, { t: '9', tone: 'accent' }, 'read the logs when it breaks'],
+]" />
 
 Steps 1 to 4 need nothing but the code. Steps 5 onwards need a domain name — buy
 one anywhere; it costs about the price of a coffee a year.
@@ -32,10 +32,10 @@ one anywhere; it costs about the price of a coffee a year.
 
 What you were sent looks like one of these:
 
-```
-  https://hqno.de/redeem?code=HQ-7F3K-2M9P
-  HQ-7F3K-2M9P
-```
+<FigRows :rows="[
+  [{ m: 'https://hqno.de/redeem?code=HQ-7F3K-2M9P' }],
+  [{ m: 'HQ-7F3K-2M9P' }],
+]" />
 
 Open the link, or go to **Containers → Redeem a share code**. If you are not
 signed in it offers to sign you in or create an account first, then comes back to
@@ -43,24 +43,20 @@ the code. Signing up asks for a username, an email and a password, and nothing
 else — there is one kind of account here, and one account holds containers from
 as many people as you like.
 
-```
-  ┌ Redeem a share code ─────────────────────────────┐
-  │  Share code      [ HQ-7F3K-2M9P             ]    │
-  │  Shell username  [ ana        ]  optional        │
-  │  Shell password  [            ]  generated       │
-  │                                   [ Claim it ]   │
-  └──────────────────────────────────────────────────┘
-```
+<FigScreen title="Redeem a share code" :lines="[
+  ['Share code', { f: 'HQ-7F3K-2M9P' }],
+  ['Shell username', { f: 'ana', note: 'optional' }],
+  ['Shell password', { f: '', note: 'generated' }],
+  { align: 'right', cols: [{ b: 'Claim it' }] },
+]" />
 
 Leave the bottom two blank and they are made up for you. **You should see:**
 
-```
-  ┌ It is yours ─────────────────────────────────────┐
-  │  ssh u7k2m9p@hk-1.example.com                    │
-  │  password   8Kd2-vQx7-mR        shown once       │
-  │  Copy it now — the panel does not keep it.       │
-  └──────────────────────────────────────────────────┘
-```
+<FigScreen title="It is yours" :lines="[
+  [{ m: 'ssh u7k2m9p@hk-1.example.com' }],
+  { cols: ['password', { t: '8Kd2-vQx7-mR', face: 'mono' }, { t: 'shown once', face: 'small', tone: 'bad' }] },
+  [{ t: 'Copy it now — the panel does not keep it.', face: 'small', tone: 'mute' }],
+]" />
 
 Copy that password somewhere safe before you leave the page. It is shown once and
 nowhere else; a lost one is replaced, not recovered (step 2).
@@ -79,32 +75,27 @@ it sends turns it into an account you can sign in to.
 
 The one thing everybody mixes up. You have two, and they open different things:
 
-```
-  panel password  ──▶  the website you sign in to
-  shell password  ──▶  your box
-```
+<FigRows :arrow="0" :rows="[
+  [{ t: 'panel password', tone: 'strong' }, 'the website you sign in to'],
+  [{ t: 'shell password', tone: 'strong' }, 'your box'],
+]" />
 
 Change the first under **Account**:
 
-```
-  ┌ Account ─────────────────────────────────────────┐
-  │  Username  ana                                   │
-  │  Email     ana@example.com          [ Change ]   │
-  │  Password  ••••••••                 [ Change ]   │
-  └──────────────────────────────────────────────────┘
-```
+<FigScreen title="Account" :lines="[
+  ['Username', { t: 'ana', face: 'mono' }],
+  { cols: ['Email', { t: 'ana@example.com', face: 'mono' }, { b: 'Change' }] },
+  { cols: ['Password', { t: '••••••••', face: 'mono' }, { b: 'Change' }] },
+]" />
 
 Change the second on your container's page, under **Actions → Shell login →
 Reset password**:
 
-```
-  ┌ Reset the shell login ───────────────────────────┐
-  │  Shell username  [ u7k2m9p ]                     │
-  │  New password    [          ]                    │
-  │                  leave blank to generate one     │
-  │                                    [ Set it ]    │
-  └──────────────────────────────────────────────────┘
-```
+<FigScreen title="Reset the shell login" :lines="[
+  ['Shell username', { f: 'u7k2m9p' }],
+  ['New password', { f: '', note: 'leave blank to generate one' }],
+  { align: 'right', cols: [{ b: 'Set it' }] },
+]" />
 
 The new one is shown once, and the old one stops working immediately — so do this
 when you are not in the middle of something. Your username never changes in the
@@ -121,18 +112,18 @@ panel has no form for them yet — ask your host to add yours.
 Your container's page shows the three parts you need — **User**, **Host** and the
 port beside it. Put them together like this:
 
-```
-  ssh u7k2m9p@hk-1.example.com          port 22
-  ssh u7k2m9p@hk-1.example.com -p 2222  any other port
-```
+<FigRows :rows="[
+  [{ m: 'ssh u7k2m9p@hk-1.example.com' }, { t: 'port 22', tone: 'mute' }],
+  [{ m: 'ssh u7k2m9p@hk-1.example.com -p 2222' }, { t: 'any other port', tone: 'mute' }],
+]" />
 
 Then open a terminal:
 
-```
-  Windows 10 or later   PowerShell, or Terminal
-  macOS                 Terminal
-  Linux                 any terminal
-```
+<FigRows :rows="[
+  [{ t: 'Windows 10 or later', tone: 'strong' }, 'PowerShell, or Terminal'],
+  [{ t: 'macOS', tone: 'strong' }, 'Terminal'],
+  [{ t: 'Linux', tone: 'strong' }, 'any terminal'],
+]" />
 
 ```
   $ ssh u7k2m9p@hk-1.example.com
@@ -168,52 +159,46 @@ Type one word:
   root@wp-1:~# app-setup
 ```
 
-```
-  ┌ Suites ─ Web servers ─ Databases ─ Dev ─ System ─┐
-  │                                                  │
-  │ ▸ LNMP           web server + database + PHP     │
-  │   WordPress      the blog four sites in ten use  │
-  │   MariaDB        a database on its own           │
-  │   Node.js        ...                             │
-  │                                                  │
-  │ Disk 600M RAM 768M                               │
-  │ ↑↓←→ move    Enter open    ↑ at the top is Back  │
-  └──────────────────────────────────────────────────┘
-```
+<FigScreen :tabs="['Suites', 'Web servers', 'Databases', 'Dev', 'System']" :lines="[
+  [{ t: '▸', tone: 'accent' }, { t: 'LNMP', tone: 'accent' }, { t: 'web server + database + PHP', tone: 'mute' }],
+  ['', 'WordPress', { t: 'the blog four sites in ten use', tone: 'mute' }],
+  ['', 'MariaDB', { t: 'a database on its own', tone: 'mute' }],
+  ['', 'Node.js', { t: '…', tone: 'mute' }],
+  [{ t: 'Disk 600M   RAM 768M', face: 'small', tone: 'mute' }],
+  [{ t: '↑↓←→ move     Enter open     ↑ at the top is Back', face: 'small', tone: 'mute' }],
+]" />
 
-```
-  ↑ ↓ ← →        move        L   English / 中文
-  Enter          open it     q   quit
-  ↑ at the top   go back     the mouse works too
-```
+<FigRows :rows="[
+  [{ t: '↑ ↓ ← →' }, 'move', { t: 'L', tone: 'accent' }, 'English / 中文'],
+  [{ t: 'Enter' }, 'open it', { t: 'q', tone: 'accent' }, 'quit'],
+  [{ t: '↑ at the top' }, 'go back', null, { t: 'the mouse works too', tone: 'mute' }],
+]" />
 
 For a first website, pick one of these two and press Enter, then `[Install]`:
 
-```
-  LNMP        a web server, a database and PHP, wired up
-  WordPress   the same, plus WordPress and its database
-```
+<FigRows :rows="[
+  [{ t: 'LNMP', tone: 'strong' }, 'a web server, a database and PHP, wired up'],
+  [{ t: 'WordPress', tone: 'strong' }, 'the same, plus WordPress and its database'],
+]" />
 
 Before you press it, read the size line on the entry — it turns **red** when your
 box is too small for that package, which is the one number nobody tells you
 before an install dies four minutes in:
 
-```
-  Disk 600M  RAM 768M      fits
-  Disk 600M  RAM 768M      too big for this box   ← red
-```
+<FigRows :rows="[
+  [{ t: 'Disk 600M   RAM 768M' }, { t: 'fits', tone: 'ok' }],
+  [{ t: 'Disk 600M   RAM 768M', tone: 'bad' }, { t: 'too big for this box — shown in red', tone: 'bad' }],
+]" />
 
 Then it runs, and you watch it:
 
-```
-  ┌ Installing LNMP ─────────────────────────────────┐
-  │  Reading package lists... done                   │
-  │  Setting up nginx (1.24.0)                       │
-  │  Setting up mariadb-server                       │
-  │  Setting up php8.2-fpm                           │
-  │  ████████████████████░░░░░  78%                  │
-  └──────────────────────────────────────────────────┘
-```
+<FigScreen title="Installing LNMP" :lines="[
+  [{ t: 'Reading package lists... done', face: 'mono', tone: 'mute' }],
+  [{ t: 'Setting up nginx (1.24.0)', face: 'mono', tone: 'mute' }],
+  [{ t: 'Setting up mariadb-server', face: 'mono', tone: 'mute' }],
+  [{ t: 'Setting up php8.2-fpm', face: 'mono', tone: 'mute' }],
+  [{ bar: 0.78, label: '78%' }],
+]" />
 
 **You should see** a working web server from inside your own box:
 
@@ -249,15 +234,12 @@ Something you want that is not in the list? You can write one entry of your own:
 Open your software with Enter. The buttons are on that page, and so is the answer
 to "where do I change things?":
 
-```
-  ┌ Nginx ───────────────────────────────────────────┐
-  │ [Uninstall] [Stop] [Start at boot] [Settings]    │
-  │ [How to use it] [Log]                            │
-  │                                                  │
-  │ Settings                                         │
-  │   This software has no settings to change.       │
-  └──────────────────────────────────────────────────┘
-```
+<FigScreen title="Nginx" :lines="[
+  { pack: true, cols: [{ b: 'Uninstall' }, { b: 'Stop' }, { b: 'Start at boot' }, { b: 'Settings' }] },
+  { pack: true, cols: [{ b: 'How to use it' }, { b: 'Log' }] },
+  [{ t: 'Settings', tone: 'strong' }],
+  [{ t: 'This software has no settings to change.', tone: 'mute' }],
+]" />
 
 Almost everything that ships today is configured in its own file rather than in a
 form — and **How to use it** names the files, so you never have to go looking:
@@ -285,11 +267,11 @@ refuses to reload a broken config instead of taking your site down:
 **When a package does have settings**, the form is filled in with its own fields
 and has three buttons:
 
-```
-  [ Save & Apply ]   writes them and puts them into effect
-  [ Save ]           writes them — "not in effect yet"
-  [ Cancel ]         throws the edit away
-```
+<FigRows :rows="[
+  [{ b: 'Save & Apply' }, 'writes them and puts them into effect'],
+  [{ b: 'Save' }, { t: 'writes them — “not in effect yet”', tone: 'mute' }],
+  [{ b: 'Cancel' }, { t: 'throws the edit away', tone: 'mute' }],
+]" />
 
 ```
   root@wp-1:~# app-setup set myapp port=8080   scripted
@@ -304,22 +286,18 @@ Anything you add to the menu yourself can declare those fields —
 
 On your container's page, find **Domains**:
 
-```
-  ┌ Domains ──────────────────────────────── 0 of 10 ┐
-  │  No domains yet. Add one and this container      │
-  │  answers it on :80 and :443.                     │
-  │                                   [ Add domain ] │
-  └──────────────────────────────────────────────────┘
-```
+<FigScreen title="Domains" right="0 of 10" :lines="[
+  [{ t: 'No domains yet. Add one and this container', tone: 'mute' }],
+  [{ t: 'answers it on :80 and :443.', tone: 'mute' }],
+  { align: 'right', cols: [{ b: 'Add domain' }] },
+]" />
 
 Add `example.com`, then `www.example.com` — each name is its own row:
 
-```
-  ┌ Domains ──────────────────────────────── 2 of 10 ┐
-  │  🌐 example.com       DNS ·  HTTP ·  HTTPS ·  ⚙  │
-  │  🌐 www.example.com   DNS ·  HTTP ·  HTTPS ·  ⚙  │
-  └──────────────────────────────────────────────────┘
-```
+<FigScreen title="Domains" right="2 of 10" :lines="[
+  [{ m: 'example.com' }, { t: 'DNS ·', tone: 'mute' }, { t: 'HTTP ·', tone: 'mute' }, { t: 'HTTPS ·', tone: 'mute' }, { t: '⚙', tone: 'mute' }],
+  [{ m: 'www.example.com' }, { t: 'DNS ·', tone: 'mute' }, { t: 'HTTP ·', tone: 'mute' }, { t: 'HTTPS ·', tone: 'mute' }, { t: '⚙', tone: 'mute' }],
+]" />
 
 This tells the machine the names are yours. It does **not** change anything at
 your domain provider, and it does **not** get you a certificate. Those are the
@@ -337,12 +315,10 @@ address to point at, and **Docs** on an open name comes back to this page.
 The card above shows the address to point at — `203.0.113.7` in our example. Go to
 whoever sold you the domain, find the DNS or *records* page, and add:
 
-```
-  Type   Name   Value           makes this work
-  ────   ────   ───────────     ─────────────────
-  A      @      203.0.113.7     example.com
-  A      www    203.0.113.7     www.example.com
-```
+<FigRows :head="['Type', 'Name', 'Value', 'makes this work']" :rows="[
+  [{ m: 'A' }, { m: '@' }, { m: '203.0.113.7' }, { m: 'example.com' }],
+  [{ m: 'A' }, { m: 'www' }, { m: '203.0.113.7' }, { m: 'www.example.com' }],
+]" />
 
 `@` means the bare domain. If your provider shows what the panel gave you as a
 name rather than four numbers, use a `CNAME` with that name as the value instead.
@@ -358,12 +334,12 @@ Check it from your own computer after a few minutes:
 Meanwhile the badges on the card fill in by themselves. There is nothing to
 reload and nothing to press:
 
-```
-  DNS ·  HTTP ·  HTTPS ·   not checked yet
-  DNS ✓  HTTP ✕  HTTPS ·   name arrives, nothing answers
-  DNS ✓  HTTP ✓  HTTPS ·   answering — ask for HTTPS now
-  DNS ✓  HTTP ✓  HTTPS ✓   done
-```
+<FigRows :rows="[
+  [{ t: 'DNS ·', tone: 'mute' }, { t: 'HTTP ·', tone: 'mute' }, { t: 'HTTPS ·', tone: 'mute' }, { t: 'not checked yet', tone: 'mute' }],
+  [{ t: 'DNS ✓', tone: 'ok' }, { t: 'HTTP ✕', tone: 'bad' }, { t: 'HTTPS ·', tone: 'mute' }, { t: 'the name arrives, nothing answers' }],
+  [{ t: 'DNS ✓', tone: 'ok' }, { t: 'HTTP ✓', tone: 'ok' }, { t: 'HTTPS ·', tone: 'mute' }, { t: 'answering — ask for HTTPS now' }],
+  [{ t: 'DNS ✓', tone: 'ok' }, { t: 'HTTP ✓', tone: 'ok' }, { t: 'HTTPS ✓', tone: 'ok' }, { t: 'done' }],
+]" />
 
 The machine checks a new name every few minutes until it resolves, then less
 often. **Test**, inside a name's settings, checks one right now.
@@ -378,32 +354,27 @@ ever answers. Only your host can arrange that, so ask them.
 
 This is what turns one container into several websites:
 
-```
-  example.com       ──▶  80     the web server you installed
-  www.example.com   ──▶  80     the same one
-  api.example.com   ──▶  3000   the app you wrote
-```
+<FigRows :arrow="0" :rows="[
+  [{ m: 'example.com' }, { t: '80', face: 'mono' }, { t: 'the web server you installed', tone: 'mute' }],
+  [{ m: 'www.example.com' }, { t: '80', face: 'mono' }, { t: 'the same one', tone: 'mute' }],
+  [{ m: 'api.example.com' }, { t: '3000', face: 'mono' }, { t: 'the app you wrote', tone: 'mute' }],
+]" />
 
 Press the gear on a name:
 
-```
-  ┌ api.example.com ──────────────────────────────────┐
-  │  🌐 DNS   Does the name resolve to this host?     │
-  │           [ Test ]                       DNS ✓    │
-  │  ───────────────────────────────────────────────  │
-  │  ◉ Enable HTTP    Container port [ 3000 ]         │
-  │           [ Test ]                      HTTP ✓    │
-  │  ───────────────────────────────────────────────  │
-  │  ◉ Enable HTTPS                        HTTPS ·    │
-  │    ( ) Your certificate · SNI passthrough         │
-  │        Backend HTTPS port [ 443 ]  [ Test ]       │
-  │    (•) Our certificate · issued for you           │
-  │        Forwards to HTTP port [ 3000 ]             │
-  │        [ Test backend ]  [ Request certificate ]  │
-  │  ───────────────────────────────────────────────  │
-  │  [ Save ]  [ Delete ]  [ Docs ]  [ Close ]        │
-  └───────────────────────────────────────────────────┘
-```
+<FigScreen title="api.example.com" :lines="[
+  { cols: [{ t: 'DNS', tone: 'strong' }, { t: 'Does the name resolve to this host?' }] },
+  { cols: ['', { b: 'Test' }, { t: 'DNS ✓', tone: 'ok' }] },
+  { cols: [{ r: 'Enable HTTP', on: true }, { t: 'Container port' }, { f: '3000' }] },
+  { cols: ['', { b: 'Test' }, { t: 'HTTP ✓', tone: 'ok' }] },
+  { cols: [{ r: 'Enable HTTPS', on: true }, { t: 'HTTPS ·', tone: 'mute' }] },
+  { cols: ['', { r: 'Your certificate · SNI passthrough' }] },
+  { cols: ['', { t: 'Backend HTTPS port' }, { f: '443' }] },
+  { cols: ['', { r: 'Our certificate · issued for you', on: true }] },
+  { cols: ['', { t: 'Forwards to HTTP port' }, { f: '3000' }] },
+  { pack: true, cols: [{ b: 'Test backend' }, { b: 'Request certificate' }] },
+  { pack: true, cols: [{ b: 'Save' }, { b: 'Delete' }, { b: 'Docs' }, { b: 'Close' }] },
+]" />
 
 **Container port** is the port inside your box that visitors to this name reach.
 Leave it at 80 for an ordinary website; set 3000 for something you wrote
@@ -412,20 +383,20 @@ or both.
 
 **Test** dials it from the machine and puts the answer beside the badge:
 
-```
-  HTTP ✓   Port open, HTTP responded
-  HTTP ✕   Port closed              ← your app, not the panel
-  HTTP ✕   Port open, no HTTP response
-  DNS  ✓   Resolves to this host
-  DNS  ✕   Resolves to 198.51.100.9 — not this host
-```
+<FigRows :rows="[
+  [{ t: 'HTTP ✓', tone: 'ok' }, { t: 'Port open, HTTP responded' }],
+  [{ t: 'HTTP ✕', tone: 'bad' }, { t: 'Port closed' }, { t: 'your app, not the panel', face: 'small', tone: 'mute' }],
+  [{ t: 'HTTP ✕', tone: 'bad' }, { t: 'Port open, no HTTP response' }],
+  [{ t: 'DNS ✓', tone: 'ok' }, { t: 'Resolves to this host' }],
+  [{ t: 'DNS ✕', tone: 'bad' }, { t: 'Resolves to 198.51.100.9 — not this host' }],
+]" />
 
 Saving also opens that port for you when it was not open already, and says so:
 
-```
-  Publishing container port 3000 restarted this
-  container's network for a moment.
-```
+<FigRows :rows="[
+  [{ t: '⚠', tone: 'bad' }, { t: 'Publishing container port 3000 restarted this' }],
+  [null, { t: 'container’s network for a moment.' }],
+]" />
 
 That is exactly what it sounds like: connections in flight drop, everything
 reconnects, and it does not happen again for that port.
@@ -440,11 +411,11 @@ Two ways, and you choose per name. Both are in the settings you just opened.
 
 Pick **Our certificate · issued for you** and press the button:
 
-```
-  [ Request certificate ]
-    HTTPS ⟳  Requesting a certificate…    under a minute
-    HTTPS ✓  Issued, renewing automatically   Managed
-```
+<FigRows :rows="[
+  [{ b: 'Request certificate' }, null],
+  [{ t: 'HTTPS ⟳', tone: 'accent' }, { t: 'Requesting a certificate…' }, { t: 'under a minute', face: 'small', tone: 'mute' }],
+  [{ t: 'HTTPS ✓', tone: 'ok' }, { t: 'Issued, renewing automatically' }, { t: 'Managed', face: 'small', tone: 'mute' }],
+]" />
 
 Nothing to install and nothing to remember afterwards — renewal happens on its
 own, well before it runs out. Note that the port box is **locked to your HTTP
@@ -454,19 +425,17 @@ HTTP box above.
 
 Two conditions, and the badge says which one is missing:
 
-```
-  ✕  Issuance failed. Check that the name resolves
-     to this host.                            → step 7
-  ✕  Port closed                              → step 8
-```
+<FigRows :rows="[
+  [{ t: '✕', tone: 'bad' }, { t: 'Issuance failed. Check that the name resolves to this host.' }, { t: '→ step 7', face: 'small', tone: 'mute' }],
+  [{ t: '✕', tone: 'bad' }, { t: 'Port closed' }, { t: '→ step 8', face: 'small', tone: 'mute' }],
+]" />
 
 Once a name has a certificate the button becomes **Reissue certificate**, and it
 goes quiet for a while after each one:
 
-```
-  [ Reissue in 47 min ]   the authority limits how often a
-                          name may be issued
-```
+<FigRows :rows="[
+  [{ b: 'Reissue in 47 min' }, { t: 'the authority limits how often a name may be issued', tone: 'mute' }],
+]" />
 
 You get **one request an hour and five a week for the same name**, because that
 is what the certificate authority allows, and a sixth press would lock your own
@@ -478,31 +447,32 @@ while you are setting up.
 Pick **Your certificate · SNI passthrough** and set **Backend HTTPS port** to the
 port inside your box that handles secure traffic:
 
-```
-  visitor ══encrypted══▶ machine ══untouched══▶ your box, 443
-```
+<FigRows :arrow="0" :rows="[
+  [{ t: 'a visitor', tone: 'strong' }, { t: 'encrypted, and the machine does not open it', tone: 'accent' }],
+  [null, { t: 'straight through to your box on port 443', face: 'small', tone: 'mute' }],
+]" />
 
 The machine passes the traffic through without opening it, so nothing outside
 your box has your certificate — and nothing outside your box will renew it
 either. Get one inside your container the usual way, keep it renewed, and the
 badge tells you what your box is actually serving:
 
-```
-  HTTPS ✓  Port open, certificate valid
-  HTTPS ✓  Certificate valid, 63 days left
-  HTTPS ✕  Certificate expired
-  HTTPS ✕  Port open, no TLS
-```
+<FigRows :rows="[
+  [{ t: 'HTTPS ✓', tone: 'ok' }, { t: 'Port open, certificate valid' }],
+  [{ t: 'HTTPS ✓', tone: 'ok' }, { t: 'Certificate valid, 63 days left' }],
+  [{ t: 'HTTPS ✕', tone: 'bad' }, { t: 'Certificate expired' }],
+  [{ t: 'HTTPS ✕', tone: 'bad' }, { t: 'Port open, no TLS' }],
+]" />
 
 There is nowhere to upload a certificate to the panel. In this mode it belongs
 inside your box, where the traffic is opened.
 
 **You should see**, either way:
 
-```
-  in a browser:   example.com   ──▶  🔒  your site
-  not proof:      curl http://example.com
-```
+<FigRows :arrow="0" :rows="[
+  [{ t: 'in a browser', tone: 'strong' }, { m: 'example.com' }, { t: '🔒 your site', tone: 'ok' }],
+  [{ t: 'not proof', tone: 'mute' }, { m: 'curl http://example.com' }, { t: 'plain, so it tests nothing', tone: 'mute' }],
+]" />
 
 Type the bare name into a browser. A browser tries the secure version first,
 which is the thing you are testing; a plain unencrypted request proves nothing
@@ -514,12 +484,12 @@ about it.
 
 Four places, in this order:
 
-```
-  1  the badge         HTTP ✕ connection refused on 3000
-  2  inside your box   systemctl status myapp
-  3  the install log   /var/log/app-setup/wordpress.log
-  4  the panel         your container's history, newest first
-```
+<FigRows :rows="[
+  [{ t: '1', tone: 'accent' }, 'the badge', { t: 'HTTP ✕ connection refused on 3000', tone: 'mute' }],
+  [{ t: '2', tone: 'accent' }, 'inside your box', { m: 'systemctl status myapp' }],
+  [{ t: '3', tone: 'accent' }, 'the install log', { m: '/var/log/app-setup/wordpress.log' }],
+  [{ t: '4', tone: 'accent' }, 'the panel', { t: 'your container’s history, newest first', tone: 'mute' }],
+]" />
 
 The badges name which half is broken — the name, the port, or the certificate —
 and cost nothing to read. Then, inside your box:
@@ -534,25 +504,25 @@ and cost nothing to read. Then, inside your box:
 Anything you installed from the menu also keeps its own log, and the path is
 printed on screen whenever something fails:
 
-```
-  WordPress failed — exit 1.
-  The log is /var/log/app-setup/wordpress.log
-```
+<FigRows :rows="[
+  [{ t: '✕', tone: 'bad' }, { t: 'WordPress failed — exit 1.' }],
+  [null, { m: 'The log is /var/log/app-setup/wordpress.log' }],
+]" />
 
 And the panel remembers what was done to your container, newest first:
 
-```
-  11 Aug 14:02  certificate issued for example.com
-  11 Aug 13:58  api.example.com: http port 80 → 3000
-  11 Aug 13:40  example.com added
-```
+<FigRows :rows="[
+  [{ t: '11 Aug 14:02', face: 'small', tone: 'mute' }, 'certificate issued for example.com'],
+  [{ t: '11 Aug 13:58', face: 'small', tone: 'mute' }, 'api.example.com: http port 80 → 3000'],
+  [{ t: '11 Aug 13:40', face: 'small', tone: 'mute' }, 'example.com added'],
+]" />
 
 Two failures leave no message anywhere, so recognise them by shape:
 
-```
-  a service that keeps dying, log says nothing  ──▶ memory
-  "no space left on device"                     ──▶ disk
-```
+<FigRows :arrow="0" :rows="[
+  ['a service that keeps dying, log says nothing', { t: 'memory', tone: 'bad' }],
+  [{ m: 'no space left on device' }, { t: 'disk', tone: 'bad' }],
+]" />
 
 | What you see | What it usually is |
 |---|---|
@@ -575,13 +545,13 @@ Two failures leave no message anywhere, so recognise them by shape:
 One folder survives a rebuild. Everything else is the system plus your changes to
 it, and a rebuild replaces exactly that:
 
-```
-  /etc/nginx/nginx.conf     gone
-  /var/www/site             gone
-  /root/notes.txt           gone
-  /data/mysql               kept
-  /data/uploads             kept
-```
+<FigRows :arrow="0" :rows="[
+  [{ m: '/etc/nginx/nginx.conf' }, { t: 'gone', tone: 'bad' }],
+  [{ m: '/var/www/site' }, { t: 'gone', tone: 'bad' }],
+  [{ m: '/root/notes.txt' }, { t: 'gone', tone: 'bad' }],
+  [{ m: '/data/mysql' }, { t: 'kept', tone: 'ok' }],
+  [{ m: '/data/uploads' }, { t: 'kept', tone: 'ok' }],
+]" />
 
 So put databases, uploads and anything you would be upset to lose under `/data`,
 and point your services at it.
@@ -589,11 +559,11 @@ and point your services at it.
 Three more things that stop your website without deleting anything, one line
 each:
 
-```
-  traffic used up      ─▶ paused; back next month
-  expiry date passes   ─▶ stopped; your host can renew
-  you press Rebuild    ─▶ fresh system, /data kept
-```
+<FigRows :arrow="0" :rows="[
+  ['traffic used up', 'paused; back next month'],
+  ['expiry date passes', 'stopped; your host can renew'],
+  ['you press Rebuild', 'a fresh system, /data kept'],
+]" />
 
 What each of those does in detail — and what your limits feel like when you reach
 them — is on [using your container](using-your-container.md).

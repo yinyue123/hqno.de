@@ -15,25 +15,21 @@ what you are selling.
 The machine calls the panel and keeps that connection open, so the panel needs no
 way in at all. Your tenants do:
 
-```
-  from the internet        to this machine
-  ─────────────────       ───────────────────────
-  port 80, 443     ───▶   your tenants' websites
-  port 22          ───▶   your tenants' logins
-  nothing at all   ───▶   the panel: it never
-                          connects in. The machine
-                          calls out and stays on.
-```
+<FigRows :arrow="0" :head="['from the internet', 'to this machine']" :rows="[
+  [{ m: 'port 80, 443' }, { t: 'your tenants\u2019 websites' }],
+  [{ m: 'port 22' }, { t: 'your tenants\u2019 logins' }],
+  [{ t: 'nothing at all', tone: 'mute' }, { t: 'the panel never connects in \u2014 it calls out', tone: 'mute' }],
+]" />
 
 Behind a home router that means three forwarded ports. On a rented server with a
 public address it usually means nothing at all.
 
 Otherwise the list is short:
 
-```
-  a reasonably current Linux      administrator access on it
-  an outbound connection          no fixed address needed
-```
+<FigRows :rows="[
+  ['a reasonably current Linux', { t: 'administrator access on it', tone: 'mute' }],
+  ['an outbound connection', { t: 'no fixed address needed', tone: 'mute' }],
+]" />
 
 The supporting software a container needs is installed for you, every time the
 machine starts, and the machine's page in the panel says how that went.
@@ -46,10 +42,10 @@ There is no separate host account and no application to make. Any account can
 attach a machine, and the same login can hold somebody else's container at the
 same time:
 
-```
-  your one account   ─▶ machines you run
-                     ─▶ containers other people gave you
-```
+<FigRows :arrow="0" :rows="[
+  [{ t: 'your one account', tone: 'strong' }, 'machines you run'],
+  [null, 'containers other people gave you'],
+]" />
 
 So the whole of this step is: sign in, and open **Machines**.
 
@@ -59,23 +55,19 @@ So the whole of this step is: sign in, and open **Machines**.
 
 **Machines → Add machine**, and it is two steps.
 
-```
-  ┌ Add a machine · step 1 of 2 ───────────────────────┐
-  │  Run this on the machine, as root:                 │
-  │    curl -fsSL http://panel.example.com/agent | sh  │
-  │                            [ I've installed it ]   │
-  └────────────────────────────────────────────────────┘
-```
+<FigScreen title="Add a machine · step 1 of 2" :lines="[
+  [{ t: 'Run this on the machine, as root:', tone: 'mute' }],
+  [{ m: 'curl -fsSL http://panel.example.com/agent | sh' }],
+  { align: 'right', cols: [{ b: 'I\u2019ve installed it' }] },
+]" />
 
-```
-  ┌ Add a machine · step 2 of 2 ────────────────────────┐
-  │  Then paste this into the same machine:             │
-  │    hqnode enroll --panel http://panel.example.com   │
-  │                  --code A1B2-C3D4                   │
-  │  single use · expires in 15 minutes                 │
-  │                          waiting for the agent ⟳    │
-  └─────────────────────────────────────────────────────┘
-```
+<FigScreen title="Add a machine · step 2 of 2" :lines="[
+  [{ t: 'Then paste this into the same machine:', tone: 'mute' }],
+  [{ m: 'hqnode enroll --panel http://panel.example.com' }],
+  [{ m: '              --code A1B2-C3D4' }],
+  [{ t: 'single use · expires in 15 minutes', face: 'small', tone: 'mute' }],
+  { align: 'right', cols: [{ t: 'waiting for the agent ⟳', face: 'small', tone: 'accent' }] },
+]" />
 
 The page fills in your panel's own address in both lines, so you copy rather than
 type. If your panel can be reached at more than one address it asks which one the
@@ -85,20 +77,17 @@ necessarily the machine's.
 **You should see** it appear on its own, within a few seconds of the second
 command:
 
-```
-  ┌ Machines ────────────────────────────────────────┐
-  │  hk-1   online    8 cores · 32 GB · 1.8 TB       │
-  │         0 containers · CPU 3% · memory 11%       │
-  └──────────────────────────────────────────────────┘
-```
+<FigScreen title="Machines" :lines="[
+  [{ t: 'hk-1', tone: 'strong' }, { t: 'online', tone: 'ok' }, '8 cores · 32 GB · 1.8 TB'],
+  ['', '', { t: '0 containers · CPU 3% · memory 11%', face: 'small', tone: 'mute' }],
+]" />
 
 Two things to know now rather than later:
 
-```
-  the address tenants connect to  ─▶ chosen as it attaches
-  detaching it later              ─▶ panel forgets; the
-                                     machine keeps running
-```
+<FigRows :arrow="0" :rows="[
+  ['the address tenants connect to', 'chosen as it attaches'],
+  ['detaching it later', 'the panel forgets it; the machine keeps running'],
+]" />
 
 ---
 
@@ -106,37 +95,33 @@ Two things to know now rather than later:
 
 On the machine's page:
 
-```
-  ┌ Host policy ─────────────────────────────────────┐
-  │  Default vCPU       [ 50 % ] of one core         │
-  │  Default memory     [ 1024 MB ]                  │
-  │  Default swap       [ 512 MB ]                   │
-  │  Default disk       [ 20480 MB ]                 │
-  │  Default traffic / month  [ 500 GB ]             │
-  │  Traffic reset day  [ 1 ]                        │
-  │  [x] Let users bring their own images            │
-  │                     [ Save host settings ]       │
-  └──────────────────────────────────────────────────┘
-```
+<FigScreen title="Host policy" :lines="[
+  ['Default vCPU', { f: '50 %', note: 'of one core' }],
+  ['Default memory', { f: '1024 MB' }],
+  ['Default swap', { f: '512 MB' }],
+  ['Default disk', { f: '20480 MB' }],
+  ['Default traffic / month', { f: '500 GB' }],
+  ['Traffic reset day', { f: '1' }],
+  [{ k: 'Let users bring their own images', on: true }],
+  { align: 'right', cols: [{ b: 'Save host settings' }] },
+]" />
 
-```
-  the defaults   ─▶ fill in the new-container form, and
-                    never touch a container already given out
-  reset day      ─▶ the day of the month every container
-                    here starts counting traffic again
-  own images     ─▶ a tenant may rebuild from an image of
-                    their own; it costs them a download,
-                    against their own traffic, every time
-```
+<FigRows :arrow="0" :rows="[
+  [{ t: 'the defaults', tone: 'strong' }, 'fill in the new-container form, and never'],
+  [null, { t: 'touch a container already given out', tone: 'mute' }],
+  [{ t: 'reset day', tone: 'strong' }, 'the day of the month every container here'],
+  [null, { t: 'starts counting traffic again', tone: 'mute' }],
+  [{ t: 'own images', tone: 'strong' }, 'a tenant may rebuild from an image of their own;'],
+  [null, { t: 'it costs them a download, every time', tone: 'mute' }],
+]" />
 
 ### The two numbers that are the whole product
 
-```
-  vCPU     sold ½ core ─▶ faster while the machine is quiet,
-                          back to ½ when it is busy  (a floor)
-
-  memory   sold 1 GB   ─▶ ask for more, get killed   (a wall)
-```
+<FigRows :arrow="0" :rows="[
+  [{ t: 'vCPU', tone: 'strong' }, { t: 'sold ½ core' }, { t: 'faster while the machine is quiet,', tone: 'mute' }],
+  [null, null, { t: 'back to ½ when it is busy — a floor', tone: 'mute' }],
+  [{ t: 'memory', tone: 'strong' }, { t: 'sold 1 GB' }, { t: 'ask for more, get killed — a wall', tone: 'mute' }],
+]" />
 
 Read that before you price anything. A processor share is a guarantee at the
 bottom, not a ceiling at the top — so the same container benchmarks twice as fast
@@ -148,20 +133,20 @@ You do not have to guess how many containers fit. The machine refuses one it has
 no room for and says so in a sentence, and its page tells you which way the wind
 is blowing:
 
-```
-  Tenants are queueing — this host has sold what it has.
-  Comfortable: there is still headroom to sell.
-```
+<FigRows :rows="[
+  [{ t: '●', tone: 'bad' }, { t: 'Tenants are queueing — this host has sold what it has.' }],
+  [{ t: '●', tone: 'ok' }, { t: 'Comfortable: there is still headroom to sell.' }],
+]" />
 
 ### The rest of the page, in one line each
 
-```
-  Ports      move the web or login doors somewhere else
-  Storage    where containers keep their files
-  Advanced   what is missing, and a button that installs it
-  Images     keep a system ready so creating takes seconds
-             and downloads nothing
-```
+<FigRows :arrow="0" :rows="[
+  [{ t: 'Ports', tone: 'strong' }, 'move the web or login doors somewhere else'],
+  [{ t: 'Storage', tone: 'strong' }, 'where containers keep their files'],
+  [{ t: 'Advanced', tone: 'strong' }, 'what is missing, and a button that installs it'],
+  [{ t: 'Images', tone: 'strong' }, 'keep a system ready, so creating takes seconds'],
+  [null, { t: 'and downloads nothing', tone: 'mute' }],
+]" />
 
 One thing worth turning on early is in **Advanced**: without it, a container's
 `free` and `top` show the whole machine's memory rather than its own. Limits are
@@ -172,42 +157,37 @@ tenants read those numbers and file support requests about them.
 
 ## 5. Create a container
 
-```
-  ┌ New container ───────────────────────────────────┐
-  │  Where           (•) hk-1                        │
-  │  Who it is for   ( ) Mine   (•) A user's [ ana ] │
-  │  Container name  [ wp-1 ]                        │
-  │  Shell login     [ u7k2m9p ] [ ••••••••• ]       │
-  │  Image           [ Debian 13 ▾ ] from this host  │
-  │  Limits          1 core · 2 GB · 20 GB · 500 GB  │
-  │  Expiry          never — or pick a date          │
-  │  Domains         (optional)                      │
-  │                                 [ Create it ]    │
-  └──────────────────────────────────────────────────┘
-```
+<FigScreen title="New container" :lines="[
+  ['Where', { r: 'hk-1', on: true }],
+  { cols: ['Who it is for', { r: 'Mine' }, { r: 'A user\u2019s', on: true }, { f: 'ana' }] },
+  ['Container name', { f: 'wp-1' }],
+  { cols: ['Shell login', { f: 'u7k2m9p' }, { f: '•••••••••' }] },
+  ['Image', { f: 'Alpine 3.24 ▾', note: 'from this host' }],
+  ['Limits', { t: '1 core · 2 GB · 20 GB · 500 GB' }],
+  ['Expiry', { t: 'never — or pick a date', tone: 'mute' }],
+  ['Domains', { t: '(optional)', tone: 'mute' }],
+  { align: 'right', cols: [{ b: 'Create it' }] },
+]" />
 
 **Who it is for** is the choice that decides what happens next:
 
-```
-  mine       ─▶ nobody attached. You get the login, and can
-                hand it over whenever you like.
-  a user's   ─▶ handed over as it is created. They change
-                the login on their own page; you never see
-                it again.
-```
+<FigRows :arrow="0" :rows="[
+  [{ t: 'mine', tone: 'strong' }, 'nobody attached. You get the login, and can'],
+  [null, { t: 'hand it over whenever you like', tone: 'mute' }],
+  [{ t: 'a user\u2019s', tone: 'strong' }, 'handed over as it is created. They change the'],
+  [null, { t: 'login on their own page; you never see it again', tone: 'mute' }],
+]" />
 
 Pick an image the machine already has and the create downloads nothing and takes
 seconds — one copy on the machine is shared by every container built from it.
 
 **You should see:**
 
-```
-  ┌ wp-1 is running ─────────────────────────────────┐
-  │  ssh u7k2m9p@hk-1.example.com                    │
-  │  password  8Kd2-vQx7-mR         shown once       │
-  │  ana holds this one                              │
-  └──────────────────────────────────────────────────┘
-```
+<FigScreen title="wp-1 is running" :lines="[
+  [{ m: 'ssh u7k2m9p@hk-1.example.com' }],
+  { cols: ['password', { t: '8Kd2-vQx7-mR', face: 'mono' }, { t: 'shown once', face: 'small', tone: 'bad' }] },
+  [{ t: 'ana holds this one', tone: 'mute' }],
+]" />
 
 Shown once means shown once: the panel does not keep it. If it is lost, reset it
 from the container's page.
@@ -216,23 +196,19 @@ from the container's page.
 
 ## 6. Hand it over
 
-```
-  mine      ─▶ you hold the login ─▶ Give it away ─┐
-  a user's  ─▶ you type their username ────────────┤
-                                                   ▼
-                                 theirs — and the login is
-                                 rewritten, so yours stops
-```
+<FigRows :arrow="0" :rows="[
+  [{ t: 'mine', tone: 'strong' }, 'you hold the login, until you press Give it away'],
+  [{ t: 'a user\u2019s', tone: 'strong' }, 'you type their username, and it is theirs at once'],
+  [null, { t: 'either way the login is rewritten, so your copy stops', face: 'small', tone: 'mute' }],
+]" />
 
 **Give it away** produces a link and a code. Send either:
 
-```
-  ┌ Give it away ────────────────────────────────────┐
-  │  https://hqno.de/redeem?code=HQ-7F3K-2M9P        │
-  │  or the code alone:  HQ-7F3K-2M9P                │
-  │  expires in 14 days                              │
-  └──────────────────────────────────────────────────┘
-```
+<FigScreen title="Give it away" :lines="[
+  [{ m: 'https://hqno.de/redeem?code=HQ-7F3K-2M9P' }],
+  { cols: ['or the code alone:', { m: 'HQ-7F3K-2M9P' }] },
+  [{ t: 'expires in 14 days', face: 'small', tone: 'mute' }],
+]" />
 
 Nothing changes until they claim it, and you can issue a fresh code from the
 container's page whenever one runs out. The moment they do claim it, the shell
@@ -245,16 +221,15 @@ share code leaves them.
 
 ## 7. Living with it
 
-```
-  change limits or expiry  ─▶ applies to the running box
-  pause                    ─▶ stopped, kept, reversible
-  expiry date passes       ─▶ stopped; nothing deleted, and
-                              moving the date brings it back
-  traffic 80% / 100%       ─▶ warning / paused
-  delete a container       ─▶ destroyed; space returned
-  detach a machine         ─▶ panel forgets it; containers
-                              keep running on the machine
-```
+<FigRows :arrow="0" :rows="[
+  ['change limits or expiry', 'applies to the running box'],
+  ['pause', 'stopped, kept, reversible'],
+  ['expiry date passes', 'stopped; nothing deleted, and moving'],
+  [null, { t: 'the date brings it back', tone: 'mute' }],
+  ['traffic 80% / 100%', 'warning / paused'],
+  ['delete a container', 'destroyed; space returned'],
+  ['detach a machine', 'the panel forgets it; containers keep running'],
+]" />
 
 Because those last two differ: deleting the containers first is the tidy way to
 retire a machine. Detaching alone leaves them running on hardware the panel no

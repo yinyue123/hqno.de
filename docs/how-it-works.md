@@ -7,10 +7,10 @@ thing.
 
 **Or skip it — take whichever of these you are:**
 
-```
-  somebody gave you a code  ──▶  Quick start
-  you have a machine        ──▶  Running a machine of your own
-```
+<FigRows :arrow="0" :rows="[
+  ['somebody gave you a code', 'Quick start'],
+  ['you have a machine', 'Running a machine of your own'],
+]" />
 
 - [**Quick start**](quick-start.md) — you were sent a share code. Claim it, log
   in, install a website, point your domain at it, get the padlock. Twelve steps,
@@ -268,13 +268,11 @@ The rest of this page is the same thing again, drawn as what it actually is.
 
 ## The whole thing on one page
 
-```
-  you ──sign in──▶ panel ──"do this"──▶ the machine
-                                          │
-   you, over ssh ─────────────────▶  ├─── your box
-                                     ├─── bob's box
-   your visitors ─────────────────▶  └─── carol's box
-```
+<FigRows :arrow="0" :rows="[
+  [{ t: 'you', tone: 'strong' }, { t: 'the panel' }, { t: '\u201cdo this\u201d → the machine', tone: 'mute' }],
+  [{ t: 'you, over ssh', tone: 'strong' }, { t: 'your box', tone: 'accent' }, { t: 'on that machine', tone: 'mute' }],
+  [{ t: 'your visitors', tone: 'strong' }, { t: 'your box', tone: 'accent' }, { t: 'bob\u2019s and carol\u2019s are there too', tone: 'mute' }],
+]" />
 
 Three words this site uses for the rest of your life here: the **panel** is the
 website you sign in to, the **machine** is the computer your box runs on, and the
@@ -285,15 +283,12 @@ yours.
 
 ## One machine, cut into pieces
 
-```
-        one machine, one Linux underneath
-  ┌───────────┬───────────┬───────────┬──────────┐
-  │  yours    │  bob's    │  carol's  │   ...    │
-  │  1 core   │  ½ core   │  2 cores  │          │
-  │  2 GB     │  1 GB     │  4 GB     │          │
-  │  20 GB    │  10 GB    │  80 GB    │          │
-  └───────────┴───────────┴───────────┴──────────┘
-```
+<FigScreen title="one machine, one Linux underneath" :lines="[
+  [{ t: 'yours', tone: 'accent' }, { t: 'bob\u2019s', tone: 'mute' }, { t: 'carol\u2019s', tone: 'mute' }, { t: '…', tone: 'mute' }],
+  ['1 core', '½ core', '2 cores', ''],
+  ['2 GB', '1 GB', '4 GB', ''],
+  ['20 GB', '10 GB', '80 GB', ''],
+]" />
 
 Your piece is called a **container**, and it behaves like a small computer of its
 own: its own files, its own installed software, its own services. You are its
@@ -308,20 +303,20 @@ allowance for the month. What happens when you reach one of them is on
 
 ## Your login is yours because of the username
 
-```
-  ssh alice@203.0.113.7  ─────▶  your box
-  ssh bob@203.0.113.7    ─────▶  bob's box
-      └── the only difference
-```
+<FigRows :arrow="0" :rows="[
+  [{ m: 'ssh alice@203.0.113.7', hi: 'alice' }, 'your box'],
+  [{ m: 'ssh bob@203.0.113.7', hi: 'bob' }, 'bob\u2019s box'],
+  [{ t: 'the only difference is that one word', face: 'small', tone: 'mute' }, null],
+]" />
 
 Same address, same door, different room. The name in front of the `@` is the
 whole of what decides which room you get.
 
-```
-  change the password in the panel  ─▶ changes how you get in
-  change it inside your box         ─▶ changes nothing
-  rebuild your box from scratch     ─▶ your login still works
-```
+<FigRows :arrow="0" :rows="[
+  ['change the password in the panel', 'changes how you get in'],
+  ['change it inside your box', { t: 'changes nothing', tone: 'mute' }],
+  ['rebuild your box from scratch', 'your login still works'],
+]" />
 
 The password is checked at the machine's front door rather than inside your box.
 That is why the panel is where you change it, and why wiping your box does not
@@ -331,13 +326,11 @@ cost you the way in.
 
 ## Your website is yours because of the name
 
-```
-  a visitor types          and reaches
-  ────────────────────     ──────────────────────
-  shop.example.com   ───▶  your box,  port 80
-  api.example.com    ───▶  your box,  port 3000
-  blog.bob.dev       ───▶  bob's box, port 80
-```
+<FigRows :arrow="0" :head="['a visitor types', 'and reaches']" :rows="[
+  [{ m: 'shop.example.com' }, 'your box, port 80'],
+  [{ m: 'api.example.com' }, 'your box, port 3000'],
+  [{ m: 'blog.bob.dev' }, 'bob\u2019s box, port 80'],
+]" />
 
 One machine can serve any number of websites, and **the name the visitor typed**
 is what decides which box answers. Two things follow:
@@ -360,38 +353,29 @@ names their particular Linux uses this year. So there is a menu. Type one word:
   root@wp-1:~# app-setup
 ```
 
-```
-  ┌ Suites ─ Web servers ─ Databases ─ Dev ─ System ─┐
-  │                                                  │
-  │ ▸ LNMP           web server + database + PHP     │
-  │   WordPress      the blog four sites in ten use  │
-  │   MariaDB        a database on its own           │
-  │   Node.js        ...                             │
-  │                                                  │
-  │ Disk 600M RAM 768M                               │
-  │ ↑↓←→ move    Enter open    ↑ at the top is Back  │
-  └──────────────────────────────────────────────────┘
-```
+<FigScreen :tabs="['Suites', 'Web servers', 'Databases', 'Dev', 'System']" :lines="[
+  [{ t: '▸', tone: 'accent' }, { t: 'LNMP', tone: 'accent' }, { t: 'web server + database + PHP', tone: 'mute' }],
+  ['', 'WordPress', { t: 'the blog four sites in ten use', tone: 'mute' }],
+  ['', 'MariaDB', { t: 'a database on its own', tone: 'mute' }],
+  ['', 'Node.js', { t: '…', tone: 'mute' }],
+  [{ t: 'Disk 600M   RAM 768M', face: 'small', tone: 'mute' }],
+  [{ t: '↑↓←→ move     Enter open     ↑ at the top is Back', face: 'small', tone: 'mute' }],
+]" />
 
 Enter opens the one under the cursor, and its own page is where things happen:
 
-```
-  ┌ WordPress ───────────────────────────────────────┐
-  │ [Install] [Start] [Start at boot] [Settings]     │
-  │ [How to use it] [Log]                            │
-  │                                                  │
-  │ The blog and site software four sites in ten     │
-  │ run on. Installs its own database.               │
-  │                                                  │
-  │ Disk 800M  RAM 768M  Port 80                     │
-  └──────────────────────────────────────────────────┘
-```
+<FigScreen title="WordPress" :lines="[
+  { pack: true, cols: [{ b: 'Install' }, { b: 'Start' }, { b: 'Start at boot' }, { b: 'Settings' }] },
+  { pack: true, cols: [{ b: 'How to use it' }, { b: 'Log' }] },
+  [{ t: 'The blog and site software four sites in ten run on. Installs its own database.', tone: 'mute' }],
+  [{ t: 'Disk 800M   RAM 768M   Port 80', face: 'small', tone: 'mute' }],
+]" />
 
-```
-  ordinary software, ordinary places ─▶ tutorials still fit
-  every entry says its size          ─▶ red if it won't fit
-  Docs names every file it wrote     ─▶ nothing to hunt for
-```
+<FigRows :arrow="0" :rows="[
+  ['ordinary software, ordinary places', 'tutorials still fit'],
+  ['every entry says its size', 'red if it will not fit'],
+  ['Docs names every file it wrote', 'nothing to hunt for'],
+]" />
 
 It installs the same software the same way a person following a blog post would,
 so the next set of instructions you read still applies, and updates keep arriving
@@ -403,16 +387,14 @@ the ordinary way. Anything you would rather do by hand, you still can.
 
 ## Two ways to get the padlock
 
-```
-  your own certificate
-    visitor ══encrypted═════════════════▶ your box
-             passed through unread; you get it
-             and you renew it
-
-  a certificate the host looks after
-    visitor ══encrypted══▶ machine ──plain──▶ your box
-             the machine holds it and renews it
-```
+<FigRows :arrow="0" :rows="[
+  [{ t: 'your own certificate', tone: 'strong' }, null, null],
+  [{ t: 'a visitor', face: 'small' }, { t: 'encrypted the whole way to your box', tone: 'accent' }],
+  [null, { t: 'passed through unread; you get it and renew it', face: 'small', tone: 'mute' }],
+  [{ t: 'a certificate the host looks after', tone: 'strong' }, null, null],
+  [{ t: 'a visitor', face: 'small' }, { t: 'encrypted to the machine, plain to your box' }],
+  [null, { t: 'the machine opens it, holds it and renews it', face: 'small', tone: 'mute' }],
+]" />
 
 A **certificate** is what puts the padlock in the address bar. You have two ways
 to have one, and you pick per name:
@@ -430,11 +412,10 @@ the quick start sorts out the domain before it asks for a certificate.
 
 ## The panel is not in the way
 
-```
-  you ─────▶ panel ──"restart it please"──▶ the machine
-
-  a visitor ────────────────────────────▶ your website
-```
+<FigRows :arrow="0" :rows="[
+  [{ t: 'you', tone: 'strong' }, { t: 'the panel' }, { t: '\u201crestart it please\u201d → the machine', tone: 'mute' }],
+  [{ t: 'a visitor', tone: 'strong' }, { t: 'your website', tone: 'accent' }, { t: 'the panel is not on this line', tone: 'mute' }],
+]" />
 
 The panel is not on the second line. When it is down your website keeps
 answering, your login keeps working, and everything you have installed carries on

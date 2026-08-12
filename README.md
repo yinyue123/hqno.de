@@ -56,17 +56,39 @@ rest, labelled `（英文）`. Two things to know when adding a language:
   becomes a space, and between two Chinese characters that space is visible on
   the page. After a `，` or a `。` nobody can see it.
 
-Figures are plain text in a code block, for the reasons in
-[`plan.md`](plan.md) §0 — no plugin, identical here and on GitHub, cannot break
-the build, will not rot the way a screenshot does. The comparison that opens
-*how this works* is the one exception and is drawn in inline SVG, because its
-whole point is that the two halves of each picture are the same shape. If you
-add one of those, `plan.md` §10 is the argument and the rules: colours come from
-the theme variables in `docs/.vitepress/theme/custom.css` so a figure follows
-the dark-mode switch, a `viewBox` and no width so it scales on a phone — and
-nothing a reader needs in a diff goes in one, because GitHub renders inline SVG
-as nothing at all. A boxed Chinese label *is* fine there: SVG places its text
-rather than counting columns.
+**Figures are drawn; transcripts are not.** The rule, and it decides every
+case: anything a reader would *copy* — what you type and what the machine typed
+back — stays a fenced code block, selectable and with its copy button. Anything
+that is a picture of a screen or a diagram is built by the components in
+[`docs/.vitepress/theme/figures/`](docs/.vitepress/theme/figures/), which take
+content and work out the geometry:
+
+```
+<FigRows :arrow="0" :rows="[
+  ['change the password in the panel', 'changes how you get in'],
+  ['change it inside your box', { t: 'changes nothing', tone: 'mute' }],
+]" />
+
+<FigScreen title="Redeem a share code" :lines="[
+  ['Share code', { f: 'HQ-7F3K-2M9P' }],
+  { align: 'right', cols: [{ b: 'Claim it' }] },
+]" />
+```
+
+Both languages use the same components with their own strings, so a figure
+cannot come out a different shape in one of them. `cells.ts` is the vocabulary —
+text, a field, a button, a radio, a checkbox, a progress bar — and colours are
+theme variables, so figures follow the dark-mode switch.
+
+Two things to know before adding one. **SVG has no text layout**, so a box round
+a label is sized by `measure.ts` guessing the width; it is deliberately 2% over
+and must never be under, because under means a clipped word. And **GitHub strips
+inline SVG**, so these render as nothing when the file is read there — which is
+the other half of why transcripts stay code blocks.
+
+After adding a figure, check it: build, then measure every `<text>` against its
+own `viewBox` in a real browser. `plan.md` §11 has the method. It caught
+thirteen clipped labels that three visual reviews had walked straight past.
 
 ```sh
 npm install
