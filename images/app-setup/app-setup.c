@@ -4578,7 +4578,7 @@ static int passwd_main(int argc, char **argv)
 		return 1;
 	}
 
-	printf("passwd: password updated successfully\n");
+	printf("hqnode passwd: password updated successfully\n");
 	return 0;
 }
 
