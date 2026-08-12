@@ -1,8 +1,9 @@
 # Running a machine of your own
 
-You have a spare box, or a rented server, and you want to cut it into containers
-and hand them out. This page takes you from that to one container in a friend's
-hands.
+You rent a server, cut it into containers, and hand them out — that is what this
+page is for, and it takes you from an empty machine to one container in somebody
+else's hands. Your own hardware works exactly the same way; a rented one is the
+usual case, so it is the one this page assumes.
 
 The other side of this — what your tenants see and do — is
 [quick start](quick-start.md). Reading it once is the fastest way to understand
@@ -21,8 +22,12 @@ way in at all. Your tenants do:
   [{ t: 'nothing at all', tone: 'mute' }, { t: 'the panel never connects in \u2014 it calls out', tone: 'mute' }],
 ]" />
 
-Behind a home router that means three forwarded ports. On a rented server with a
-public address it usually means nothing at all.
+A rented server already has its own public address, so there is nothing to
+forward and no router of yours in the way. What there usually *is* is a firewall
+in front of it — a security group, network rules, whatever your provider calls
+it — and a fresh one commonly allows nothing but port 22. Open 80 and 443 there
+before you sell anything, or your tenants' websites resolve perfectly and never
+answer.
 
 Otherwise the list is short:
 
@@ -248,8 +253,8 @@ than by checkout; the Plans page says how.
 | The machine says offline | It cannot reach the panel. Check the machine is on and its outbound connection works; nothing on it needs an open port. |
 | A create is refused | The machine has no room in memory or processor for that size, and says which. Sell smaller, or wait for load to drop. |
 | A create from the market fails, and creating it again says the name is already used | The machine was still downloading the system when the panel stopped waiting — it finished building the container anyway, and the panel never recorded it. Cache the system first from **Images**, then create from *this host*, which downloads nothing. Clear the stray one on the machine itself with `hqnode rm <name>`. |
-| A tenant cannot log in | Their container is stopped, out of time, or paused for traffic — or port 22 is not reaching the machine. |
-| A tenant's name resolves but nothing answers | Either nothing is listening inside their container, or web traffic is not being forwarded to the machine. |
+| A tenant cannot log in | Their container is stopped, out of time, or paused for traffic — or your provider's firewall is not letting port 22 through. |
+| A tenant's name resolves but nothing answers | Either nothing is listening inside their container, or your provider's firewall is not letting ports 80 and 443 through to the machine. |
 | Certificates fail for every tenant | The machine's secure door has been moved off its usual port. Requests are refused before the certificate issuer is ever contacted. |
 | Containers show the machine's memory, not their own | The option in **Advanced** is not installed. Containers already running keep the old numbers until they restart. |
 | Software missing right after attaching | It installs on its own at every start; the machine's page says what failed and what to run by hand if it cannot. |

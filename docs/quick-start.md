@@ -344,9 +344,10 @@ reload and nothing to press:
 The machine checks a new name every few minutes until it resolves, then less
 often. **Test**, inside a name's settings, checks one right now.
 
-**One trap.** If the machine sits behind a home or office router, that router has
-to send web traffic to it. Otherwise your name resolves perfectly and nothing
-ever answers. Only your host can arrange that, so ask them.
+**One trap.** The machine has to be allowed to accept web traffic in the first
+place. Most rented servers sit behind a firewall their provider runs, and a
+fresh one often allows nothing but the login port — so your name resolves
+perfectly and nothing ever answers. Only your host can open it, so ask them.
 
 ---
 
@@ -529,7 +530,7 @@ Two failures leave no message anywhere, so recognise them by shape:
 | Login refused | The container is stopped, out of time, or paused for traffic. The panel says which. |
 | Asked for the password again and again | Wrong password. Set a new one (step 2) — nobody can show you the old one. |
 | The browser cannot find the name | DNS. Check the records in step 7 from your own computer. |
-| The name is found but nothing answers | Either nothing is listening on that port inside your box (step 8), or the machine's router is not forwarding web traffic (step 7). |
+| The name is found but nothing answers | Either nothing is listening on that port inside your box (step 8), or the machine is not being allowed to receive web traffic at all — your host's firewall (step 7). |
 | The browser shows somebody else's site | The name is not pointed at this machine, or you added it in the panel but never changed the DNS. |
 | A certificate warning | The name does not match the certificate, or it expired. In *Managed* mode, request it again; in your own mode, renew it inside your box. |
 | The certificate request is refused with a date | You have used this week's five for that name. Wait for the date given. |

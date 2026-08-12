@@ -15,8 +15,9 @@ thing.
 - [**Quick start**](quick-start.md) — you were sent a share code. Claim it, log
   in, install a website, point your domain at it, get the padlock. Twelve steps,
   each with a picture.
-- [**Running a machine of your own**](running-a-machine.md) — you have hardware,
-  or a rented server, and you want to cut it into containers and hand them out.
+- [**Running a machine of your own**](running-a-machine.md) — you rent a server,
+  or have hardware of your own, and you want to cut it into containers and hand
+  them out.
 
 ---
 

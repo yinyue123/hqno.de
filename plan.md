@@ -501,16 +501,22 @@ no space left; the panel says offline; everything slow.
 ### 4.1 What has to be reachable
 
 ```
-  your router                    the panel needs no way in:
-    80, 443 ──▶ this machine     the machine calls out
-    22      ──▶ this machine     and stays connected
-       │                        │
-       │            └───── logins
-       └── your tenants' websites
+  from the internet    to this machine
+    80, 443     ──▶    your tenants' websites
+    22          ──▶    your tenants' logins
+    nothing     ──▶    the panel: it never connects in
 ```
 
 Otherwise: a reasonably current Linux, administrator access, outbound network.
 The supporting software installs itself.
+
+**Corrected since.** This was drafted around somebody with a box at home, so it
+talked about forwarding three ports through their router. That is the wrong
+reader. The one this page is for **rents a cloud server and resells slices of
+it** — the machine already has a public address and there is no router of theirs
+anywhere. What actually blocks them is the provider's own firewall, which on a
+fresh instance commonly allows nothing but 22. Both pages say that now, and the
+two symptom → fix tables that blamed a router say *firewall* instead.
 
 ### 4.2 Attach the machine
 
