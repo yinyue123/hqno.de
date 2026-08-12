@@ -1,8 +1,9 @@
 # Plan: three help pages, drawn step by step
 
 **Status: built.** The pages are written and published, in English and 中文 —
-see §8 for what changed on the way. This file stays because the brief below is
-what the pages are held to, and the next page written has to meet it too.
+see §8 for what changed on the way, and §10 for the comparison that now opens
+Part 1. This file stays because the brief below is what the pages are held to,
+and the next page written has to meet it too.
 
 Every figure below was the **draft of what went on the page**. One worked example
 runs through all of it: an account called `ana`, a container called `wp-1` on a
@@ -704,3 +705,100 @@ whoever adds the next language.
 3. **Part 3's home** — here, or with the host-side notes in the product repo?
    Recommendation: here.
 4. **Addresses** — `/how-it-works`, `/quick-start`, `/running-a-machine`.
+
+---
+
+## 10. The comparison that opens Part 1
+
+**Status: built**, in both languages, as the first section of `how-it-works`.
+
+### The brief, as it was given
+
+> 这个，你去做个类比啊。比如一个小青年，来到大城市。第一件事情是租个房子，那租一个
+> 三室一厅太浪费了啊。因为没那么多人住，他白天上班，晚上只是回来睡个觉。那二房东就
+> 把一个三室一厅隔开，卖给多个租户，大家共用客厅厨房洗手间。但是每个人独享自己的卧
+> 室对吧。另外我可能只租一年或者几个月，我不可能买自己的床，家具啥的，我就用二房东
+> 准备好的。那你做个类比，我是一个开发者，我只是部署一个小的应用，用不了一个机器那
+> 么多资源，可能只需要一个网站或者应用，动辄几核几个 G 内存几十 G 的磁盘几十 T 的流
+> 量还有独立的 IP 对我来说太贵了，那么我可以把一个机器分割开来啊。每个租户只用零点
+> 几个核，几百兆内存，几百兆甚至一 G 的磁盘，几百 G 流量就够了。每个租户有自己的钥
+> 匙 ssh 进入自己的容器里，共用一个 IP，一个操作系统内核。然后根据域名来区分开来不
+> 同的租户，不同的租户绑定自己的域名。然后对于开发者来说，学习那些 linux 命令太复杂
+> 了，那么我们预制了安装面板，用户输入命令可以点一点完成安装和配置。只需要把自己的
+> 代码拷贝上去运行就好了啊。对于证书来说，他们可以自己申请证书，我们也可以帮忙自动
+> 申请证书啊。你去写个类比，然后尽可能用图画的形式。或者就用 svg 吧。支持中英文，然
+> 后把这个提示此记录到 plan.md 中啊。
+
+### Where it went, and why there
+
+At the top of `how-it-works`, before §2's seven figures, under **It is a room,
+not a flat** / **租的是一间房，不是一整套**. Not its own page: a comparison is
+worth nothing to somebody who never reads it, and a fourth page under *Start
+here* would compete with the one page that already answers "what is this". So it
+opens that page and hands over to the seven figures, which say the same things
+as themselves.
+
+Six figures, each one picture split down the middle — **the flat on the left,
+here on the right**, in that order every time. The reader learns the grammar
+once and then reads five more for free:
+
+| Figure | In a flat | Here |
+|---|---|---|
+| 1 | a whole flat for one person | a whole machine for one small site |
+| 2 | rooms let one at a time, kitchen shared | containers, one Linux underneath |
+| 3 | one front door, your own key | one address, your own username |
+| 4 | a letter finds the name on the door | a visitor's domain finds your box |
+| 5 | a bed, a desk, a lamp | Linux running, and a menu for the rest |
+| 6 | your lock or the building's | your certificate or the host's |
+
+Then the whole mapping as a table — landlord/host, lease/expiry, the water and
+electricity/traffic — and one paragraph on **where the comparison stops**: a
+wall in a flat is a wall, and here it is the host's Linux doing the keeping
+apart, so a landlord with a master key is the right thing to picture. Better
+said once, plainly, than discovered.
+
+### These are SVG, and that is a departure
+
+§0 of the brief says plain-text figures in code blocks, for four reasons. Three
+of them still hold and every other figure on the site stays as it is — a figure
+showing a screen or a command must be copyable, diffable, and identical on
+GitHub. This section is the exception, and the rule it breaks is worth naming:
+
+- **Why it had to be drawn.** The point of every figure here is that the left
+  half and the right half are *the same shape*. Two ASCII boxes are not the same
+  shape, they are two ASCII boxes; the eye has to be handed the comparison
+  rather than told it.
+- **What it cost.** GitHub strips inline SVG out of rendered markdown, so this
+  one section is blank when the file is read there. Everything a reader might
+  need in a diff stayed a code block.
+- **What it unexpectedly bought.** §8's problem — a browser does not render CJK
+  at exactly twice a Latin character, so a box that is square in a terminal
+  comes out ragged — does not exist here. Every label in an SVG is placed, not
+  counted in columns, so **the Chinese figures may be boxed like the English
+  ones**, and both languages get the same drawing.
+- **How it stays a picture and not a screenshot.** No colour is written in a
+  page: the classes are in `docs/.vitepress/theme/custom.css` and every value is
+  a theme variable, so the figures follow the dark-mode switch and the two
+  languages cannot drift into different inks. `viewBox` and no width, so a phone
+  gets the same drawing narrower.
+
+The two pages hold their own copies of the SVG rather than sharing a component.
+That is deliberate: the labels are most of the markup, they differ per language,
+and somebody translating the page should be able to see the whole figure in the
+file they are editing.
+
+### One thing the Chinese prose had to learn
+
+A newline inside a paragraph becomes a space, and between two Chinese
+characters that space is *visible* — the existing pages avoid it by breaking
+lines only after punctuation, and this section does the same. It is the same
+class of bug as the ragged boxes in §8 and it belongs beside it in `README.md`.
+
+### Questions
+
+1. **Six figures, or fewer?** Every beat of the brief got one. Say if the
+   section now delays the seven figures too long.
+2. **`app-setup` is drawn as four chips** (nginx, MariaDB, PHP, Node) rather
+   than the menu the later section already draws in full. Enough of a promise?
+3. **Should the quick start open the same way** — one drawn figure of what the
+   twelve steps add up to?

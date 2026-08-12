@@ -36,11 +36,27 @@ rest, labelled `（英文）`. Two things to know when adding a language:
 - link to an untranslated page with an absolute path (`/using-your-container`).
   A relative one resolves inside the locale directory, where there is no file,
   and the build fails on it — which is the check working.
-- **do not draw a box around Chinese text.** A browser does not render CJK at
-  exactly twice the width of a Latin character, so a frame that is square in a
-  terminal comes out ragged on the page. The Chinese figures use a left border
-  and an open right edge, and every column boundary sits *before* the first CJK
-  character on the line. Wide grids become real markdown tables instead.
+- **do not draw a box around Chinese text** *in a code block*. A browser does
+  not render CJK at exactly twice the width of a Latin character, so a frame
+  that is square in a terminal comes out ragged on the page. The Chinese figures
+  use a left border and an open right edge, and every column boundary sits
+  *before* the first CJK character on the line. Wide grids become real markdown
+  tables instead.
+- **break a Chinese line only after punctuation.** A newline inside a paragraph
+  becomes a space, and between two Chinese characters that space is visible on
+  the page. After a `，` or a `。` nobody can see it.
+
+Figures are plain text in a code block, for the reasons in
+[`plan.md`](plan.md) §0 — no plugin, identical here and on GitHub, cannot break
+the build, will not rot the way a screenshot does. The comparison that opens
+*how this works* is the one exception and is drawn in inline SVG, because its
+whole point is that the two halves of each picture are the same shape. If you
+add one of those, `plan.md` §10 is the argument and the rules: colours come from
+the theme variables in `docs/.vitepress/theme/custom.css` so a figure follows
+the dark-mode switch, a `viewBox` and no width so it scales on a phone — and
+nothing a reader needs in a diff goes in one, because GitHub renders inline SVG
+as nothing at all. A boxed Chinese label *is* fine there: SVG places its text
+rather than counting columns.
 
 ```sh
 npm install

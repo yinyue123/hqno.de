@@ -57,3 +57,48 @@
 
   --vp-home-hero-name-color: #e8917a;
 }
+
+/**
+ * Drawn figures.
+ *
+ * Every other figure on this site is text in a code block, for the reasons in
+ * README.md, and that stays true of every figure that shows a screen or a
+ * command. The comparison that opens "how this works" is the exception: it is
+ * a picture of a flat next to a picture of a machine, and a reader has to see
+ * the two shapes are the same shape. Drawn in text it would be neither.
+ *
+ * What that buys, and what it costs:
+ *
+ *   - no colour is written in a page. Everything below is a theme variable, so
+ *     a figure follows the dark-mode switch, and the two languages cannot
+ *     drift apart into different inks.
+ *   - the figures scale. They carry a `viewBox` and no width, so a phone gets
+ *     the same drawing narrower — and `px` inside a viewBox is a user unit,
+ *     not a screen pixel, so the labels scale with the drawing.
+ *   - a box may be drawn around Chinese text here, unlike in a code block,
+ *     because every label is positioned rather than counted in columns.
+ *   - GitHub strips inline SVG when it renders markdown. These figures are
+ *     blank there, and only there. Anything a reader must be able to see in a
+ *     diff or on GitHub stays a code block.
+ */
+.fig {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 28px auto;
+  font-family: var(--vp-font-family-base);
+}
+.fig text { fill: var(--vp-c-text-2); font-size: 13px; }
+/* t titles · s asides · m a literal you could type · c centred · a accented */
+.fig .t { fill: var(--vp-c-text-1); font-size: 13px; font-weight: 600; }
+.fig .s { fill: var(--vp-c-text-3); font-size: 11.5px; }
+.fig .m { font-family: var(--vp-font-family-mono); font-size: 12px; }
+.fig .c { text-anchor: middle; }
+.fig .a { fill: var(--vp-c-brand-1); }
+/* box anybody's · mine yours, the one thing a reader looks for first */
+.fig .box { fill: var(--vp-c-bg-soft); stroke: var(--vp-c-divider); stroke-width: 1; }
+.fig .mine { fill: var(--vp-c-brand-soft); stroke: var(--vp-c-brand-3); stroke-width: 1.5; }
+.fig .ink { fill: var(--vp-c-text-3); }
+.fig .ln { fill: none; stroke: var(--vp-c-text-3); stroke-width: 1.3; }
+.fig .lnA { fill: none; stroke: var(--vp-c-brand-3); stroke-width: 1.6; }
+.fig .rule { fill: none; stroke: var(--vp-c-divider); stroke-width: 1; stroke-dasharray: 3 4; }
