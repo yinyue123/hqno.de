@@ -4060,9 +4060,15 @@ static int cli_set(int argc, char **argv)
 	return 0;
 }
 
+/* Defined further down, after the domain socket plumbing (hqnode_sock_call,
+ * domain_reply) it needs — cli_run is defined ahead of all of that, so this
+ * is a forward declaration, not a second definition. */
+static void offer_domain_prompt(void);
+
 static int cli_run(const char *verb, int argc, char **argv)
 {
 	int rc = 0;
+	int any_installed = 0;
 	for (int i = 0; i < argc; i++) {
 		Pkg *p = find_pkg(argv[i]);
 		if (!p) { fprintf(stderr, "app-setup: no such software: %s\n", argv[i]); rc = 1; continue; }
@@ -4074,7 +4080,17 @@ static int cli_run(const char *verb, int argc, char **argv)
 		if (r != 0) {
 			fprintf(stderr, "app-setup: %s %s failed (exit %d), see %s\n", verb, p->id, r, log);
 			rc = r;
+		} else if (!strcmp(verb, "install")) {
+			any_installed = 1;
 		}
+	}
+	// One offer per `install` call, not one per package: a tenant installing
+	// lnmp and wordpress together wants one domain pointed at the whole
+	// stack, not to be asked three times. Only on a real terminal, so a
+	// scripted `ssh host app-setup install nginx` never blocks on stdin
+	// waiting for input that will never come.
+	if (any_installed && isatty(STDIN_FILENO) && isatty(STDOUT_FILENO)) {
+		offer_domain_prompt();
 	}
 	return rc;
 }
@@ -4280,6 +4296,9 @@ static void usage(FILE *f)
 	  "  app-setup set <id> [k=v ...] show or change a recipe's settings\n"
 	  "  app-setup docs <id>          what the recipe says about itself\n"
 	  "  app-setup doctor             what this machine looks like to app-setup\n"
+	  "  app-setup domain add|del|ls|help   point a domain at this container\n"
+	  "                               without the panel's web UI — `domain help`\n"
+	  "                               for the full syntax\n"
 	  "  app-setup screenshot [--width N] [--height N] [--category C|installed|all]\n"
 	  "                       [--screen home|app|params|progress] [--id ID]\n"
 	  "                       [--select N] [--focus grid|chips|back] [--probe]\n"
@@ -4469,6 +4488,177 @@ static const char *pwsync_call(const char *account, const char *password)
 static const char *stop_call(void)
 {
 	return hqnode_sock_call("STOP\n");
+}
+
+/* ---------------------------------------------------------------- domain --
+ * `app-setup domain add/del/ls/help` — point a domain at this container
+ * without going to the panel's web UI. Unlike passwd/poweroff/halt this is
+ * not a system binary this file is standing in for; it is a plain app-setup
+ * subcommand, dispatched in main()'s own argv chain next to `install`/
+ * `start`/etc. See docs/domain-cli.md for the wire protocol and why it goes
+ * through the same local socket passwd sync and STOP already use rather
+ * than calling the panel directly: this container gets no network
+ * credential of its own, only what pwsync_call/stop_call already have —
+ * a connection to the daemon on this same host, which relays the request
+ * over its own already-authenticated link to the panel.
+ */
+
+static void domain_usage(FILE *out)
+{
+	fprintf(out,
+		"Usage: app-setup domain <command>\n"
+		"\n"
+		"  add <domain> <port> [self-hosted] [http-port]\n"
+		"                       point a domain at this container's <port>.\n"
+		"                       Default is a certificate this host manages;\n"
+		"                       \"self-hosted\" means this container terminates\n"
+		"                       its own TLS, and the optional last number is a\n"
+		"                       separate plain-HTTP port alongside it.\n"
+		"  del <domain>         stop answering for a domain\n"
+		"  ls                   list this container's domains\n"
+		"  help                 this text\n");
+}
+
+/* Very small, deliberately not a JSON parser: every successful reply this
+ * command ever gets back is exactly {"domains":[{"domain":"a"},…],"max":N}
+ * (server/internal/api/domains.go's domainResult) and nothing else, so
+ * pulling every "domain":"…" substring out by hand is exact for the one
+ * shape this ever has to read. */
+static void domain_print_list(const char *json)
+{
+	const char *p = json;
+	int printed = 0;
+	while ((p = strstr(p, "\"domain\":\"")) != NULL) {
+		p += 10; /* strlen("\"domain\":\"") */
+		const char *end = strchr(p, '"');
+		if (!end) break;
+		printf("  %.*s\n", (int)(end - p), p);
+		p = end;
+		printed = 1;
+	}
+	if (!printed) printf("  (no domains)\n");
+}
+
+/* hqnode_sock_call's answer is one line: NULL if the socket could not be
+ * reached at all (the daemon is not running, or this image predates the
+ * bind — nothing has happened yet), "ERR <message>" if the daemon or the
+ * panel refused the request, or "OK" / "OK <json>". */
+static int domain_reply(const char *resp)
+{
+	if (!resp) {
+		fprintf(stderr, "app-setup: could not reach the hqnode daemon\n");
+		return 1;
+	}
+	if (!strncmp(resp, "ERR ", 4)) {
+		fprintf(stderr, "app-setup: %s\n", resp + 4);
+		return 1;
+	}
+	if (strncmp(resp, "OK", 2) != 0) {
+		fprintf(stderr, "app-setup: unexpected answer from the hqnode daemon\n");
+		return 1;
+	}
+	const char *json = resp[2] == ' ' ? resp + 3 : resp + 2;
+	if (*json) {
+		printf("Your domains:\n");
+		domain_print_list(json);
+	}
+	return 0;
+}
+
+static int cli_domain(int argc, char **argv)
+{
+	if (argc == 0) {
+		domain_usage(stderr);
+		return 2;
+	}
+	const char *verb = argv[0];
+
+	if (!strcmp(verb, "help") || !strcmp(verb, "-h") || !strcmp(verb, "--help")) {
+		domain_usage(stdout);
+		return 0;
+	}
+	if (!strcmp(verb, "ls")) {
+		return domain_reply(hqnode_sock_call("DOMAIN LS\n"));
+	}
+	if (!strcmp(verb, "del")) {
+		if (argc < 2) {
+			fprintf(stderr, "app-setup: domain del needs a domain\n");
+			return 2;
+		}
+		char line[600];
+		int n = snprintf(line, sizeof line, "DOMAIN DEL %s\n", argv[1]);
+		if (n < 0 || (size_t)n >= sizeof line) {
+			fprintf(stderr, "app-setup: that domain name is too long\n");
+			return 1;
+		}
+		return domain_reply(hqnode_sock_call(line));
+	}
+	if (!strcmp(verb, "add")) {
+		if (argc < 3) {
+			fprintf(stderr, "app-setup: domain add needs a domain and a port\n\n");
+			domain_usage(stderr);
+			return 2;
+		}
+		const char *domain = argv[1], *port = argv[2];
+		int self_hosted = 0;
+		const char *http_port = NULL;
+		for (int i = 3; i < argc; i++) {
+			if (!strcmp(argv[i], "self-hosted")) self_hosted = 1;
+			else http_port = argv[i];
+		}
+		char line[700];
+		int n;
+		if (self_hosted && http_port)
+			n = snprintf(line, sizeof line, "DOMAIN ADD %s %s self-hosted %s\n", domain, port, http_port);
+		else if (self_hosted)
+			n = snprintf(line, sizeof line, "DOMAIN ADD %s %s self-hosted\n", domain, port);
+		else
+			n = snprintf(line, sizeof line, "DOMAIN ADD %s %s\n", domain, port);
+		if (n < 0 || (size_t)n >= sizeof line) {
+			fprintf(stderr, "app-setup: that request is too long\n");
+			return 1;
+		}
+		return domain_reply(hqnode_sock_call(line));
+	}
+
+	fprintf(stderr, "app-setup: domain: unknown command: %s\n\n", verb);
+	domain_usage(stderr);
+	return 2;
+}
+
+/* cli_run's hook, after a successful `install`: the same DOMAIN ADD path
+ * `app-setup domain add` uses, just walked by hand instead of typed out —
+ * skippable at either question, and the whole thing is skipped already
+ * (cli_run's own isatty check) for anything not run at a real terminal. */
+static void offer_domain_prompt(void)
+{
+	printf("\nDomain to point at this container? [Enter to skip] ");
+	fflush(stdout);
+	char line[256];
+	if (!fgets(line, sizeof line, stdin)) return;
+	line[strcspn(line, "\r\n")] = '\0';
+	char *domain = line;
+	while (*domain == ' ' || *domain == '\t') domain++;
+	if (*domain == '\0') return;
+
+	printf("Port this container answers on? [80] ");
+	fflush(stdout);
+	char portline[32];
+	const char *port = "80";
+	if (fgets(portline, sizeof portline, stdin)) {
+		portline[strcspn(portline, "\r\n")] = '\0';
+		char *p = portline;
+		while (*p == ' ' || *p == '\t') p++;
+		if (*p != '\0') port = p;
+	}
+
+	char req[700];
+	int n = snprintf(req, sizeof req, "DOMAIN ADD %s %s\n", domain, port);
+	if (n < 0 || (size_t)n >= sizeof req) {
+		fprintf(stderr, "app-setup: that request is too long\n");
+		return;
+	}
+	domain_reply(hqnode_sock_call(req));
 }
 
 /* argv[1] if there is one — root naming another local account — otherwise
@@ -4709,6 +4899,7 @@ int main(int argc, char **argv)
 	else if (!strcmp(cmd, "restart")) rc = na ? cli_run("restart", na, aa) : (usage(stderr), 2);
 	else if (!strcmp(cmd, "enable"))  rc = na ? cli_run("enable", na, aa) : (usage(stderr), 2);
 	else if (!strcmp(cmd, "disable")) rc = na ? cli_run("disable", na, aa) : (usage(stderr), 2);
+	else if (!strcmp(cmd, "domain")) rc = cli_domain(na, aa);
 	else if (!strcmp(cmd, "docs") || !strcmp(cmd, "help")) {
 		if (!na) { usage(stdout); return 0; }
 		Pkg *p = find_pkg(aa[0]);
