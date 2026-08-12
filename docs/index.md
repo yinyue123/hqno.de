@@ -37,9 +37,10 @@ features:
       Attach it, cut it into containers, set what each one gets, and hand one to
       a friend with a code.
     link: /running-a-machine
-  - title: Living in it, and the deep end
+  - title: Advanced, for later
     details: >-
-      Limits, expiry, restart and rebuild — what happens when. And, for the
-      curious only, building your own image or adding your own software.
+      What a limit feels like when you reach it, what a rebuild takes away —
+      and, for the curious only, building your own image or adding your own
+      software to the menu.
     link: /using-your-container
 ---

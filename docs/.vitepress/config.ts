@@ -74,28 +74,30 @@ export default defineConfig({
           { text: 'Panel', link: 'https://hqno.de' },
         ],
 
-        // Two groups, and the order is the order somebody needs them in. How
-        // this works comes first because it is the only page that answers
-        // "what is this", and it ends by sending a reader to the one of the
-        // next two that is theirs — the quick start if they hold a container,
-        // the host page if they have hardware.
+        // Three pages at the top, and they are the three questions somebody
+        // arrives with: what is this, I was given one, I have a machine. How
+        // this works is first because it is the only page that answers the
+        // first question, and it ends by sending a reader to whichever of the
+        // other two is theirs.
         //
-        // Everything about building an image or writing an app-setup entry is
-        // one group down, and named for what it is rather than promoted to the
-        // top level: almost nobody needs it, and the people who do go looking.
+        // Everything else is Advanced, which is not a demotion but an honest
+        // label: the quick start walks somebody all the way to a working site,
+        // and what is left — what a limit feels like when you reach it,
+        // building an image, writing an app-setup entry — is read later, by
+        // the few who go looking for it.
         sidebar: [
           {
             text: 'Start here',
             items: [
               { text: 'How this works', link: '/how-it-works' },
               { text: 'Quick start', link: '/quick-start' },
-              { text: 'Using your container', link: '/using-your-container' },
               { text: 'Running a machine of your own', link: '/running-a-machine' },
             ],
           },
           {
-            text: 'Systems and software',
+            text: 'Advanced',
             items: [
+              { text: 'Using your container', link: '/using-your-container' },
               { text: 'Building your own image', link: '/building-your-own-image' },
               { text: 'Adding your own software', link: '/app-setup-sources' },
             ],
@@ -126,28 +128,27 @@ export default defineConfig({
       themeConfig: {
         nav: [
           { text: '快速上手', link: '/zh/quick-start' },
-          { text: '它是怎么分开的', link: '/zh/how-it-works' },
+          { text: '它是怎么工作的', link: '/zh/how-it-works' },
           { text: '自己跑一台机器', link: '/zh/running-a-machine' },
           { text: '面板', link: 'https://hqno.de' },
         ],
 
         // The same two groups as English. An untranslated page keeps its place
         // in the order and says （英文）, rather than being hidden or grouped
-        // by what language it happens to be in: somebody hunting for the
-        // limits page should find it where it belongs.
+        // by what language it happens to be in.
         sidebar: [
           {
             text: '从这里开始',
             items: [
-              { text: '它是怎么分开的', link: '/zh/how-it-works' },
+              { text: '它是怎么工作的', link: '/zh/how-it-works' },
               { text: '快速上手', link: '/zh/quick-start' },
-              { text: '使用你的容器（英文）', link: '/using-your-container' },
               { text: '自己跑一台机器', link: '/zh/running-a-machine' },
             ],
           },
           {
-            text: '系统与软件',
+            text: '进阶',
             items: [
+              { text: '使用你的容器（英文）', link: '/using-your-container' },
               { text: '自己做镜像（英文）', link: '/building-your-own-image' },
               { text: '添加你自己的软件（英文）', link: '/app-setup-sources' },
             ],

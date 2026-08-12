@@ -12,7 +12,7 @@ hero:
       text: 快速上手
       link: /zh/quick-start
     - theme: alt
-      text: 它是怎么分开的
+      text: 它是怎么工作的
       link: /zh/how-it-works
     - theme: alt
       text: 打开面板
@@ -33,9 +33,9 @@ features:
     details: >-
       把它接进来，切成容器，设好每份给多少，再用一串分享码交到朋友手里。
     link: /zh/running-a-machine
-  - title: 长期用下去，以及深水区（英文）
+  - title: 进阶，以后再看（英文）
     details: >-
-      限额、到期、重启和重装 —— 什么时候会发生什么。以及只给爱折腾的人看的：
+      碰到限额是什么感觉，重装会拿掉什么 —— 以及只给爱折腾的人看的：
       自己做镜像、往安装菜单里加自己的软件。
     link: /using-your-container
 ---

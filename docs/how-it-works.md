@@ -200,12 +200,11 @@ answering, your login keeps working, and everything you have installed carries o
 - [Quick start](quick-start.md) — a share code to a working website.
 - [Running a machine of your own](running-a-machine.md) — the other side of all
   of this.
-- [Using your container](using-your-container.md) — limits, expiry, rebuilds:
-  what happens when, and what it costs.
 
-Under **Systems and software** there are two more, and almost nobody needs
-them: [building your own image](building-your-own-image.md) if the system you
-want is not on the published list, and
-[adding your own software](app-setup-sources.md) if you want your own entry in
-the install menu. Everything ordinary is done from inside the container the
-ordinary way.
+**Advanced** is everything you read later, if at all:
+[using your container](using-your-container.md) for what a limit feels like when
+you reach it and what a rebuild takes away,
+[building your own image](building-your-own-image.md) if the system you want is
+not on the published list, and [adding your own software](app-setup-sources.md)
+if you want your own entry in the install menu. The quick start gets you a
+working site without any of it.

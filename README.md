@@ -10,17 +10,17 @@ itself is `hqno.de`, and the panel links here by one constant, `DOCS_BASE` in
 `web/lib/docs.ts`, so this address is changed in two places and no more. Every
 page lives under [`docs/`](docs/), which is what the site is built from:
 
-**Start here**, which is the sidebar's first group and the order somebody needs
-them in — the first page ends by sending a reader to whichever of the next two
-is theirs:
+**Start here** — the three questions somebody arrives with, in that order. The
+first page ends by sending a reader to whichever of the other two is theirs:
 
 - [How this works](docs/how-it-works.md)
 - [Quick start](docs/quick-start.md)
-- [Using your container](docs/using-your-container.md)
 - [Running a machine of your own](docs/running-a-machine.md)
 
-**Systems and software**, one group down because almost nobody needs it:
+**Advanced**, which is read later or not at all. The quick start gets somebody a
+working site without any of it:
 
+- [Using your container](docs/using-your-container.md)
 - [Building your own image](docs/building-your-own-image.md)
 - [Adding your own software to app-setup](docs/app-setup-sources.md)
 
