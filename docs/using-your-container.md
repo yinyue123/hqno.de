@@ -90,26 +90,26 @@ place. If it is wedged badly enough that you cannot reach it at all, use
 Type `app-setup`.
 
 ```
- ┌ Suites ─ Web ─ Databases ─ Dev ─ System ──────────┐
- │                                                   │
- │ ▸ LNMP                          · installed       │
- │   nginx, MariaDB, PHP-FPM                         │
- │   Disk 600M RAM 768M  Port 80, 3306               │
- │                                                   │
- │   WordPress                     · running         │
- │   WordPress, nginx, PHP-FPM, MariaDB              │
- │   Disk 800M RAM 768M  Port 80                     │
- │                                                   │
- │ ↑↓ move   Enter open   / search   L 中文   q quit │
- └───────────────────────────────────────────────────┘
+ ┌ Suites ─ Web servers ─ Databases ─ Dev ─ System ─┐
+ │                                                  │
+ │ ▸ LNMP                          · installed      │
+ │   nginx, MariaDB, PHP-FPM                        │
+ │   Disk 600M RAM 768M  Port 80, 3306              │
+ │                                                  │
+ │   WordPress                     · running        │
+ │   WordPress, nginx, PHP-FPM, MariaDB             │
+ │   Disk 800M RAM 768M  Port 80                    │
+ │                                                  │
+ │ ↑↓←→ move    Enter open    ↑ at the top is Back  │
+ └──────────────────────────────────────────────────┘
 ```
 
 A full-screen picker, arranged in five tabs — Suites, Web servers, Databases,
 Dev tools, System. Arrow keys move and **Enter** opens the one under the cursor;
 its own page carries the buttons — Install, Uninstall, Start or Stop, whether it
-comes back at boot, **Docs** — which names every file that package wrote — the
-log of the last run, and **Settings** for packages that declare any. `/` searches, `L` switches
-between English and 中文, `q` quits. The mouse works too.
+comes back at boot, **How to use it** — which names every file that package
+wrote — the log of the last run, and **Settings** for packages that declare any.
+`L` switches between English and 中文, `q` quits, and the mouse works too.
 
 Each card says how much disk and memory the thing needs, **and turns that line
 red when this container is too small for it** — which is the number nobody

@@ -169,21 +169,22 @@ Type one word:
 ```
 
 ```
-  ┌ Suites ─ Web ─ Databases ─ Dev ─ System ─────────┐
+  ┌ Suites ─ Web servers ─ Databases ─ Dev ─ System ─┐
   │                                                  │
   │ ▸ LNMP           web server + database + PHP     │
   │   WordPress      the blog four sites in ten use  │
   │   MariaDB        a database on its own           │
   │   Node.js        ...                             │
   │                                                  │
-  │ Disk 600M RAM 768M   ↑↓ move  Enter open  q quit │
+  │ Disk 600M RAM 768M                               │
+  │ ↑↓←→ move    Enter open    ↑ at the top is Back  │
   └──────────────────────────────────────────────────┘
 ```
 
 ```
-  ↑ ↓ ← →   move            /   search
-  Enter     open it         L   English / 中文
-  q         quit            mouse works too
+  ↑ ↓ ← →        move        L   English / 中文
+  Enter          open it     q   quit
+  ↑ at the top   go back     the mouse works too
 ```
 
 For a first website, pick one of these two and press Enter, then `[Install]`:
@@ -250,7 +251,8 @@ to "where do I change things?":
 
 ```
   ┌ Nginx ───────────────────────────────────────────┐
-  │ [Uninstall] [Stop] [At boot] [Settings] [Docs]   │
+  │ [Uninstall] [Stop] [Start at boot] [Settings]    │
+  │ [How to use it] [Log]                            │
   │                                                  │
   │ Settings                                         │
   │   This software has no settings to change.       │
@@ -258,7 +260,7 @@ to "where do I change things?":
 ```
 
 Almost everything that ships today is configured in its own file rather than in a
-form — and **Docs** names the files, so you never have to go looking:
+form — and **How to use it** names the files, so you never have to go looking:
 
 ```
   root@wp-1:~# app-setup docs nginx

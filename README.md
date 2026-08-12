@@ -15,6 +15,24 @@ under [`docs/`](docs/), which is what the site is built from:
 - [Building your own image](docs/building-your-own-image.md)
 - [Running a machine of your own](docs/running-a-machine.md)
 
+Chinese lives beside them in [`docs/zh/`](docs/zh/), one file per translated
+page, and the theme grows a language menu from the `locales` block in
+`docs/.vitepress/config.ts`. English is the root locale, so its addresses stay
+unprefixed and every link anyone has already sent still answers.
+
+A locale does not have to be complete: the three pages a beginner needs are
+translated, and the Chinese sidebar links straight at the English copies of the
+rest, labelled `（英文）`. Two things to know when adding a language:
+
+- link to an untranslated page with an absolute path (`/using-your-container`).
+  A relative one resolves inside the locale directory, where there is no file,
+  and the build fails on it — which is the check working.
+- **do not draw a box around Chinese text.** A browser does not render CJK at
+  exactly twice the width of a Latin character, so a frame that is square in a
+  terminal comes out ragged on the page. The Chinese figures use a left border
+  and an open right edge, and every column boundary sits *before* the first CJK
+  character on the line. Wide grids become real markdown tables instead.
+
 ```sh
 npm install
 npm run docs:dev      # http://localhost:5173

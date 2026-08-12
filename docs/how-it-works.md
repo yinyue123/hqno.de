@@ -104,14 +104,15 @@ names their particular Linux uses this year. So there is a menu. Type one word:
 ```
 
 ```
-  ┌ Suites ─ Web ─ Databases ─ Dev ─ System ─────────┐
+  ┌ Suites ─ Web servers ─ Databases ─ Dev ─ System ─┐
   │                                                  │
   │ ▸ LNMP           web server + database + PHP     │
   │   WordPress      the blog four sites in ten use  │
   │   MariaDB        a database on its own           │
   │   Node.js        ...                             │
   │                                                  │
-  │ Disk 600M RAM 768M   ↑↓ move  Enter open  q quit │
+  │ Disk 600M RAM 768M                               │
+  │ ↑↓←→ move    Enter open    ↑ at the top is Back  │
   └──────────────────────────────────────────────────┘
 ```
 
@@ -119,13 +120,13 @@ Enter opens the one under the cursor, and its own page is where things happen:
 
 ```
   ┌ WordPress ───────────────────────────────────────┐
-  │ [Install] [Start] [At boot] [Settings] [Docs]    │
+  │ [Install] [Start] [Start at boot] [Settings]     │
+  │ [How to use it] [Log]                            │
   │                                                  │
   │ The blog and site software four sites in ten     │
   │ run on. Installs its own database.               │
   │                                                  │
   │ Disk 800M  RAM 768M  Port 80                     │
-  │ Log  /var/log/app-setup/wordpress.log            │
   └──────────────────────────────────────────────────┘
 ```
 

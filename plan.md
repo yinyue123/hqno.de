@@ -1,8 +1,10 @@
 # Plan: three help pages, drawn step by step
 
-**Status: a plan for review. No page has been written yet.**
+**Status: built.** The pages are written and published, in English and 中文 —
+see §8 for what changed on the way. This file stays because the brief below is
+what the pages are held to, and the next page written has to meet it too.
 
-Every figure below is a **draft of what goes on the page**. One worked example
+Every figure below was the **draft of what went on the page**. One worked example
 runs through all of it: an account called `ana`, a container called `wp-1` on a
 machine at `hk-1.example.com`, and a domain `example.com` at `203.0.113.7`.
 
@@ -673,7 +675,26 @@ Every page built and every link followed once before it is committed.
 
 ---
 
-## 8. Questions
+## 8. Done since, and how
+
+Written and published: `how-it-works`, `quick-start`, `running-a-machine`, the
+three fixes in §5, and the sidebar, nav and front page.
+
+Then **中文**, as VitePress locales: English stays the root so its addresses do
+not move, Chinese is `docs/zh/` with its own nav, sidebar and search words, and
+the three pages plus the front page are translated. The rest is linked at in
+English and labelled `（英文）` rather than hidden.
+
+One thing the figures had to learn: a browser does not render Chinese at exactly
+twice the width of a Latin character, so a box that is square in a terminal is
+ragged on the page. The Chinese figures keep the left border and drop the right
+one, every column boundary sits before the first Chinese character on the line,
+and the one wide grid became a markdown table. `README.md` carries that rule for
+whoever adds the next language.
+
+---
+
+## 9. Questions
 
 1. **Enough figures now?** Roughly thirty across the three pages, one per step
    with its own before/after or output. Say if any step still reads as prose.
