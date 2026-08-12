@@ -59,6 +59,60 @@
 }
 
 /**
+ * The sidebar's language switch.
+ *
+ * Lifted from the panel's rail control (`web/app/globals.css`, `.langsw
+ * [data-place='rail']`) so the two halves of the product read as one: full
+ * width, a hairline border, quiet until it is pointed at. The variables are
+ * this site's, not the panel's, so it follows the dark-mode switch here.
+ *
+ * The margin below is what separates it from the first sidebar group; the one
+ * above is zero on desktop, where the nav bar's own rule already sits above it,
+ * and restored inside the drawer a phone opens, where nothing does.
+ */
+.langsw {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0 0 20px;
+  padding: 8px 10px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 10px;
+  color: var(--vp-c-text-3);
+  font-size: 12.5px;
+  line-height: 1.2;
+  text-decoration: none;
+  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.langsw:hover {
+  color: var(--vp-c-text-1);
+  border-color: var(--vp-c-text-3);
+  background-color: var(--vp-c-bg-soft);
+}
+
+/* An honest label beats a promise: on a page with no Chinese yet the switch
+   goes to the Chinese front page, and says so in its tooltip rather than
+   looking like a translation that turns out to be a redirect. */
+.langsw[data-partial='true'] {
+  color: var(--vp-c-text-3);
+  border-style: dashed;
+}
+
+.langsw-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 960px) {
+  .langsw {
+    margin-top: 12px;
+  }
+}
+
+/**
  * Drawn figures.
  *
  * Every other figure on this site is text in a code block, for the reasons in

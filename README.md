@@ -29,6 +29,16 @@ page, and the theme grows a language menu from the `locales` block in
 `docs/.vitepress/config.ts`. English is the root locale, so its addresses stay
 unprefixed and every link anyone has already sent still answers.
 
+There are two language switches and both are meant. The nav bar grows one on its
+own from the `locales` block; the sidebar's is
+[`docs/.vitepress/theme/LangSwitch.vue`](docs/.vitepress/theme/LangSwitch.vue),
+in the shape the panel's rail uses, because the nav bar is where somebody looks
+on the way in and a reader three pages deep is looking at the sidebar. It is a
+two-language toggle — a third locale turns it into a list — and it knows which
+pages are translated: `config.ts` reads `docs/zh/` and passes the names through
+`themeConfig.translated`, so an untranslated page sends you to the Chinese front
+page and says so, instead of at a URL that is not there.
+
 A locale does not have to be complete: the three pages a beginner needs are
 translated, and the Chinese sidebar links straight at the English copies of the
 rest, labelled `（英文）`. Two things to know when adding a language:

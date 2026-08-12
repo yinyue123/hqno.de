@@ -1,4 +1,19 @@
+import { readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitepress';
+
+/**
+ * Which pages exist in Chinese, read from the directory rather than typed out,
+ * because a list of filenames kept by hand is a list that goes stale. The
+ * sidebar's language switch uses it: the locale is deliberately incomplete, so
+ * a straight `/x` → `/zh/x` swap would aim half the English pages at a URL that
+ * is not there. `index` is dropped — the front page is handled by the `/zh/`
+ * fallback the switch already needs for everything untranslated.
+ */
+const translated = readdirSync(fileURLToPath(new URL('../zh', import.meta.url)))
+  .filter((f) => f.endsWith('.md'))
+  .map((f) => f.slice(0, -3))
+  .filter((n) => n !== 'index');
 
 /**
  * hqno.de — the site for someone who has been given a container.
@@ -179,7 +194,11 @@ export default defineConfig({
     },
   },
 
+  // Merged into both locales' themeConfig, so the sidebar's language switch can
+  // read it whichever language it is standing in.
   themeConfig: {
+    translated,
+
     socialLinks: [
       { icon: 'github', link: 'https://github.com/yinyue123/hqno.de' },
     ],
