@@ -172,4 +172,23 @@ jobs:
           git commit -m "Publish image catalog (run ${{ github.run_number }})"
           # A push made with GITHUB_TOKEN does not trigger workflows, so this
           # cannot loop back into itself despite matching the images/** filter.
-          git push
+          #
+          # Rebase first, and retry: this job checks out the commit that
+          # triggered the run, so anything pushed to main while the twenty
+          # image builds were running (~8 minutes) makes a bare `git push`
+          # fail with "fetch first" — and the whole publish is lost even
+          # though every image reached the registry. That happened on run 38
+          # and a `gh run rerun` cannot fix it, because a rerun checks out
+          # the same triggering commit and loses the same race again. The
+          # catalog is a generated file that only ever touches
+          # images/catalog.json, so replaying it onto whatever main has
+          # become is always the right merge.
+          for attempt in 1 2 3; do
+            if git push; then
+              exit 0
+            fi
+            echo "push rejected (attempt $attempt), rebasing onto origin/main"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+          done
+          echo "could not publish the catalog after 3 attempts" >&2
+          exit 1
