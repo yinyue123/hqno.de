@@ -47,6 +47,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <pwd.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -54,9 +55,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/types.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <time.h>
@@ -4299,9 +4302,264 @@ static void usage(FILE *f)
 	  APP_VERSION, LOG_DIR);
 }
 
+/* --------------------------------------------------------------- passwd ---
+ *
+ * /usr/bin/passwd is a symlink to this binary (image build — docs/passwd.md).
+ * The SSH gateway on the host never reads a container's own /etc/shadow, so
+ * `passwd` changing it looked like it worked and changed nothing about how
+ * the tenant logs back in. The original tool is still here, renamed to
+ * .passwd rather than replaced, and this only special-cases one shape of the
+ * call — everything else falls straight through to it, untouched.
+ *
+ * That one shape is root, changing a password, no flags: bare `passwd` or
+ * `passwd NAME`. It is the only login shape an hqnode container's SSH
+ * mapping produces (ContainerUser defaults to root — agent/internal/store/
+ * sshusers.go), and it is the one case that never needs the old password —
+ * which is what makes it possible to collect the new one here and hand it to
+ * both sides in a controlled order, rather than trying to observe it inside
+ * .passwd's own interactive session. Nothing here ever reads a password back
+ * out of .passwd.
+ */
+#define PWSYNC_SOCK "/etc/hqnode/pwsync.sock"
+
+static const char *prog_basename(const char *path)
+{
+	const char *slash = strrchr(path, '/');
+	return slash ? slash + 1 : path;
+}
+
+/* Standard base64, no line wrapping. The daemon only ever decodes what this
+ * writes, so the alphabet and padding just have to match Go's
+ * encoding/base64 StdEncoding. */
+static void b64_encode(const unsigned char *in, size_t n, char *out)
+{
+	static const char tbl[] =
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	size_t i, o = 0;
+	for (i = 0; i + 3 <= n; i += 3) {
+		unsigned v = ((unsigned)in[i] << 16) | ((unsigned)in[i + 1] << 8) | in[i + 2];
+		out[o++] = tbl[(v >> 18) & 0x3f];
+		out[o++] = tbl[(v >> 12) & 0x3f];
+		out[o++] = tbl[(v >> 6) & 0x3f];
+		out[o++] = tbl[v & 0x3f];
+	}
+	size_t rem = n - i;
+	if (rem == 1) {
+		unsigned v = (unsigned)in[i] << 16;
+		out[o++] = tbl[(v >> 18) & 0x3f];
+		out[o++] = tbl[(v >> 12) & 0x3f];
+		out[o++] = '=';
+		out[o++] = '=';
+	} else if (rem == 2) {
+		unsigned v = ((unsigned)in[i] << 16) | ((unsigned)in[i + 1] << 8);
+		out[o++] = tbl[(v >> 18) & 0x3f];
+		out[o++] = tbl[(v >> 12) & 0x3f];
+		out[o++] = tbl[(v >> 6) & 0x3f];
+		out[o++] = '=';
+	}
+	out[o] = '\0';
+}
+
+/* Echo off, canonical mode left on: the kernel's line discipline still
+ * handles backspace and only ever hands back a whole line, which is all a
+ * password prompt needs. term_raw()/term_cooked() do more than that (the
+ * alternate screen, mouse reporting, character-at-a-time reads) and neither
+ * has been touched yet when this runs. */
+static int read_password_line(char *buf, size_t cap)
+{
+	struct termios saved, t;
+	int have_tty = tcgetattr(STDIN_FILENO, &saved) == 0;
+	if (have_tty) {
+		t = saved;
+		t.c_lflag &= (tcflag_t)~ECHO;
+		tcsetattr(STDIN_FILENO, TCSAFLUSH, &t);
+	}
+	size_t n = 0;
+	int got_input = 0;
+	for (;;) {
+		char c;
+		ssize_t r = read(STDIN_FILENO, &c, 1);
+		if (r <= 0) break;
+		got_input = 1;
+		if (c == '\n' || c == '\r') break;
+		if (n + 1 < cap) buf[n++] = c;
+	}
+	buf[n] = '\0';
+	if (have_tty) {
+		tcsetattr(STDIN_FILENO, TCSAFLUSH, &saved);
+		fputc('\n', stdout); /* ECHO being off swallowed the Enter's own newline */
+		fflush(stdout);
+	}
+	return got_input;
+}
+
+/* Connects, sends one SETPW line, reads one line back. NULL means the socket
+ * could not be reached at all — nothing has happened yet — which the caller
+ * has to tell apart from "ERR ...", where the daemon looked at the password
+ * and refused it. The returned pointer is a static buffer valid until the
+ * next call; passwd_main makes exactly one. */
+static const char *pwsync_call(const char *account, const char *password)
+{
+	static char resp[512];
+	int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (fd < 0) return NULL;
+
+	struct sockaddr_un addr;
+	memset(&addr, 0, sizeof addr);
+	addr.sun_family = AF_UNIX;
+	snprintf(addr.sun_path, sizeof addr.sun_path, "%s", PWSYNC_SOCK);
+	if (connect(fd, (struct sockaddr *)&addr, sizeof addr) != 0) {
+		close(fd);
+		return NULL;
+	}
+
+	char b64[512];
+	b64_encode((const unsigned char *)password, strlen(password), b64);
+	char line[700];
+	int n = snprintf(line, sizeof line, "SETPW %s %s\n", account, b64);
+	if (n < 0 || (size_t)n >= sizeof line || write(fd, line, (size_t)n) != n) {
+		close(fd);
+		return NULL;
+	}
+
+	size_t got = 0;
+	for (;;) {
+		char c;
+		ssize_t r = read(fd, &c, 1);
+		if (r <= 0) break;
+		if (c == '\n') break;
+		if (got + 1 < sizeof resp) resp[got++] = c;
+	}
+	close(fd);
+	if (got == 0) return NULL;
+	resp[got] = '\0';
+	return resp;
+}
+
+/* argv[1] if there is one — root naming another local account — otherwise
+ * root's own name, whatever this system actually calls uid 0 rather than an
+ * assumed "root". */
+static const char *passwd_target_account(int argc, char **argv, char *self, size_t selfcap)
+{
+	if (argc > 1) return argv[1];
+	struct passwd *pw = getpwuid(geteuid());
+	snprintf(self, selfcap, "%s", (pw && pw->pw_name[0]) ? pw->pw_name : "root");
+	return self;
+}
+
+/* The one shape this file handles itself: no flags, at most one positional
+ * argument. Everything else — passwd -l, -S, -d, any other flag — falls
+ * through to .passwd unmodified in passwd_main, further down. */
+static int passwd_is_plain(int argc, char **argv)
+{
+	if (argc <= 1) return 1;
+	if (argc == 2 && argv[1][0] != '-') return 1;
+	return 0;
+}
+
+static int passwd_main(int argc, char **argv)
+{
+	if (geteuid() != 0 || !passwd_is_plain(argc, argv)) {
+		/* Not root, or a shape this does not special-case: run the real tool,
+		 * inheriting this process's own stdin/stdout/stderr — already the
+		 * tenant's real terminal, so .passwd's own prompts (a non-root user's
+		 * old-password check among them) behave exactly as if `.passwd` had
+		 * been typed directly. */
+		execv("/usr/bin/.passwd", argv);
+		fprintf(stderr, "passwd: could not run /usr/bin/.passwd: %s\n", strerror(errno));
+		return 1;
+	}
+
+	char self[64];
+	const char *account = passwd_target_account(argc, argv, self, sizeof self);
+
+	printf("New password: ");
+	fflush(stdout);
+	char pw1[257], pw2[257];
+	if (!read_password_line(pw1, sizeof pw1) || pw1[0] == '\0') {
+		fprintf(stderr, "passwd: no password entered, nothing changed\n");
+		return 1;
+	}
+	printf("Retype new password: ");
+	fflush(stdout);
+	read_password_line(pw2, sizeof pw2);
+	if (strcmp(pw1, pw2) != 0) {
+		fprintf(stderr, "Sorry, passwords do not match.\n");
+		return 1;
+	}
+
+	/* The gateway is asked before anything local changes, on purpose: a
+	 * password its policy refuses must never end up set locally and not on
+	 * the login that actually gates the internet. */
+	const char *resp = pwsync_call(account, pw1);
+	if (!resp) {
+		fprintf(stderr,
+		        "passwd: could not reach the SSH gateway — %s's password was "
+		        "NOT changed. Ask whoever runs this machine if this keeps "
+		        "happening.\n", account);
+		return 1;
+	}
+	if (!strncmp(resp, "ERR ", 4)) {
+		fprintf(stderr, "passwd: %s\n", resp + 4);
+		return 1;
+	}
+	if (strcmp(resp, "OK") != 0 && strcmp(resp, "OK-NOOP") != 0) {
+		fprintf(stderr, "passwd: unexpected answer from the SSH gateway\n");
+		return 1;
+	}
+
+	/* Accepted — or OK-NOOP, meaning this account has no SSH login on this
+	 * container at all, so there was nothing to have disagreed with locally
+	 * in the first place. Either way the local account is set the way
+	 * scripts already do it: chpasswd takes plaintext on stdin and needs no
+	 * controlling terminal, unlike passwd itself. */
+	int pfd[2];
+	if (pipe(pfd) != 0) {
+		fprintf(stderr, "passwd: password changed for the SSH login, but the "
+		                "local account could not be updated: %s\n", strerror(errno));
+		return 1;
+	}
+	pid_t pid = fork();
+	if (pid < 0) {
+		close(pfd[0]);
+		close(pfd[1]);
+		fprintf(stderr, "passwd: password changed for the SSH login, but the "
+		                "local account could not be updated: %s\n", strerror(errno));
+		return 1;
+	}
+	if (pid == 0) {
+		close(pfd[1]);
+		dup2(pfd[0], STDIN_FILENO);
+		close(pfd[0]);
+		execlp("chpasswd", "chpasswd", (char *)NULL);
+		_exit(127);
+	}
+	close(pfd[0]);
+	char line[600];
+	int n = snprintf(line, sizeof line, "%s:%s\n", account, pw1);
+	if (n > 0) {
+		if (write(pfd[1], line, (size_t)n) < 0) { /* reaped below regardless */ }
+	}
+	close(pfd[1]);
+	int status = 0;
+	while (waitpid(pid, &status, 0) < 0 && errno == EINTR) { }
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+		fprintf(stderr, "passwd: password changed for the SSH login, but the "
+		                "local account could not be updated (chpasswd exit %d)\n",
+		                WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+		return 1;
+	}
+
+	printf("passwd: password updated successfully\n");
+	return 0;
+}
+
 /* ------------------------------------------------------------------ main ---*/
 int main(int argc, char **argv)
 {
+	if (argc > 0 && !strcmp(prog_basename(argv[0]), "passwd"))
+		return passwd_main(argc, argv);
+
 	/* English unless somebody says otherwise, and only APP_SETUP_LANG or
 	 * --lang says otherwise. LANG is not consulted: it describes the locale
 	 * the terminal was started in, which on a shared box is whatever the
