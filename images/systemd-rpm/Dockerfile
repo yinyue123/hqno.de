@@ -41,6 +41,20 @@ RUN set -eux; \
     $PM -y install \
       systemd dbus cronie rsyslog procps-ng iproute iputils \
       openssh-server openssh-clients sudo ca-certificates less nano tzdata; \
+    # `passwd` the *command* turns out to be its own package on this side of
+    # the family, separate from shadow-utils (which only carries
+    # useradd/groupadd and the backend logic) — confirmed live: AlmaLinux 9
+    # and Rocky 8 both have shadow-utils installed and no /usr/bin/passwd at
+    # all (`rpm -qf` on Rocky 9, where it *is* present, names the owning
+    # package `passwd-0.80-12.el9`), which is exactly the failure that broke
+    # four of eleven RPM images the first time §5's rename ran in CI: `mv:
+    # cannot stat '/usr/bin/passwd': No such file or directory`. Asking every
+    # base for a package literally named `passwd` unconditionally risks the
+    # opposite failure on whichever ones resolve the command some other way
+    # (CentOS 7 predates this split entirely) — installing it only when the
+    # command isn't already there is what stays safe on both sides without
+    # having to enumerate which bases are which.
+    command -v passwd >/dev/null 2>&1 || $PM -y install passwd; \
     # openssh-clients is a separate package on this side of the family and
     # openssh-server does not require it, so these images shipped with no
     # `ssh`, no `scp` and no `sftp` at all. That is the outbound direction and
