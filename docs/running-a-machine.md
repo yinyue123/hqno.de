@@ -22,12 +22,34 @@ way in at all. Your tenants do:
   [{ t: 'nothing at all', tone: 'mute' }, { t: 'the panel never connects in \u2014 it calls out', tone: 'mute' }],
 ]" />
 
-A rented server already has its own public address, so there is nothing to
-forward and no router of yours in the way. What there usually *is* is a firewall
-in front of it — a security group, network rules, whatever your provider calls
-it — and a fresh one commonly allows nothing but port 22. Open 80 and 443 there
-before you sell anything, or your tenants' websites resolve perfectly and never
-answer.
+Three numbers, and your own sshd is already sitting on one of them. Do it in
+this order:
+
+<FigRows :rows="[
+  [{ t: '1', tone: 'accent' }, 'open the firewall', { t: '80, 443, and one spare port — 2222 will do', tone: 'mute' }],
+  [{ t: '2', tone: 'accent' }, 'move your own sshd', { t: 'onto that spare port', tone: 'mute' }],
+  [{ t: '3', tone: 'accent' }, '22 is free now', { t: 'the gateway takes it, for your tenants', tone: 'mute' }],
+]" />
+
+**Open the spare port before you move sshd onto it.** The other order locks you
+out of your own server, and a rented one has no console cable to save you.
+
+Your provider's firewall is what you are opening — a security group, network
+rules, whatever they call it — and a fresh instance commonly allows nothing but
+22. Nothing is forwarded and no router of yours is involved; the machine's
+public address is already its own.
+
+**Moving sshd is the machine's Ports card, not your text editor.** Editing the
+most frightening file on a server, over the connection you are about to change,
+is how people lose a machine. The card writes the port, checks the configuration
+before it restarts anything, and leaves the session you are typing in alone. It
+also knows the two shapes of OpenSSH apart — on Debian 13 and recent Ubuntu
+systemd holds the socket, and `Port` in `sshd_config` does nothing whatsoever,
+which is the trap that has cost people their remote access.
+
+You do not *have* to give 22 away: the gateway can sit on another port and your
+tenants add `-p`, and the same card offers that. But a tenant who has to
+remember a port number is a tenant who writes to you about it.
 
 Otherwise the list is short:
 
