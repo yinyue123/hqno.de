@@ -28,7 +28,8 @@ systems:
     recipe: openrc-alpine
     platforms: linux/amd64,linux/arm64
     name: Alpine 3.24
-    blurb: "The cheap one: OpenRC instead of systemd, a few MB of RAM at idle. Not glibc — some prebuilt binaries will not run."
+    default: true
+    blurb: "The default: OpenRC instead of systemd, a few MB of RAM at idle. Not glibc — some prebuilt binaries will not run."
 
   - id: img_alpine323
     tag: alpine-3.23
@@ -44,8 +45,7 @@ systems:
     recipe: systemd-deb
     platforms: linux/amd64,linux/arm64
     name: Debian 13
-    default: true
-    blurb: "Trixie. The default: small, current, and the least surprising thing to run."
+    blurb: "Trixie. glibc and systemd — the least surprising thing to run when Alpine's musl breaks something."
 
   - id: img_debian12
     tag: debian-12
