@@ -746,7 +746,7 @@ once and then reads five more for free:
 |---|---|---|
 | 1 | a whole flat for one person | a whole machine for one small site |
 | 2 | rooms let one at a time, kitchen shared | containers, one Linux underneath |
-| 3 | one front door, your own key | one address, your own username |
+| 3 | one front door, your own key | one machine, your own `ssh` line |
 | 4 | a letter finds the name on the door | a visitor's domain finds your box |
 | 5 | a bed, a desk, a lamp | Linux running, and a menu for the rest |
 | 6 | your lock or the building's | your certificate or the host's |
@@ -786,6 +786,33 @@ The two pages hold their own copies of the SVG rather than sharing a component.
 That is deliberate: the labels are most of the markup, they differ per language,
 and somebody translating the page should be able to see the whole figure in the
 file they are editing.
+
+### The names, revised once
+
+The key figure first showed the generated shell usernames the panel hands out —
+`u7k2m9p`, `u4b8x2q`, `u9v3c1r` — on the grounds that they are the real thing.
+They are unreadable: three strings of noise that differ in every character, in a
+figure whose entire claim is *one of these differs from the others in exactly
+one way*. The comparison cannot land if the reader cannot tell the labels apart.
+
+So the three people are **alice, bob and carol** across the whole page, the
+command is written out (`ssh alice@203.0.113.7`, with only `alice` in the accent
+colour), and the machine is a bare **IP** rather than a hostname — one less name
+to explain in a figure about which name matters. `203.0.113.7` is the address
+this site already points DNS at in quick start §7, so it is the same machine
+everywhere, and it is documentation-reserved, so nobody's real box answers it.
+
+Two things this leaves out of step, both deliberate and both cheap to sweep when
+someone decides to:
+
+- **`quick-start` still shows `u7k2m9p@hk-1.example.com`**, because that is what
+  the panel really prints after a redeem, and that page is being followed
+  keystroke by keystroke. This page is being *understood*.
+- **`running-a-machine`'s create form still offers `Debian 13`.** The furnished
+  figure now says **Alpine 3.24** — the intended default, small enough that the
+  memory a holder paid for goes to their own software — and the catalog has both.
+  When the default actually moves, the create form, the app-setup section's
+  mention of `apt` and `dnf`, and `using-your-container` move with it.
 
 ### One thing the Chinese prose had to learn
 

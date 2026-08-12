@@ -64,9 +64,9 @@ renting a flat to keep one bed in.
   <text class="c" x="67" y="72">yours</text>
   <text class="s c" x="67" y="92">a bed, a desk</text>
   <rect class="box" x="118" y="40" width="94" height="72" rx="4"/>
-  <text class="c" x="165" y="80">Ana's</text>
+  <text class="c" x="165" y="80">bob's</text>
   <rect class="box" x="216" y="40" width="94" height="72" rx="4"/>
-  <text class="c" x="263" y="80">Wei's</text>
+  <text class="c" x="263" y="80">carol's</text>
   <rect class="box" x="20" y="116" width="290" height="36" rx="4"/>
   <text class="c" x="165" y="139">kitchen · bathroom · front door</text>
   <text class="s c" x="165" y="174">your door locks</text>
@@ -76,10 +76,10 @@ renting a flat to keep one bed in.
   <text class="s c" x="397" y="88">1 core · 2 GB</text>
   <text class="s c" x="397" y="103">20 GB disk</text>
   <rect class="box" x="448" y="40" width="94" height="72" rx="4"/>
-  <text class="c" x="495" y="68">Ana's</text>
+  <text class="c" x="495" y="68">bob's</text>
   <text class="s c" x="495" y="88">½ core · 1 GB</text>
   <rect class="box" x="546" y="40" width="94" height="72" rx="4"/>
-  <text class="c" x="593" y="68">Wei's</text>
+  <text class="c" x="593" y="68">carol's</text>
   <text class="s c" x="593" y="88">2 cores · 4 GB</text>
   <rect class="box" x="350" y="116" width="290" height="36" rx="4"/>
   <text class="c" x="495" y="139">one Linux · one machine · one address</text>
@@ -98,46 +98,46 @@ nobody can see into yours.
 
 **Your own key.**
 
-<svg class="fig" viewBox="0 0 660 200" role="img" aria-label="Three keys opening three rooms, beside three usernames opening three containers">
+<svg class="fig" viewBox="0 0 660 200" role="img" aria-label="Three keys opening three rooms, beside three ssh commands opening three containers">
   <defs><marker id="k1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path class="ink" d="M0,0 L10,5 L0,10 z"/></marker></defs>
-  <text class="t c" x="165" y="20">in a flat</text>
-  <text class="t c" x="495" y="20">here</text>
-  <path class="rule" d="M330,30 V184"/>
+  <text class="t c" x="156" y="20">in a flat</text>
+  <text class="t c" x="485" y="20">here</text>
+  <path class="rule" d="M310,30 V184"/>
   <circle class="lnA" cx="32" cy="56" r="7"/>
   <path class="lnA" d="M39,56 H64 M58,56 V62 M50,56 V62"/>
-  <path class="ln" d="M74,56 H166" marker-end="url(#k1)"/>
-  <rect class="mine" x="175" y="41" width="135" height="30" rx="4"/>
-  <text class="c" x="242" y="61">your room</text>
+  <path class="ln" d="M74,56 H152" marker-end="url(#k1)"/>
+  <rect class="mine" x="160" y="41" width="132" height="30" rx="4"/>
+  <text class="c" x="226" y="61">your room</text>
   <circle class="ln" cx="32" cy="96" r="7"/>
   <path class="ln" d="M39,96 H64 M58,96 V102 M50,96 V102"/>
-  <path class="ln" d="M74,96 H166" marker-end="url(#k1)"/>
-  <rect class="box" x="175" y="81" width="135" height="30" rx="4"/>
-  <text class="c" x="242" y="101">Ana's room</text>
+  <path class="ln" d="M74,96 H152" marker-end="url(#k1)"/>
+  <rect class="box" x="160" y="81" width="132" height="30" rx="4"/>
+  <text class="c" x="226" y="101">bob's room</text>
   <circle class="ln" cx="32" cy="136" r="7"/>
   <path class="ln" d="M39,136 H64 M58,136 V142 M50,136 V142"/>
-  <path class="ln" d="M74,136 H166" marker-end="url(#k1)"/>
-  <rect class="box" x="175" y="121" width="135" height="30" rx="4"/>
-  <text class="c" x="242" y="141">Wei's room</text>
-  <text class="s c" x="165" y="176">one front door, three keys</text>
-  <text class="m a" x="350" y="61">u7k2m9p</text>
-  <path class="ln" d="M424,56 H496" marker-end="url(#k1)"/>
-  <rect class="mine" x="505" y="41" width="135" height="30" rx="4"/>
-  <text class="c" x="572" y="61">your box</text>
-  <text class="m" x="350" y="101">u4b8x2q</text>
-  <path class="ln" d="M424,96 H496" marker-end="url(#k1)"/>
-  <rect class="box" x="505" y="81" width="135" height="30" rx="4"/>
-  <text class="c" x="572" y="101">Ana's box</text>
-  <text class="m" x="350" y="141">u9v3c1r</text>
-  <path class="ln" d="M424,136 H496" marker-end="url(#k1)"/>
-  <rect class="box" x="505" y="121" width="135" height="30" rx="4"/>
-  <text class="c" x="572" y="141">Wei's box</text>
-  <text class="s c" x="495" y="176">one address: hk-1.example.com</text>
+  <path class="ln" d="M74,136 H152" marker-end="url(#k1)"/>
+  <rect class="box" x="160" y="121" width="132" height="30" rx="4"/>
+  <text class="c" x="226" y="141">carol's room</text>
+  <text class="s c" x="156" y="176">one front door, three keys</text>
+  <text class="m" x="326" y="61">ssh <tspan class="a">alice</tspan>@203.0.113.7</text>
+  <path class="ln" d="M486,56 H528" marker-end="url(#k1)"/>
+  <rect class="mine" x="536" y="41" width="109" height="30" rx="4"/>
+  <text class="c" x="590" y="61">your box</text>
+  <text class="m" x="326" y="101">ssh bob@203.0.113.7</text>
+  <path class="ln" d="M486,96 H528" marker-end="url(#k1)"/>
+  <rect class="box" x="536" y="81" width="109" height="30" rx="4"/>
+  <text class="c" x="590" y="101">bob's box</text>
+  <text class="m" x="326" y="141">ssh carol@203.0.113.7</text>
+  <path class="ln" d="M486,136 H528" marker-end="url(#k1)"/>
+  <rect class="box" x="536" y="121" width="109" height="30" rx="4"/>
+  <text class="c" x="590" y="141">carol's box</text>
+  <text class="s c" x="485" y="176">one machine: 203.0.113.7</text>
 </svg>
 
 Everybody walks in through the same front door, and the key in your hand decides
-which room opens. Here the front door is the machine's address, the same one for
-everybody on it, and the key is your username: the part before the `@` is the
-whole of what decides which room you get.
+which room opens. Here the front door is the machine's address — `203.0.113.7`,
+the same one for everybody on it — and the key is your username. The part before
+the `@` is the whole of what decides which room you get.
 
 **Your name on the door.**
 
@@ -151,21 +151,21 @@ whole of what decides which room you get.
   <text class="s c" x="58" y="142">addressed to you</text>
   <path class="ln" d="M104,101 H142" marker-end="url(#k2)"/>
   <rect class="box" x="150" y="42" width="160" height="34" rx="4"/>
-  <text class="c" x="230" y="64">Ana</text>
+  <text class="c" x="230" y="64">bob</text>
   <rect class="mine" x="150" y="84" width="160" height="34" rx="4"/>
   <text class="c" x="230" y="106">you</text>
   <rect class="box" x="150" y="126" width="160" height="34" rx="4"/>
-  <text class="c" x="230" y="148">Wei</text>
+  <text class="c" x="230" y="148">carol</text>
   <text class="s c" x="165" y="182">one street address; the name decides</text>
   <text class="s" x="350" y="82">a visitor types</text>
   <text class="m a" x="350" y="105">shop.example.com</text>
   <path class="ln" d="M472,101 H500" marker-end="url(#k2)"/>
   <rect class="box" x="508" y="42" width="132" height="34" rx="4"/>
-  <text class="c" x="574" y="64">Ana's box</text>
+  <text class="c" x="574" y="64">bob's box</text>
   <rect class="mine" x="508" y="84" width="132" height="34" rx="4"/>
   <text class="c" x="574" y="106">your box</text>
   <rect class="box" x="508" y="126" width="132" height="34" rx="4"/>
-  <text class="c" x="574" y="148">Wei's box</text>
+  <text class="c" x="574" y="148">carol's box</text>
   <text class="s c" x="495" y="182">one machine address; the name decides</text>
 </svg>
 
@@ -190,7 +190,7 @@ you hold the room, and nobody else on that machine can take it.
   <text class="s c" x="258" y="132">a lamp</text>
   <text class="s c" x="165" y="176">you bring your clothes</text>
   <rect class="box" x="350" y="36" width="290" height="112" rx="6"/>
-  <text class="t" x="364" y="60">Debian 13, already running</text>
+  <text class="t" x="364" y="60">Alpine 3.24, already running</text>
   <rect class="box" x="364" y="74" width="64" height="26" rx="13"/>
   <text class="s c" x="396" y="91">nginx</text>
   <rect class="box" x="434" y="74" width="72" height="26" rx="13"/>
@@ -206,9 +206,10 @@ you hold the room, and nobody else on that machine can take it.
 You are there for a year, or a few months. Nobody buys a bed for that, so the
 room comes with one, and a desk, and a lamp. You bring your clothes.
 
-Your container arrives with a working Linux already on it and a menu that
-installs the rest — a web server, a database, WordPress, Node. You bring your
-code.
+Your container arrives with a working Linux already on it — Alpine, which is
+small enough to leave the memory you are paying for to your own software — and a
+menu that installs the rest: a web server, a database, WordPress, Node. You bring
+your code.
 
 **And a lock on the door.**
 
@@ -271,8 +272,8 @@ The rest of this page is the same thing again, drawn as what it actually is.
   you ──sign in──▶ panel ──"do this"──▶ the machine
                                           │
    you, over ssh ─────────────────▶  ├─── your box
-                                     ├─── Ana's box
-   your visitors ─────────────────▶  └─── Wei's box
+                                     ├─── bob's box
+   your visitors ─────────────────▶  └─── carol's box
 ```
 
 Three words this site uses for the rest of your life here: the **panel** is the
@@ -287,7 +288,7 @@ yours.
 ```
         one machine, one Linux underneath
   ┌───────────┬───────────┬───────────┬──────────┐
-  │  yours    │  Ana's    │  Wei's    │   ...    │
+  │  yours    │  bob's    │  carol's  │   ...    │
   │  1 core   │  ½ core   │  2 cores  │          │
   │  2 GB     │  1 GB     │  4 GB     │          │
   │  20 GB    │  10 GB    │  80 GB    │          │
@@ -308,9 +309,9 @@ allowance for the month. What happens when you reach one of them is on
 ## Your login is yours because of the username
 
 ```
-  ssh u7k2m9p@hk-1.example.com  ─────▶  your box
-  ssh u4b8x2q@hk-1.example.com  ─────▶  Ana's box
-         └── the only difference
+  ssh alice@203.0.113.7  ─────▶  your box
+  ssh bob@203.0.113.7    ─────▶  bob's box
+      └── the only difference
 ```
 
 Same address, same door, different room. The name in front of the `@` is the
@@ -335,7 +336,7 @@ cost you the way in.
   ────────────────────     ──────────────────────
   shop.example.com   ───▶  your box,  port 80
   api.example.com    ───▶  your box,  port 3000
-  blog.ana.dev       ───▶  Ana's box, port 80
+  blog.bob.dev       ───▶  bob's box, port 80
 ```
 
 One machine can serve any number of websites, and **the name the visitor typed**

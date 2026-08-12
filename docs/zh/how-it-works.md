@@ -63,9 +63,9 @@ title: 它是怎么工作的
   <text class="c" x="67" y="72">你的</text>
   <text class="s c" x="67" y="92">一床一桌</text>
   <rect class="box" x="118" y="40" width="94" height="72" rx="4"/>
-  <text class="c" x="165" y="80">小 A 的</text>
+  <text class="c" x="165" y="80">bob 的</text>
   <rect class="box" x="216" y="40" width="94" height="72" rx="4"/>
-  <text class="c" x="263" y="80">小 B 的</text>
+  <text class="c" x="263" y="80">carol 的</text>
   <rect class="box" x="20" y="116" width="290" height="36" rx="4"/>
   <text class="c" x="165" y="139">厨房 · 卫生间 · 大门</text>
   <text class="s c" x="165" y="174">你的房门上锁</text>
@@ -75,10 +75,10 @@ title: 它是怎么工作的
   <text class="s c" x="397" y="88">1 核 · 2 GB</text>
   <text class="s c" x="397" y="103">20 GB 磁盘</text>
   <rect class="box" x="448" y="40" width="94" height="72" rx="4"/>
-  <text class="c" x="495" y="68">小 A 的</text>
+  <text class="c" x="495" y="68">bob 的</text>
   <text class="s c" x="495" y="88">½ 核 · 1 GB</text>
   <rect class="box" x="546" y="40" width="94" height="72" rx="4"/>
-  <text class="c" x="593" y="68">小 B 的</text>
+  <text class="c" x="593" y="68">carol 的</text>
   <text class="s c" x="593" y="88">2 核 · 4 GB</text>
   <rect class="box" x="350" y="116" width="290" height="36" rx="4"/>
   <text class="c" x="495" y="139">一个 Linux · 一台机器 · 一个地址</text>
@@ -95,45 +95,45 @@ title: 它是怎么工作的
 
 **你自己的钥匙。**
 
-<svg class="fig" viewBox="0 0 660 200" role="img" aria-label="三把钥匙开三个房间，旁边是三个用户名进三个容器">
+<svg class="fig" viewBox="0 0 660 200" role="img" aria-label="三把钥匙开三个房间，旁边是三条 ssh 命令进三个容器">
   <defs><marker id="k1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path class="ink" d="M0,0 L10,5 L0,10 z"/></marker></defs>
-  <text class="t c" x="165" y="20">在合租房里</text>
-  <text class="t c" x="495" y="20">在这里</text>
-  <path class="rule" d="M330,30 V184"/>
+  <text class="t c" x="156" y="20">在合租房里</text>
+  <text class="t c" x="485" y="20">在这里</text>
+  <path class="rule" d="M310,30 V184"/>
   <circle class="lnA" cx="32" cy="56" r="7"/>
   <path class="lnA" d="M39,56 H64 M58,56 V62 M50,56 V62"/>
-  <path class="ln" d="M74,56 H166" marker-end="url(#k1)"/>
-  <rect class="mine" x="175" y="41" width="135" height="30" rx="4"/>
-  <text class="c" x="242" y="61">你的房间</text>
+  <path class="ln" d="M74,56 H152" marker-end="url(#k1)"/>
+  <rect class="mine" x="160" y="41" width="132" height="30" rx="4"/>
+  <text class="c" x="226" y="61">你的房间</text>
   <circle class="ln" cx="32" cy="96" r="7"/>
   <path class="ln" d="M39,96 H64 M58,96 V102 M50,96 V102"/>
-  <path class="ln" d="M74,96 H166" marker-end="url(#k1)"/>
-  <rect class="box" x="175" y="81" width="135" height="30" rx="4"/>
-  <text class="c" x="242" y="101">小 A 的房间</text>
+  <path class="ln" d="M74,96 H152" marker-end="url(#k1)"/>
+  <rect class="box" x="160" y="81" width="132" height="30" rx="4"/>
+  <text class="c" x="226" y="101">bob 的房间</text>
   <circle class="ln" cx="32" cy="136" r="7"/>
   <path class="ln" d="M39,136 H64 M58,136 V142 M50,136 V142"/>
-  <path class="ln" d="M74,136 H166" marker-end="url(#k1)"/>
-  <rect class="box" x="175" y="121" width="135" height="30" rx="4"/>
-  <text class="c" x="242" y="141">小 B 的房间</text>
-  <text class="s c" x="165" y="176">同一个大门，三把不同的钥匙</text>
-  <text class="m a" x="350" y="61">u7k2m9p</text>
-  <path class="ln" d="M424,56 H496" marker-end="url(#k1)"/>
-  <rect class="mine" x="505" y="41" width="135" height="30" rx="4"/>
-  <text class="c" x="572" y="61">你的那份</text>
-  <text class="m" x="350" y="101">u4b8x2q</text>
-  <path class="ln" d="M424,96 H496" marker-end="url(#k1)"/>
-  <rect class="box" x="505" y="81" width="135" height="30" rx="4"/>
-  <text class="c" x="572" y="101">小 A 的那份</text>
-  <text class="m" x="350" y="141">u9v3c1r</text>
-  <path class="ln" d="M424,136 H496" marker-end="url(#k1)"/>
-  <rect class="box" x="505" y="121" width="135" height="30" rx="4"/>
-  <text class="c" x="572" y="141">小 B 的那份</text>
-  <text class="s c" x="495" y="176">同一个地址：hk-1.example.com</text>
+  <path class="ln" d="M74,136 H152" marker-end="url(#k1)"/>
+  <rect class="box" x="160" y="121" width="132" height="30" rx="4"/>
+  <text class="c" x="226" y="141">carol 的房间</text>
+  <text class="s c" x="156" y="176">同一个大门，三把不同的钥匙</text>
+  <text class="m" x="326" y="61">ssh <tspan class="a">alice</tspan>@203.0.113.7</text>
+  <path class="ln" d="M486,56 H528" marker-end="url(#k1)"/>
+  <rect class="mine" x="536" y="41" width="109" height="30" rx="4"/>
+  <text class="c" x="590" y="61">你的那份</text>
+  <text class="m" x="326" y="101">ssh bob@203.0.113.7</text>
+  <path class="ln" d="M486,96 H528" marker-end="url(#k1)"/>
+  <rect class="box" x="536" y="81" width="109" height="30" rx="4"/>
+  <text class="c" x="590" y="101">bob 的那份</text>
+  <text class="m" x="326" y="141">ssh carol@203.0.113.7</text>
+  <path class="ln" d="M486,136 H528" marker-end="url(#k1)"/>
+  <rect class="box" x="536" y="121" width="109" height="30" rx="4"/>
+  <text class="c" x="590" y="141">carol 的那份</text>
+  <text class="s c" x="485" y="176">同一台机器：203.0.113.7</text>
 </svg>
 
 所有人都从同一个大门进，手上那把钥匙决定开的是哪一间。
-在这里，大门就是那台机器的地址，机器上所有人都用同一个；
-钥匙就是你的用户名 —— `@` 前面那一段，就是决定你进哪一间的全部依据。
+在这里，大门就是那台机器的地址 —— `203.0.113.7`，机器上所有人都用这一个；
+钥匙就是你的用户名，`@` 前面那一段，就是决定你进哪一间的全部依据。
 
 **门上写着你的名字。**
 
@@ -147,21 +147,21 @@ title: 它是怎么工作的
   <text class="s c" x="58" y="142">写着你的名字</text>
   <path class="ln" d="M104,101 H142" marker-end="url(#k2)"/>
   <rect class="box" x="150" y="42" width="160" height="34" rx="4"/>
-  <text class="c" x="230" y="64">小 A</text>
+  <text class="c" x="230" y="64">bob</text>
   <rect class="mine" x="150" y="84" width="160" height="34" rx="4"/>
   <text class="c" x="230" y="106">你</text>
   <rect class="box" x="150" y="126" width="160" height="34" rx="4"/>
-  <text class="c" x="230" y="148">小 B</text>
+  <text class="c" x="230" y="148">carol</text>
   <text class="s c" x="165" y="182">同一个门牌号，名字决定给谁</text>
   <text class="s" x="350" y="82">访客输入</text>
   <text class="m a" x="350" y="105">shop.example.com</text>
   <path class="ln" d="M472,101 H500" marker-end="url(#k2)"/>
   <rect class="box" x="508" y="42" width="132" height="34" rx="4"/>
-  <text class="c" x="574" y="64">小 A 的那份</text>
+  <text class="c" x="574" y="64">bob 的那份</text>
   <rect class="mine" x="508" y="84" width="132" height="34" rx="4"/>
   <text class="c" x="574" y="106">你的那份</text>
   <rect class="box" x="508" y="126" width="132" height="34" rx="4"/>
-  <text class="c" x="574" y="148">小 B 的那份</text>
+  <text class="c" x="574" y="148">carol 的那份</text>
   <text class="s c" x="495" y="182">同一个机器地址，域名决定给谁</text>
 </svg>
 
@@ -185,7 +185,7 @@ title: 它是怎么工作的
   <text class="s c" x="258" y="132">一盏灯</text>
   <text class="s c" x="165" y="176">衣服你自己带</text>
   <rect class="box" x="350" y="36" width="290" height="112" rx="6"/>
-  <text class="t" x="364" y="60">Debian 13，已经在跑了</text>
+  <text class="t" x="364" y="60">Alpine 3.24，已经在跑了</text>
   <rect class="box" x="364" y="74" width="64" height="26" rx="13"/>
   <text class="s c" x="396" y="91">nginx</text>
   <rect class="box" x="434" y="74" width="72" height="26" rx="13"/>
@@ -201,7 +201,8 @@ title: 它是怎么工作的
 你要住一年，也可能就住几个月。没人为这个去买张床，
 所以房间里本来就有床、有桌子、有台灯，你带自己的衣服过来就行。
 
-你的容器交到手上时，里面的 Linux 已经在跑了，还带一个菜单，剩下的它来装 ——
+你的容器交到手上时，里面的 Linux 已经在跑了 —— 用的是 Alpine，它本身够小，
+你买的那点内存能省下来给自己的软件用。它还带一个菜单，剩下的东西由它来装：
 网站服务器、数据库、WordPress、Node。你把自己的代码传上去就行。
 
 **门上还有一把锁。**
@@ -262,8 +263,8 @@ title: 它是怎么工作的
   你 ──登录──▶ 面板 ──「去做这个」──▶ 那台机器
                                         │
    你，用 ssh ───────────────▶  ├─── 你的那份
-                               ├─── 小 A 的那份
-   你的访客 ─────────────────▶  └─── 小 B 的那份
+                               ├─── bob 的那份
+   你的访客 ─────────────────▶  └─── carol 的那份
 ```
 
 后面反复出现的三个词：**面板**是你登录的那个网站，**机器**是跑着你这一份的那台电脑，
@@ -275,7 +276,7 @@ title: 它是怎么工作的
 
 一台机器，底下是同一个 Linux：
 
-| 你的 | 小 A 的 | 小 B 的 | … |
+| 你的 | bob 的 | carol 的 | … |
 |---|---|---|---|
 | 1 核 | ½ 核 | 2 核 | |
 | 2 GB | 1 GB | 4 GB | |
@@ -292,9 +293,9 @@ title: 它是怎么工作的
 ## 你的登录凭什么是你的：用户名
 
 ```
-  ssh u7k2m9p@hk-1.example.com  ─────▶  你的那份
-  ssh u4b8x2q@hk-1.example.com  ─────▶  小 A 的那份
-         └── 唯一的区别就在这里
+  ssh alice@203.0.113.7  ─────▶  你的那份
+  ssh bob@203.0.113.7    ─────▶  bob 的那份
+      └── 唯一的区别就在这里
 ```
 
 同一个地址、同一个门，进的是不同的房间。`@` 前面那个名字，就是决定你进哪间的全部依据。
@@ -317,7 +318,7 @@ title: 它是怎么工作的
   ────────────────────     ──────────────────────
   shop.example.com   ───▶  你的那份，端口 80
   api.example.com    ───▶  你的那份，端口 3000
-  blog.ana.dev       ───▶  小 A 的那份，端口 80
+  blog.bob.dev       ───▶  bob 的那份，端口 80
 ```
 
 一台机器可以服务任意多个网站，**访客输入的那个域名**决定由哪一份来回答。由此有两件事：
