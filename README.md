@@ -5,8 +5,10 @@ given a container and has never seen the panel before: how it becomes theirs,
 how to get in, what the limits do when they are reached, and what expiry and
 reinstall actually take away.
 
-Published as a VitePress site at [hqno.de](https://hqno.de). Every page lives
-under [`docs/`](docs/), which is what the site is built from:
+Published as a VitePress site at [doc.hqno.de](https://doc.hqno.de) — the panel
+itself is `hqno.de`, and the panel links here by one constant, `DOCS_BASE` in
+`web/lib/docs.ts`, so this address is changed in two places and no more. Every
+page lives under [`docs/`](docs/), which is what the site is built from:
 
 - [How this works](docs/how-it-works.md)
 - [Quick start](docs/quick-start.md)
