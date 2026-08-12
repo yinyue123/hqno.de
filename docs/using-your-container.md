@@ -19,7 +19,7 @@ it appears under **My containers** in the panel.
 | How | What you do |
 |---|---|
 | Your host binds it to your username | Nothing. Sign in and it is there. |
-| Your host gives you a **bind code** | Redeem it at **/bind**. You choose the shell login while you do. |
+| Your host gives you a **share code** | Redeem it at **Containers → Redeem a share code**. You choose the shell login while you do. |
 
 Either way the container already exists and is already running before it
 reaches you: your host picked the machine, the limits and the expiry, and
@@ -40,7 +40,8 @@ separate login per machine.
 
 ## 2. Getting in
 
-The container page shows the exact line. It looks like this:
+The container page shows the user, the host and the port. Put together, they are
+the line you run:
 
 ```sh
 ssh u7k2m9p@hk-1.example.com -p 22
@@ -53,7 +54,8 @@ root shell in it. Two consequences worth knowing up front:
 
 - **`passwd` inside the container does not change how you log in.** The
   password lives with the gateway, not in the container's `/etc/shadow`.
-  Change it in the panel, on the container page, under *Get in*.
+  Change it in the panel, on the container page, under
+  *Actions → Shell login → Reset password*.
 - **A reinstall does not cost you your login.** The gateway's copy is outside
   the filesystem being replaced.
 
@@ -88,22 +90,26 @@ place. If it is wedged badly enough that you cannot reach it at all, use
 Type `app-setup`.
 
 ```
- ┌──────────────────────────────────────┐  ┌──────────────────────────────────────┐
- │ LNMP                    · installed  │  │ WordPress               · running     │
- │ nginx, MariaDB, PHP-FPM              │  │ WordPress, nginx, PHP-FPM, MariaDB   │
- │ Nginx + MariaDB + PHP, installed and │  │ The blog and site software four sites│
- │ wired together.                      │  │ in ten run on.                       │
- │ Disk 600M RAM 768M Port 80, 3306     │  │ Disk 800M RAM 768M Port 80           │
- │ [i Install] [x Remove] [s Start]     │  │ [i Install] [x Remove] [s Stop]      │
- │ [b ✓Boot] [d Docs]                   │  │ [b ✓Boot] [d Docs]                   │
- └──────────────────────────────────────┘  └──────────────────────────────────────┘
+ ┌ Suites ─ Web ─ Databases ─ Dev ─ System ──────────┐
+ │                                                   │
+ │ ▸ LNMP                          · installed       │
+ │   nginx, MariaDB, PHP-FPM                         │
+ │   Disk 600M RAM 768M  Port 80, 3306               │
+ │                                                   │
+ │   WordPress                     · running         │
+ │   WordPress, nginx, PHP-FPM, MariaDB              │
+ │   Disk 800M RAM 768M  Port 80                     │
+ │                                                   │
+ │ ↑↓ move   Enter open   / search   L 中文   q quit │
+ └───────────────────────────────────────────────────┘
 ```
 
 A full-screen picker, arranged in five tabs — Suites, Web servers, Databases,
-Dev tools, System. Arrow keys move, `i` installs, `x` removes, `s` starts or
-stops, `b` toggles whether it comes back at boot, `d` opens that package's own
-documentation, `/` searches, `L` switches between English and 中文, `q` quits.
-The mouse works too.
+Dev tools, System. Arrow keys move and **Enter** opens the one under the cursor;
+its own page carries the buttons — Install, Uninstall, Start or Stop, whether it
+comes back at boot, **Docs** — which names every file that package wrote — the
+log of the last run, and **Settings** for packages that declare any. `/` searches, `L` switches
+between English and 中文, `q` quits. The mouse works too.
 
 Each card says how much disk and memory the thing needs, **and turns that line
 red when this container is too small for it** — which is the number nobody
@@ -264,14 +270,21 @@ straight back — same data, same login.
 
 ## 7. Domains
 
-If your host points a domain at your container, requests for it arrive at
-your ports 80 and 443 — by SNI for TLS, by the Host header for plain HTTP.
-Serve on those ports inside the container and it works; there is no separate
-proxy for you to configure.
+You add your own names, on the container page, up to a limit your host sets
+(ten unless they changed it). Adding one tells the machine the name is yours;
+pointing its DNS at the machine is yours to do at your domain provider, and the
+address to point at is on the same card.
 
-The names pointed at you are listed on the container page. Adding one is your
-host's job: it needs both a DNS record and a route on the machine, and only
-they can make the second.
+Each name then carries its own two settings: **which port inside your container**
+requests for it land on — 80 unless you change it, so one container can serve
+several sites from several services — and **what happens to HTTPS**, which is
+either a certificate the host obtains and renews for you, or your own with the
+machine passing the encrypted traffic through untouched. Checks run on a
+schedule and show as badges on each name, so a name that is not working says
+which part is wrong.
+
+[Quick start](quick-start.md) walks all of that through, from adding the name to
+the padlock, in four steps.
 
 ---
 

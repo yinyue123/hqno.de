@@ -51,22 +51,36 @@ export default defineConfig({
 
   themeConfig: {
     nav: [
+      { text: 'Quick start', link: '/quick-start' },
       { text: 'Your container', link: '/using-your-container' },
-      { text: 'Your own software', link: '/app-setup-sources' },
+      { text: 'Hosting', link: '/running-a-machine' },
       { text: 'Panel', link: 'https://hqno.de' },
     ],
 
-    // One flat group while there are four pages. It grows into sections when
-    // there is enough to have sections about, and not before: a sidebar with
-    // one item under each heading is a table of contents pretending to be a
-    // structure.
+    // Three groups, in the order somebody arrives in them: understand it, do
+    // it, then — separately — run a machine of your own. Two pages under a
+    // heading is the least that earns one; a sidebar with a single item under
+    // each is a table of contents pretending to be a structure.
     sidebar: [
+      {
+        text: 'Start here',
+        items: [
+          { text: 'How this works', link: '/how-it-works' },
+          { text: 'Quick start', link: '/quick-start' },
+        ],
+      },
       {
         text: 'Holding a container',
         items: [
           { text: 'Using your container', link: '/using-your-container' },
           { text: 'Adding your own software', link: '/app-setup-sources' },
           { text: 'Building your own image', link: '/building-your-own-image' },
+        ],
+      },
+      {
+        text: 'Running a machine',
+        items: [
+          { text: 'Running a machine of your own', link: '/running-a-machine' },
         ],
       },
     ],
@@ -86,7 +100,7 @@ export default defineConfig({
 
     footer: {
       message:
-        'Running the machines instead? <a href="https://github.com/yinyue123/hqnode/blob/main/docs/operating-the-panel.md">Operating the panel</a>.',
+        'Running the machines instead? <a href="/running-a-machine">Running a machine of your own</a>.',
       copyright: 'hqnode',
     },
   },

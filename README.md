@@ -8,9 +8,12 @@ reinstall actually take away.
 Published as a VitePress site at [hqno.de](https://hqno.de). Every page lives
 under [`docs/`](docs/), which is what the site is built from:
 
+- [How this works](docs/how-it-works.md)
+- [Quick start](docs/quick-start.md)
 - [Using your container](docs/using-your-container.md)
 - [Adding your own software to app-setup](docs/app-setup-sources.md)
 - [Building your own image](docs/building-your-own-image.md)
+- [Running a machine of your own](docs/running-a-machine.md)
 
 ```sh
 npm install
@@ -26,7 +29,7 @@ Cloudflare Pages builds it:
 | Build command | anything below |
 
 `npx vitepress build`, `npx vitepress build docs` and `npm run docs:build` all
-produce the same five themed pages in `.vitepress/dist`. That is deliberate, and
+produce the same themed pages in `.vitepress/dist`. That is deliberate, and
 neither half of it used to be true.
 
 The argument names the VitePress root. Without it VitePress takes the
@@ -53,7 +56,9 @@ because they are published: a panel pulls them by name, from anywhere, without
 a credential.
 
 Running the machines rather than holding a container is the other side of the
-product, and its documentation lives with the code:
+product, and it has a page here now:
+[running a machine of your own](docs/running-a-machine.md). The deeper end of it
+— agent internals, moving the listeners, storage — stays with the code, in
 [operating the panel](https://github.com/yinyue123/hqnode/blob/main/docs/operating-the-panel.md).
 
 ## How this repo is used
