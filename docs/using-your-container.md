@@ -275,13 +275,14 @@ You add your own names, on the container page, up to a limit your host sets
 pointing its DNS at the machine is yours to do at your domain provider, and the
 address to point at is on the same card.
 
-Each name then carries its own two settings: **which port inside your container**
-requests for it land on — 80 unless you change it, so one container can serve
-several sites from several services — and **what happens to HTTPS**, which is
-either a certificate the host obtains and renews for you, or your own with the
-machine passing the encrypted traffic through untouched. Checks run on a
-schedule and show as badges on each name, so a name that is not working says
-which part is wrong.
+Each name then carries its own settings: whether it serves **HTTP**, **HTTPS** or
+both; **which container port** each of those reaches — 80 unless you change it, so
+one container can serve several sites from several services; and, for HTTPS,
+either *our certificate, issued for you* (the machine obtains it and renews it
+before it expires) or *your certificate · SNI passthrough* (the machine splices
+the encrypted bytes on and never holds your key). Checks run on a schedule and
+show as badges on each name, so a name that is not working says which part is
+wrong.
 
 [Quick start](quick-start.md) walks all of that through, from adding the name to
 the padlock, in four steps.

@@ -306,7 +306,8 @@ On your container's page, find **Domains**:
 
 ```
   ┌ Domains ──────────────────────────────── 0 of 10 ┐
-  │  No domains yet.                                 │
+  │  No domains yet. Add one and this container      │
+  │  answers it on :80 and :443.                     │
   │                                   [ Add domain ] │
   └──────────────────────────────────────────────────┘
 ```
@@ -315,9 +316,8 @@ Add `example.com`, then `www.example.com` — each name is its own row:
 
 ```
   ┌ Domains ──────────────────────────────── 2 of 10 ┐
-  │  example.com       DNS ·  HTTP ·  HTTPS ·     ⚙  │
-  │  www.example.com   DNS ·  HTTP ·  HTTPS ·     ⚙  │
-  │  Point them at 203.0.113.7                       │
+  │  🌐 example.com       DNS ·  HTTP ·  HTTPS ·  ⚙  │
+  │  🌐 www.example.com   DNS ·  HTTP ·  HTTPS ·  ⚙  │
   └──────────────────────────────────────────────────┘
 ```
 
@@ -325,8 +325,10 @@ This tells the machine the names are yours. It does **not** change anything at
 your domain provider, and it does **not** get you a certificate. Those are the
 next two steps.
 
-Ten names is the usual allowance; the card counts them, and your host can change
-the number.
+A new name starts on HTTP port 80 and HTTPS by SNI passthrough; its badges fill
+in on their own within a few seconds. Ten names is the usual allowance — the card
+counts them, and your host can change the number. The card's own **?** says which
+address to point at, and **Docs** on an open name comes back to this page.
 
 ---
 
@@ -385,29 +387,37 @@ This is what turns one container into several websites:
 Press the gear on a name:
 
 ```
-  ┌ api.example.com ─────────────────────────────────┐
-  │  DNS ✓   HTTP ✓   HTTPS ·                        │
-  │  DNS      points here (203.0.113.7)              │
-  │  HTTP     port [ 3000 ]             [ Test ]     │
-  │  HTTPS    ( ) Your certificate · SNI passthrough │
-  │               port [ 443  ]         [ Test ]     │
-  │           (•) Managed                            │
-  │               port [ 3000 ]                      │
-  │                     [ Request certificate ]      │
-  │                        [ Save ]  [ Delete ]      │
-  └──────────────────────────────────────────────────┘
+  ┌ api.example.com ──────────────────────────────────┐
+  │  🌐 DNS   Does the name resolve to this host?     │
+  │           [ Test ]                       DNS ✓    │
+  │  ───────────────────────────────────────────────  │
+  │  ◉ Enable HTTP    Container port [ 3000 ]         │
+  │           [ Test ]                      HTTP ✓    │
+  │  ───────────────────────────────────────────────  │
+  │  ◉ Enable HTTPS                        HTTPS ·    │
+  │    ( ) Your certificate · SNI passthrough         │
+  │        Backend HTTPS port [ 443 ]  [ Test ]       │
+  │    (•) Our certificate · issued for you           │
+  │        Forwards to HTTP port [ 3000 ]             │
+  │        [ Test backend ]  [ Request certificate ]  │
+  │  ───────────────────────────────────────────────  │
+  │  [ Save ]  [ Delete ]  [ Docs ]  [ Close ]        │
+  └───────────────────────────────────────────────────┘
 ```
 
-The port box is **the port inside your box** that visitors to this name reach.
+**Container port** is the port inside your box that visitors to this name reach.
 Leave it at 80 for an ordinary website; set 3000 for something you wrote
-yourself.
+yourself. The two switches are per name: a name can serve HTTP only, HTTPS only,
+or both.
 
-**Test** dials it and tells you what happened:
+**Test** dials it from the machine and puts the answer beside the badge:
 
 ```
-  ✓  answered in 3 ms
-  ✕  nothing is listening on 3000   ← your app, not the panel
-  ✕  the container is not running   ← start it first
+  HTTP ✓   Port open, HTTP responded
+  HTTP ✕   Port closed              ← your app, not the panel
+  HTTP ✕   Port open, no HTTP response
+  DNS  ✓   Resolves to this host
+  DNS  ✕   Resolves to 198.51.100.9 — not this host
 ```
 
 Saving also opens that port for you when it was not open already, and says so:
@@ -426,39 +436,47 @@ reconnects, and it does not happen again for that port.
 
 Two ways, and you choose per name. Both are in the settings you just opened.
 
-### The host's certificate — one button
+### Our certificate, issued for you — one button
 
-Pick **Managed** and press the button:
+Pick **Our certificate · issued for you** and press the button:
 
 ```
   [ Request certificate ]
-    HTTPS ⟳  requesting…                  under a minute
-    HTTPS ✓  issued · renews 30 days before it expires
+    HTTPS ⟳  Requesting a certificate…    under a minute
+    HTTPS ✓  Issued, renewing automatically   Managed
 ```
 
 Nothing to install and nothing to remember afterwards — renewal happens on its
-own, well before it runs out. Note that the port box locks to your HTTP port:
-this mode hands plain traffic to one port inside your box, so there is only one
-to name.
+own, well before it runs out. Note that the port box is **locked to your HTTP
+port**: this mode ends the encryption at the machine and forwards plain traffic
+to one port inside your box, so there is only one port to name. Change it in the
+HTTP box above.
 
-Two conditions, and the button will tell you when one is missing:
+Two conditions, and the badge says which one is missing:
 
 ```
-  ✕  example.com does not arrive here yet   → step 7
-  ✕  nothing answers on port 3000           → step 8
-  ✕  five requests this week already — try 18 Aug
+  ✕  Issuance failed. Check that the name resolves
+     to this host.                            → step 7
+  ✕  Port closed                              → step 8
 ```
 
-That last one is worth reading before you press anything twice: you get **one
-request an hour and five a week for the same name**, because that is what the
-certificate issuer allows, and a sixth press would lock your own name out for
-days. Automatic renewals are never refused, so this only ever bites while you are
-setting up.
+Once a name has a certificate the button becomes **Reissue certificate**, and it
+goes quiet for a while after each one:
 
-### Your own certificate — you hold it
+```
+  [ Reissue in 47 min ]   the authority limits how often a
+                          name may be issued
+```
 
-Pick **Your certificate · SNI passthrough** and say which port inside your box
-handles secure traffic:
+You get **one request an hour and five a week for the same name**, because that
+is what the certificate authority allows, and a sixth press would lock your own
+name out for days. Automatic renewals are never refused, so this only ever bites
+while you are setting up.
+
+### Your certificate — you hold it
+
+Pick **Your certificate · SNI passthrough** and set **Backend HTTPS port** to the
+port inside your box that handles secure traffic:
 
 ```
   visitor ══encrypted══▶ machine ══untouched══▶ your box, 443
@@ -470,9 +488,10 @@ either. Get one inside your container the usual way, keep it renewed, and the
 badge tells you what your box is actually serving:
 
 ```
-  HTTPS ✓  valid until 4 Nov
-  HTTPS ✕  expired 12 days ago
-  HTTPS ✕  the certificate is for another name
+  HTTPS ✓  Port open, certificate valid
+  HTTPS ✓  Certificate valid, 63 days left
+  HTTPS ✕  Certificate expired
+  HTTPS ✕  Port open, no TLS
 ```
 
 There is nowhere to upload a certificate to the panel. In this mode it belongs
