@@ -4336,7 +4336,7 @@ static void usage(FILE *f)
  * it inside the real passwd's own interactive session. Nothing here ever
  * reads a password back out of it.
  */
-#define PWSYNC_SOCK "/etc/hqnode/pwsync.sock"
+#define PWSYNC_SOCK "/etc/hqnode/hqnode.sock"
 
 static const char *prog_basename(const char *path)
 {
@@ -4409,12 +4409,12 @@ static int read_password_line(char *buf, size_t cap)
 	return got_input;
 }
 
-/* Connects, sends one SETPW line, reads one line back. NULL means the socket
- * could not be reached at all — nothing has happened yet — which the caller
- * has to tell apart from "ERR ...", where the daemon looked at the password
- * and refused it. The returned pointer is a static buffer valid until the
- * next call; passwd_main makes exactly one. */
-static const char *pwsync_call(const char *account, const char *password)
+/* Connects to the local socket, writes one already-newline-terminated line,
+ * reads one line back. NULL means the socket could not be reached at all —
+ * nothing has happened yet — which every caller has to tell apart from
+ * "ERR ...", where the daemon looked at the request and refused it. The
+ * returned pointer is a static buffer valid until the next call. */
+static const char *hqnode_sock_call(const char *line)
 {
 	static char resp[512];
 	int fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -4429,11 +4429,8 @@ static const char *pwsync_call(const char *account, const char *password)
 		return NULL;
 	}
 
-	char b64[512];
-	b64_encode((const unsigned char *)password, strlen(password), b64);
-	char line[700];
-	int n = snprintf(line, sizeof line, "SETPW %s %s\n", account, b64);
-	if (n < 0 || (size_t)n >= sizeof line || write(fd, line, (size_t)n) != n) {
+	size_t n = strlen(line);
+	if (write(fd, line, n) != (ssize_t)n) {
 		close(fd);
 		return NULL;
 	}
@@ -4450,6 +4447,28 @@ static const char *pwsync_call(const char *account, const char *password)
 	if (got == 0) return NULL;
 	resp[got] = '\0';
 	return resp;
+}
+
+/* `SETPW <account> <base64(password)>`; passwd_main makes exactly one call. */
+static const char *pwsync_call(const char *account, const char *password)
+{
+	char b64[512];
+	b64_encode((const unsigned char *)password, strlen(password), b64);
+	char line[700];
+	int n = snprintf(line, sizeof line, "SETPW %s %s\n", account, b64);
+	if (n < 0 || (size_t)n >= sizeof line) return NULL;
+	return hqnode_sock_call(line);
+}
+
+/* `STOP` — poweroff_main/halt_main's one call, before they fall through to
+ * the real binary. See docs/passwd.md §11 for why this exists: both already
+ * exit the container cleanly today (the kernel's namespaced-reboot(2)
+ * redirect sends this pid-namespace's own init a signal, never the host),
+ * the missing piece was telling the daemon not to restart it under
+ * restart_policy=always once that exit is reported. */
+static const char *stop_call(void)
+{
+	return hqnode_sock_call("STOP\n");
 }
 
 /* argv[1] if there is one — root naming another local account — otherwise
@@ -4483,6 +4502,37 @@ static void passwd_exec_real(char **argv)
 {
 	execv("/usr/bin/passwd", argv);
 	execv("/bin/passwd", argv);
+}
+
+/* Unlike passwd, poweroff/halt do not live under /usr/bin or /bin on any
+ * base in the catalog — confirmed live across all three families
+ * (openrc-alpine, systemd-deb, systemd-rpm): /usr/sbin/poweroff on a
+ * usrmerged systemd image (a symlink to systemctl there), /sbin/poweroff on
+ * Alpine (busybox), where usrmerge does not reach sbin. Two names for the
+ * same reason passwd_exec_real tries two — which one exists varies by base. */
+static void shutdown_exec_real(char **argv, const char *name)
+{
+	char path[64];
+	snprintf(path, sizeof path, "/usr/sbin/%s", name);
+	execv(path, argv);
+	snprintf(path, sizeof path, "/sbin/%s", name);
+	execv(path, argv);
+}
+
+/* poweroff/halt: tell the daemon first, then become the real tool
+ * unconditionally, argv untouched — every flag the real binary understands
+ * still behaves exactly as it always has, because this never inspects argv,
+ * only forwards it. Unlike passwd this fails *open*: a control-socket hiccup
+ * still has to let a tenant power off their own container, an occasional
+ * un-suppressed restart is the far smaller failure. reboot is deliberately
+ * not shimmed — it already restarts correctly via the kernel's SIGHUP path,
+ * with nothing here to add. */
+static int shutdown_main(char **argv, const char *name)
+{
+	stop_call();
+	shutdown_exec_real(argv, name);
+	fprintf(stderr, "%s: could not run /usr/sbin/%s: %s\n", name, name, strerror(errno));
+	return 1;
 }
 
 static int passwd_main(int argc, char **argv)
@@ -4587,6 +4637,10 @@ int main(int argc, char **argv)
 {
 	if (argc > 0 && !strcmp(prog_basename(argv[0]), "passwd"))
 		return passwd_main(argc, argv);
+	if (argc > 0 && !strcmp(prog_basename(argv[0]), "poweroff"))
+		return shutdown_main(argv, "poweroff");
+	if (argc > 0 && !strcmp(prog_basename(argv[0]), "halt"))
+		return shutdown_main(argv, "halt");
 
 	/* English unless somebody says otherwise, and only APP_SETUP_LANG or
 	 * --lang says otherwise. LANG is not consulted: it describes the locale

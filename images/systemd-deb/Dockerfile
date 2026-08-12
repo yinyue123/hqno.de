@@ -177,12 +177,23 @@ COPY app-setup/recipes/ /etc/app-setup/
 # here to fix. (Alpine has the same failure on a much shorter fuse — every
 # single apk transaction; see that Dockerfile.) Nothing owns /usr/local/bin,
 # and it precedes /usr/bin in the login PATH and in sudo's secure_path.
+#
+# poweroff/halt answer to app-setup too now (docs/passwd.md §11), so a tenant
+# leaving their own container off actually stays a tenant decision instead of
+# restart_policy=always silently undoing it. /usr/sbin/poweroff -> systemctl
+# here, confirmed live — under sbin, not bin, so the shim goes in
+# /usr/local/sbin, which precedes /usr/sbin in the same PATH and is just as
+# unowned by dpkg.
 RUN set -eux; \
     chmod 0755 /bin/app-setup /etc/app-setup/*.sh; \
     chmod 0644 /usr/lib/app-setup/*.sh; \
-    mkdir -p /var/log/app-setup /var/lib/app-setup /usr/local/bin; \
+    mkdir -p /var/log/app-setup /var/lib/app-setup /usr/local/bin /usr/local/sbin; \
     test -x /usr/bin/passwd; \
     ln -sf /bin/app-setup /usr/local/bin/passwd; \
+    test -x /usr/sbin/poweroff; \
+    ln -sf /bin/app-setup /usr/local/sbin/poweroff; \
+    test -x /usr/sbin/halt; \
+    ln -sf /bin/app-setup /usr/local/sbin/halt; \
     app-setup doctor >/dev/null
 
 # How anybody finds out it exists. The gateway starts a login shell, so

@@ -159,12 +159,23 @@ COPY app-setup/recipes/ /etc/app-setup/
 # and a symlink there never was. Nothing owns /usr/local/bin, and it precedes
 # /usr/bin in the login PATH and in sudo's secure_path — the same reason
 # sftp-server is installed there above.
+#
+# poweroff/halt answer to app-setup too now (docs/passwd.md §11), so a tenant
+# leaving their own container off actually stays a tenant decision instead of
+# restart_policy=always silently undoing it. They live under sbin here, not
+# bin — /sbin/poweroff -> /bin/busybox, confirmed live, and usrmerge does not
+# reach /sbin on this base — so the shim goes in /usr/local/sbin, which
+# precedes /sbin in the same PATH and is just as unowned by apk.
 RUN set -eux; \
     chmod 0755 /bin/app-setup /etc/app-setup/*.sh; \
     chmod 0644 /usr/lib/app-setup/*.sh; \
-    mkdir -p /var/log/app-setup /var/lib/app-setup /usr/local/bin; \
+    mkdir -p /var/log/app-setup /var/lib/app-setup /usr/local/bin /usr/local/sbin; \
     test -x /usr/bin/passwd; \
     ln -sf /bin/app-setup /usr/local/bin/passwd; \
+    test -x /sbin/poweroff; \
+    ln -sf /bin/app-setup /usr/local/sbin/poweroff; \
+    test -x /sbin/halt; \
+    ln -sf /bin/app-setup /usr/local/sbin/halt; \
     app-setup doctor >/dev/null
 
 # How anybody finds out it exists. The gateway starts a login shell, and
