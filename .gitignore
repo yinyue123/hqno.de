@@ -1,5 +1,10 @@
 node_modules/
 
 # The site is built to one place whichever command runs; see .vitepress/config.ts.
+# Also ignored from docs/ itself: that config's own default output directory,
+# for a `vitepress build` run directly from there instead of through the root
+# wrapper — the case the wrapper exists to make unnecessary, not impossible.
 .vitepress/dist/
 .vitepress/cache/
+docs/.vitepress/dist/
+docs/.vitepress/cache/
