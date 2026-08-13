@@ -65,7 +65,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define APP_VERSION   "2.8.1"
+#define APP_VERSION   "2.9.0"
 #define MAX_PKGS      512
 #define MAX_CATS      32
 #define MAX_PARAMS    12
@@ -123,6 +123,8 @@ static const L T_BACK      = {"Back",         "返回"};
 static const L T_OK        = {"OK",           "确定"};
 static const L T_CANCEL    = {"Cancel",       "取消"};
 static const L T_CLOSE     = {"Close",        "关闭"};
+static const L T_SHOW      = {"Show",         "展开"};
+static const L T_HIDE      = {"Hide",         "收起"};
 static const L T_DONE      = {"Done",         "完成"};
 static const L T_EMPTY     = {"Nothing in this category.", "这个分类下没有软件。"};
 static const L T_NOINST    = {"Nothing installed yet.",    "还没有装任何软件。"};
@@ -216,7 +218,27 @@ typedef struct {
 	int  type;
 	char choices[8][32];
 	int  nchoices;
+
+	/* Which `# group:` this field belongs to (index into Pkg.groups), or -1
+	 * for ungrouped — every field declared before the first `# group:` line,
+	 * which is every recipe today. Set once, at parse time, in add_param. */
+	int  group;
+
+	/* `# action: <this param> | verb | label | label.zh` — a button drawn on
+	 * its own row beneath this field, running <verb> through the same
+	 * progress screen Install uses (screen_progress) and returning to this
+	 * form with the field's choices reloaded. Empty verb means no button. */
+	char action_verb[32];
+	char action_label[64], action_label_zh[96];
 } Param;
+
+#define MAX_GROUPS 4
+
+typedef struct {
+	char id[32];
+	char label[64], label_zh[96];
+	int  folded;    /* the header's own `collapsed` keyword; toggled live too */
+} Group;
 
 typedef struct {
 	char id[64];
@@ -233,6 +255,13 @@ typedef struct {
 
 	Param params[MAX_PARAMS];
 	int  nparams;
+
+	Group groups[MAX_GROUPS];
+	int  ngroups;
+	/* Parse-time only: which group the next `# param:` line joins. -1 until
+	 * the header's first `# group:` line, meaningless once load_recipe
+	 * returns — nothing reads it after parsing finishes. */
+	int  cur_group;
 
 	int  status;          /* ST_* */
 	int  enabled;         /* -1 unknown, 0 no, 1 yes */
@@ -832,7 +861,77 @@ static void add_param(Pkg *p, const char *spec)
 		if (pm->nchoices < 2) pm->type = PT_TEXT;
 	} else pm->type = PT_TEXT;
 
+	pm->group = p->cur_group;
 	p->nparams++;
+}
+
+/* `group: id | English label | 中文标签 | collapsed-or-expanded`
+ *
+ * Every `# param:` line after this one, until the next `# group:` line,
+ * joins it — nothing to write on the param line itself. A field declared
+ * before the first `# group:` stays ungrouped, at the top: this is why a
+ * recipe with no groups at all needs no change to keep rendering exactly as
+ * it always has (docs/app-setup.edit.md §5). `collapsed` is the only
+ * fourth field that means anything; anything else, or nothing, is
+ * `expanded` — an author who names a group but forgets to fold it gets
+ * today's behaviour, not a hidden field. */
+static void add_group(Pkg *p, const char *spec)
+{
+	if (p->ngroups >= MAX_GROUPS) return;
+	char buf[256];
+	copy_str(buf, sizeof buf, spec);
+
+	char *f[4] = { buf, NULL, NULL, NULL };
+	int nf = 1;
+	for (char *q = buf; *q && nf < 4; q++)
+		if (*q == '|') { *q = '\0'; f[nf++] = q + 1; }
+	for (int i = 0; i < nf; i++) trim(f[i]);
+	if (!*f[0]) return;
+
+	Group *g = &p->groups[p->ngroups];
+	memset(g, 0, sizeof *g);
+	copy_str(g->id, sizeof g->id, f[0]);
+	copy_str(g->label, sizeof g->label, nf > 1 && *f[1] ? f[1] : f[0]);
+	copy_str(g->label_zh, sizeof g->label_zh, nf > 2 && *f[2] ? f[2] : g->label);
+	g->folded = (nf > 3 && !strcmp(f[3], "collapsed"));
+
+	p->cur_group = p->ngroups;
+	p->ngroups++;
+}
+
+/* `action: param | verb | English label | 中文标签`
+ *
+ * A button belonging to a field already declared earlier in this header —
+ * recipes name the field before the action that refreshes it, the same
+ * order `# group:` already requires. A name that does not match any
+ * `# param:` parsed so far is silently dropped, same as every other line
+ * this parser cannot use — no button, not a crash and not a load failure. */
+static void add_action(Pkg *p, const char *spec)
+{
+	char buf[512];
+	copy_str(buf, sizeof buf, spec);
+
+	char *f[4] = { buf, NULL, NULL, NULL };
+	int nf = 1;
+	for (char *q = buf; *q && nf < 4; q++)
+		if (*q == '|') { *q = '\0'; f[nf++] = q + 1; }
+	for (int i = 0; i < nf; i++) trim(f[i]);
+	if (!*f[0] || nf < 2 || !*f[1]) return;
+
+	char name[32];
+	copy_str(name, sizeof name, f[0]);
+	for (char *q = name; *q; q++)
+		if (!isalnum((unsigned char)*q) && *q != '_') *q = '_';
+
+	Param *pm = NULL;
+	for (int i = 0; i < p->nparams; i++)
+		if (!strcmp(p->params[i].name, name)) { pm = &p->params[i]; break; }
+	if (!pm) return;
+
+	copy_str(pm->action_verb, sizeof pm->action_verb, f[1]);
+	copy_str(pm->action_label, sizeof pm->action_label, nf > 2 && *f[2] ? f[2] : f[1]);
+	copy_str(pm->action_label_zh, sizeof pm->action_label_zh,
+	         nf > 3 && *f[3] ? f[3] : pm->action_label);
 }
 
 static void set_field(Pkg *p, const char *k, const char *v)
@@ -851,6 +950,8 @@ static void set_field(Pkg *p, const char *k, const char *v)
 	else if (!strcmp(k, "service"))     copy_str(p->service, sizeof p->service, v);
 	else if (!strcmp(k, "order"))       p->order = atoi(v);
 	else if (!strcmp(k, "param"))       add_param(p, v);
+	else if (!strcmp(k, "group"))       add_group(p, v);
+	else if (!strcmp(k, "action"))      add_action(p, v);
 	else if (!strcmp(k, "category")) {
 		char tmp[192];
 		copy_str(tmp, sizeof tmp, v);
@@ -874,6 +975,7 @@ static int load_recipe(const char *path, Pkg *p)
 	p->order = 100;
 	p->status = ST_UNKNOWN;
 	p->enabled = -1;
+	p->cur_group = -1;
 	copy_str(p->path, sizeof p->path, path);
 
 	char line[1024], cat_en[48] = "", cat_zh[48] = "", cat_for[24] = "";
@@ -2380,11 +2482,18 @@ static void progress_draw(Runner *r, const char *title, int log_scroll,
 	if (first_out) *first_out = first;
 }
 
-static void screen_progress(Pkg *p, const char *verb)
+/* title_override: NULL for every built-in verb (Install/Start/Stop/…) —
+ * verb_title already knows what to call those. A `# action:` button
+ * (docs/app-setup.edit.md §3.3) passes its own label here instead, because
+ * verb_title falls back to "Installing %s" for any verb it does not
+ * recognise by name, and growing that switch statement for every future
+ * action verb is the wrong fix when the button already carries a label. */
+static void screen_progress(Pkg *p, const char *verb, const char *title_override)
 {
 	Runner r;
 	char title[256];
-	verb_title(title, sizeof title, verb, p);
+	if (title_override && *title_override) copy_str(title, sizeof title, title_override);
+	else verb_title(title, sizeof title, verb, p);
 
 	if (!runner_start(&r, p, verb)) {
 		message(title, g_zh ? "启动失败：无法 fork。" : "could not start: fork failed");
@@ -2483,19 +2592,118 @@ static void screen_progress(Pkg *p, const char *verb)
  *
  * nmtui's form: a column of labels, a column of fields, OK and Cancel at the
  * bottom. Text fields take typing; a bool is a checkbox that Space flips; a
- * list is a chooser that Left and Right walk. Nothing else is worth a form.
+ * list is a chooser that Left and Right walk (or, past ENUM_POPUP_MIN
+ * choices, Enter opens a popup instead of walking eight of them one at a
+ * time — docs/app-setup.edit.md §3.2).
+ *
+ * Three kinds of row, not one field per row: a field itself (ROW_PARAM), a
+ * `# group:` header that folds a run of fields together (ROW_GROUP), and a
+ * `# action:` button belonging to the field above it (ROW_ACTION) —
+ * docs/app-setup.edit.md §3.1/§3.3. build_param_rows lays that list out
+ * fresh every frame, cheap enough that a fold toggle or a reloaded recipe
+ * just falls out of calling it again rather than needing its own patch-up
+ * path.
  */
+enum { ROW_PARAM, ROW_GROUP, ROW_ACTION };
+typedef struct { int kind; int idx; } VisRow;   /* idx: a param index, or (for ROW_GROUP) a group index */
+
+/* At most one group header before a field and one action row after it, for
+ * every field — generous headroom over what MAX_PARAMS/MAX_GROUPS actually
+ * allow, not a real bound anything gets close to. */
+#define MAX_VISROWS (MAX_PARAMS * 2 + MAX_GROUPS)
+
+static int build_param_rows(const Pkg *p, VisRow *rows)
+{
+	int n = 0, lastgroup = -2;   /* -2: "no group seen yet", distinct from -1 "ungrouped" */
+	for (int i = 0; i < p->nparams && n < MAX_VISROWS - 2; i++) {
+		const Param *pm = &p->params[i];
+		if (pm->group != lastgroup && pm->group >= 0)
+			rows[n++] = (VisRow){ROW_GROUP, pm->group};
+		lastgroup = pm->group;
+		if (pm->group >= 0 && p->groups[pm->group].folded) continue;
+		rows[n++] = (VisRow){ROW_PARAM, i};
+		if (pm->action_verb[0] && n < MAX_VISROWS) rows[n++] = (VisRow){ROW_ACTION, i};
+	}
+	return n;
+}
+
+/* Past this many choices, cycling ◀/▶ one at a time is slower than picking
+ * — xray.sh's eight-site camouflage field is the case this exists for. At
+ * or below it, inline ◀ value ▶ stays exactly as it always has; apply_to's
+ * three choices are faster to cycle than to pop a window over. */
+#define ENUM_POPUP_MIN 5
+
+/* A small selectable list, opened by Enter on a chooser field with more
+ * choices than are comfortable to walk with ◀/▶ — nmtui's own popup for
+ * exactly this. Same shape as message()/pager(): draw_root() first, this
+ * dialog's own box on the plain background, looped until Enter commits or
+ * Esc leaves the field unchanged. Returns 1 if the value changed. */
+static int screen_enum_popup(Param *pm)
+{
+	int sel = 0;
+	for (int i = 0; i < pm->nchoices; i++) if (!strcmp(pm->choices[i], pm->value)) sel = i;
+	int start = sel;
+
+	for (;;) {
+		term_measure();
+		grid_size(g_w, g_h);
+		draw_root();
+		hit_clear();
+
+		int cw = 4;
+		for (int i = 0; i < pm->nchoices; i++) {
+			int lw = u8width(pm->choices[i]);
+			if (lw > cw) cw = lw;
+		}
+		int w = cw + 6;
+		if (w > g_w - 4) w = g_w - 4;
+		if (w < 20) w = 20;
+		int h = pm->nchoices + 2;
+		if (h > g_h - 4) h = g_h - 4;
+		if (h < 3) h = 3;
+		int row = (g_h - h) / 2, col = (g_w - w) / 2;
+		if (row < 1) row = 1;
+		if (col < 0) col = 0;
+		win_box(row, col, w, h, param_label(pm));
+
+		for (int i = 0; i < pm->nchoices && i < h - 2; i++) {
+			int a = (i == sel) ? P_ENTRYACT : P_WIN;
+			gfill(row + 1 + i, col + 1, w - 2, " ", a);
+			gput(row + 1 + i, col + 2, pm->choices[i], a, w - 4);
+			hit_add(H_BODY, i, row + 1 + i, col + 1, 1, w - 2);
+		}
+		help_line_l(&T_HELPFORM);
+		grid_flush();
+
+		int k = read_key();
+		if (k == K_CLICK) {
+			int idx = 0;
+			if (hit_test(g_my, g_mx, &idx) == H_BODY) { sel = idx; k = K_ENTER; }
+			else continue;
+		}
+		if (k == K_UP)   { sel = (sel - 1 + pm->nchoices) % pm->nchoices; continue; }
+		if (k == K_DOWN) { sel = (sel + 1) % pm->nchoices; continue; }
+		if (k == K_ESC)  return 0;
+		if (k == K_ENTER) {
+			copy_str(pm->value, sizeof pm->value, pm->choices[sel]);
+			return sel != start;
+		}
+	}
+}
+
 static int screen_params(Pkg *p)
 {
 	if (!p->nparams) { message(pkg_name(p), S(T_NOPARAM)); return 0; }
 
 	Param before[MAX_PARAMS];
 	memcpy(before, p->params, sizeof before);
+	Group groups_before[MAX_GROUPS];
+	memcpy(groups_before, p->groups, sizeof groups_before);
 
-	/* 0..nparams-1 are the fields; then Save & Apply, Save, Cancel. */
-	int sel = 0;
-	const int B_APPLY = p->nparams, B_SAVE = p->nparams + 1, B_CANCEL = p->nparams + 2;
-	int nitems = p->nparams + 3;
+	VisRow rows[MAX_VISROWS];
+	int nrows = build_param_rows(p, rows);
+
+	int sel = 0, scroll = 0;
 	char title[256];
 	snprintf(title, sizeof title, "%s %s %s", pkg_name(p), MK_DOT, S(T_PARAMS));
 
@@ -2505,11 +2713,21 @@ static int screen_params(Pkg *p)
 		draw_root();
 		hit_clear();
 
+		/* Rebuilt every frame: a fold toggle or a reloaded recipe (the
+		 * Refresh button, §3.3) changes this out from under a running loop,
+		 * and rebuilding is cheap enough that patching the old list in place
+		 * is not worth a second code path for it. */
+		nrows = build_param_rows(p, rows);
+		int B_APPLY = nrows, B_SAVE = nrows + 1, B_CANCEL = nrows + 2;
+		int nitems = nrows + 3;
+		if (sel > B_CANCEL) sel = B_CANCEL;
+
 		int labw = 12;
-		for (int i = 0; i < p->nparams; i++) {
-			int lw = u8width(param_label(&p->params[i]));
-			if (lw > labw) labw = lw;
-		}
+		for (int i = 0; i < nrows; i++)
+			if (rows[i].kind == ROW_PARAM) {
+				int lw = u8width(param_label(&p->params[rows[i].idx]));
+				if (lw > labw) labw = lw;
+			}
 		if (labw > 28) labw = 28;
 		int fieldw = 30;
 		int w = labw + fieldw + 8;
@@ -2520,22 +2738,68 @@ static int screen_params(Pkg *p)
 		 * everything else in here is sized to its contents too. */
 		int bw = btn_width(S(T_SAVEAPPLY)) + 2 + btn_width(S(T_SAVE)) + 2 + btn_width(S(T_CANCEL));
 		if (w < bw + 4) { w = bw + 4; if (w > g_w - 2) w = g_w - 2; }
-		int h = p->nparams + 6;
+
+		/* Unclamped, every row gets exactly one line, same as before groups
+		 * and actions existed — clamped, a scrollbar (not a truncated list
+		 * with nothing to say so) takes up the difference. */
+		int h = nrows + 6;
 		if (h > g_h - 2) h = g_h - 2;
+		int visrows = h - 6;
+		if (visrows < 1) visrows = 1;
+		if (sel < nrows) {
+			if (sel < scroll) scroll = sel;
+			if (sel >= scroll + visrows) scroll = sel - visrows + 1;
+		}
+		if (scroll > nrows - visrows) scroll = nrows - visrows;
+		if (scroll < 0) scroll = 0;
+
 		int row = (g_h - h) / 2, col = (g_w - w) / 2;
 		if (row < 1) row = 1;
 		if (col < 0) col = 0;
 		win_box(row, col, w, h, title);
 
-		for (int i = 0; i < p->nparams && i < h - 5; i++) {
-			Param *pm = &p->params[i];
-			int y = row + 1 + i;
-			int focused = (sel == i);
-			gput(y, col + 2, param_label(pm), P_WIN, labw);
+		for (int slot = 0; slot < visrows && scroll + slot < nrows; slot++) {
+			VisRow *vr = &rows[scroll + slot];
+			int y = row + 1 + slot;
+			int focused = (sel == scroll + slot);
+
+			if (vr->kind == ROW_GROUP) {
+				Group *gr = &p->groups[vr->idx];
+				const char *lbl = (g_zh && gr->label_zh[0]) ? gr->label_zh : gr->label;
+				char hdr[160];
+				snprintf(hdr, sizeof hdr, "= %s", lbl);
+				int a = focused ? P_ENTRYACT : P_WIN;
+				gfill(y, col + 1, w - 2, " ", a);
+				gput(y, col + 2, hdr, a, w - 4);
+				char btxt[32];
+				snprintf(btxt, sizeof btxt, "<%s>", S(gr->folded ? T_SHOW : T_HIDE));
+				int btw = u8width(btxt);
+				gput(y, col + w - 2 - btw, btxt, a, btw);
+				hit_add(H_BODY, scroll + slot, y, col + 1, 1, w - 2);
+				continue;
+			}
+			if (vr->kind == ROW_ACTION) {
+				Param *apm = &p->params[vr->idx];
+				const char *lbl = (g_zh && apm->action_label_zh[0])
+				                  ? apm->action_label_zh : apm->action_label;
+				char btxt[96];
+				snprintf(btxt, sizeof btxt, "  %s", lbl);
+				int a = focused ? P_ENTRYACT : P_WIN;
+				gfill(y, col + 1, w - 2, " ", a);
+				gput(y, col + 2, btxt, a, w - 4);
+				hit_add(H_BODY, scroll + slot, y, col + 1, 1, w - 2);
+				continue;
+			}
+
+			Param *pm = &p->params[vr->idx];
+			/* A field that belongs to a group reads as nested under its
+			 * header — two columns in, same as the header's own "= " costs. */
+			int indent = (pm->group >= 0) ? 2 : 0;
+			gput(y, col + 2 + indent, param_label(pm), P_WIN, labw - indent);
 
 			int fx = col + 3 + labw;
 			int a = focused ? P_ENTRYACT : P_ENTRY;
-			hit_add(H_BODY, i, y, col + 2, 1, labw + 1 + fieldw + 1);
+			hit_add(H_BODY, scroll + slot, y, col + 2, 1, labw + 1 + fieldw + 1);
 			if (pm->type == PT_BOOL) {
 				int on = !strcmp(pm->value, "on") || !strcmp(pm->value, "1") ||
 				         !strcmp(pm->value, "yes") || !strcmp(pm->value, "true");
@@ -2548,9 +2812,10 @@ static int screen_params(Pkg *p)
 				gfill(y, fx, fieldw, " ", a);
 				gput(y, fx, ch, a, fieldw);
 				/* the two arrows are their own targets, so a choice can be
-				 * stepped with the mouse and not only with the keys */
-				hit_add(H_BTN, 1000 + i, y, fx, 1, 1);
-				hit_add(H_BTN, 2000 + i, y, fx + u8width(ch) - 1, 1, 1);
+				 * stepped with the mouse and not only with the keys — keyed
+				 * by row slot now, not param index, since sel is too */
+				hit_add(H_BTN, 1000 + scroll + slot, y, fx, 1, 1);
+				hit_add(H_BTN, 2000 + scroll + slot, y, fx + u8width(ch) - 1, 1, 1);
 			} else {
 				gfill(y, fx, fieldw, " ", a);
 				char cut[256];
@@ -2562,6 +2827,8 @@ static int screen_params(Pkg *p)
 				}
 			}
 		}
+		scrollbar(row + 1, col + w - 2, visrows, scroll, visrows, nrows,
+		          P_SBTHUMBW, P_SBTRACKW);
 
 		int bx = col + (w - bw) / 2;
 		if (bx < col + 1) bx = col + 1;
@@ -2579,10 +2846,17 @@ static int screen_params(Pkg *p)
 			switch (hit_test(g_my, g_mx, &idx)) {
 			case H_BODY:
 				sel = idx;
-				/* a checkbox is a thing you click, not a thing you select
-				 * and then press space on */
-				if (p->params[idx].type == PT_BOOL) k = ' ';
-				else continue;
+				if (idx < nrows && rows[idx].kind == ROW_PARAM) {
+					Param *cpm = &p->params[rows[idx].idx];
+					/* a checkbox is a thing you click, not a thing you
+					 * select and then press space on; a long chooser opens
+					 * the same popup a click gets on ENTER for one */
+					if (cpm->type == PT_BOOL) k = ' ';
+					else if (cpm->type == PT_ENUM && cpm->nchoices >= ENUM_POPUP_MIN) k = K_ENTER;
+					else continue;
+				} else if (idx < nrows) {
+					k = K_ENTER;   /* a group header or an action button */
+				} else continue;
 				break;
 			case H_BTN:
 				if (idx >= 2000) { sel = idx - 2000; k = K_RIGHT; }
@@ -2592,13 +2866,22 @@ static int screen_params(Pkg *p)
 			default: continue;
 			}
 		}
-		Param *pm = (sel < p->nparams) ? &p->params[sel] : NULL;
+		Param *pm = (sel < nrows && rows[sel].kind == ROW_PARAM)
+		            ? &p->params[rows[sel].idx] : NULL;
 
-		if (k == K_ESC) { memcpy(p->params, before, sizeof before); return 0; }
+		if (k == K_ESC) {
+			memcpy(p->params, before, sizeof before);
+			memcpy(p->groups, groups_before, sizeof groups_before);
+			return 0;
+		}
 		if (k == K_UP || k == K_BTAB) { sel = (sel - 1 + nitems) % nitems; continue; }
 		if (k == K_DOWN || k == K_TAB) { sel = (sel + 1) % nitems; continue; }
 		if (k == K_ENTER) {
-			if (sel == B_CANCEL) { memcpy(p->params, before, sizeof before); return 0; }
+			if (sel == B_CANCEL) {
+				memcpy(p->params, before, sizeof before);
+				memcpy(p->groups, groups_before, sizeof groups_before);
+				return 0;
+			}
 			if (sel == B_APPLY || sel == B_SAVE) {
 				if (!params_save(p)) {
 					message(title, g_zh ? "保存失败：写不了参数文件。"
@@ -2607,12 +2890,44 @@ static int screen_params(Pkg *p)
 				}
 				return sel == B_APPLY ? 2 : 1;
 			}
+			if (sel < nrows && rows[sel].kind == ROW_GROUP) {
+				Group *gr = &p->groups[rows[sel].idx];
+				gr->folded = !gr->folded;
+				continue;
+			}
+			if (sel < nrows && rows[sel].kind == ROW_ACTION) {
+				Param *apm = &p->params[rows[sel].idx];
+				const char *lbl = (g_zh && apm->action_label_zh[0])
+				                  ? apm->action_label_zh : apm->action_label;
+				screen_progress(p, apm->action_verb, lbl);
+				/* The verb may have rewritten this recipe's own header
+				 * (rewrite_choices/drop_candidate, docs/app-setup.edit.md
+				 * §3.1) — reload and stay in Settings with fresh choices,
+				 * rather than falling back to screen_app the way every
+				 * other verb does. */
+				char path[512];
+				copy_str(path, sizeof path, p->path);
+				Pkg reloaded;
+				if (load_recipe(path, &reloaded)) {
+					*p = reloaded;
+					params_load(p);
+				}
+				memcpy(before, p->params, sizeof before);
+				memcpy(groups_before, p->groups, sizeof groups_before);
+				continue;
+			}
+			if (pm && pm->type == PT_ENUM && pm->nchoices >= ENUM_POPUP_MIN) {
+				screen_enum_popup(pm);
+				continue;
+			}
 			sel = B_APPLY;         /* Enter in a field moves on to the primary */
 			continue;
 		}
 		if (!pm) {
-			if (k == K_LEFT)  sel = (sel - 1 < B_APPLY) ? B_CANCEL : sel - 1;
-			if (k == K_RIGHT) sel = (sel + 1 > B_CANCEL) ? B_APPLY : sel + 1;
+			if (sel >= nrows) {   /* one of the three bottom buttons */
+				if (k == K_LEFT)  sel = (sel - 1 < B_APPLY) ? B_CANCEL : sel - 1;
+				if (k == K_RIGHT) sel = (sel + 1 > B_CANCEL) ? B_APPLY : sel + 1;
+			}
 			continue;
 		}
 		if (pm->type == PT_BOOL) {
@@ -3293,7 +3608,7 @@ static void action_install(Pkg *p)
 		snprintf(q, sizeof q, S(T_TIGHTQ), pkg_name(p), ds ? p->disk : p->memory, have);
 		if (!confirm(pkg_name(p), q)) return;
 	}
-	screen_progress(p, "install");
+	screen_progress(p, "install", NULL);
 }
 
 static void screen_app(Pkg *p)
@@ -3371,13 +3686,13 @@ static void screen_app(Pkg *p)
 		case A_REMOVE: {
 			char q[400];
 			snprintf(q, sizeof q, S(T_REMOVEQ), pkg_name(p));
-			if (confirm(pkg_name(p), q)) screen_progress(p, "uninstall");
+			if (confirm(pkg_name(p), q)) screen_progress(p, "uninstall", NULL);
 			break;
 		}
-		case A_START:   screen_progress(p, "start"); break;
-		case A_STOP:    screen_progress(p, "stop"); break;
-		case A_RESTART: screen_progress(p, "restart"); break;
-		case A_BOOT:    screen_progress(p, p->enabled == 1 ? "disable" : "enable"); break;
+		case A_START:   screen_progress(p, "start", NULL); break;
+		case A_STOP:    screen_progress(p, "stop", NULL); break;
+		case A_RESTART: screen_progress(p, "restart", NULL); break;
+		case A_BOOT:    screen_progress(p, p->enabled == 1 ? "disable" : "enable", NULL); break;
 		}
 		v.bscroll = 0;
 	}
@@ -4223,11 +4538,19 @@ static int cli_screenshot(int n, char **rest)
 		progress_draw(&r, title, -1, 0, NULL, NULL);
 	} else if (!strcmp(screen, "params") && p) {
 		render_home();
+		/* Same VisRow list screen_params itself walks (build_param_rows) —
+		 * two implementations of what a group fold or an action row looks
+		 * like is exactly the drift this screenshot mode exists to catch,
+		 * not something to reintroduce for it. */
+		VisRow vrows[MAX_VISROWS];
+		int nvr = build_param_rows(p, vrows);
 		int labw = 12;
-		for (int i = 0; i < p->nparams; i++) {
-			int lw = u8width(param_label(&p->params[i]));
-			if (lw > labw) labw = lw;
-		}
+		for (int i = 0; i < nvr; i++)
+			if (vrows[i].kind == ROW_PARAM) {
+				int lw = u8width(param_label(&p->params[vrows[i].idx]));
+				if (lw > labw) labw = lw;
+			}
+		if (labw > 28) labw = 28;
 		int fieldw = 30, ww = labw + fieldw + 8;
 		if (ww > g_w - 6) { ww = g_w - 6; fieldw = ww - labw - 8; }
 		/* Same growth rule as the live form, or the screenshot would be a
@@ -4235,30 +4558,55 @@ static int cli_screenshot(int n, char **rest)
 		int bfit = btn_width(S(T_SAVEAPPLY)) + 2 + btn_width(S(T_SAVE)) + 2 +
 		           btn_width(S(T_CANCEL)) + 4;
 		if (ww < bfit) { ww = bfit; if (ww > g_w - 2) ww = g_w - 2; }
-		int hh = p->nparams + 6; if (hh > g_h - 2) hh = g_h - 2;
+		int hh = nvr + 6; if (hh > g_h - 2) hh = g_h - 2;
+		int visrows = hh - 6; if (visrows < 1) visrows = 1;
 		int row = (g_h - hh) / 2, col = (g_w - ww) / 2;
 		if (row < 1) row = 1;
 		if (col < 0) col = 0;
 		char title[256];
 		snprintf(title, sizeof title, "%s %s %s", pkg_name(p), MK_DOT, S(T_PARAMS));
 		win_box(row, col, ww, hh, title);
-		for (int i = 0; i < p->nparams && i < hh - 5; i++) {
-			Param *pm = &p->params[i];
-			int y = row + 1 + i, fx = col + 3 + labw;
-			int a = i == 0 ? P_ENTRYACT : P_ENTRY;
-			gput(y, col + 2, param_label(pm), P_WIN, labw);
-			gfill(y, fx, fieldw, " ", a);
+		for (int slot = 0; slot < visrows && slot < nvr; slot++) {
+			VisRow *vr = &vrows[slot];
+			int y = row + 1 + slot;
+			int a0 = (slot == 0) ? P_ENTRYACT : P_ENTRY;
+			if (vr->kind == ROW_GROUP) {
+				Group *gr = &p->groups[vr->idx];
+				const char *lbl = (g_zh && gr->label_zh[0]) ? gr->label_zh : gr->label;
+				char hdr[160];
+				snprintf(hdr, sizeof hdr, "= %s", lbl);
+				gput(y, col + 2, hdr, slot == 0 ? P_ENTRYACT : P_WIN, ww - 4);
+				char btxt[32];
+				snprintf(btxt, sizeof btxt, "<%s>", S(gr->folded ? T_SHOW : T_HIDE));
+				gput(y, col + ww - 2 - u8width(btxt), btxt, P_WIN, u8width(btxt));
+				continue;
+			}
+			if (vr->kind == ROW_ACTION) {
+				Param *apm = &p->params[vr->idx];
+				const char *lbl = (g_zh && apm->action_label_zh[0])
+				                  ? apm->action_label_zh : apm->action_label;
+				char btxt[96];
+				snprintf(btxt, sizeof btxt, "  %s", lbl);
+				gput(y, col + 2, btxt, slot == 0 ? P_ENTRYACT : P_WIN, ww - 4);
+				continue;
+			}
+			Param *pm = &p->params[vr->idx];
+			int indent = (pm->group >= 0) ? 2 : 0;
+			int fx = col + 3 + labw;
+			gput(y, col + 2 + indent, param_label(pm), P_WIN, labw - indent);
+			gfill(y, fx, fieldw, " ", a0);
 			if (pm->type == PT_BOOL) {
 				int on = !strcmp(pm->value, "on") || !strcmp(pm->value, "1");
 				char box[32];
 				snprintf(box, sizeof box, "[%s] %s", on ? MK_OK : " ", on ? S(T_ON) : S(T_OFF));
-				gput(y, fx, box, a, fieldw);
+				gput(y, fx, box, a0, fieldw);
 			} else if (pm->type == PT_ENUM) {
 				char ch[128];
 				snprintf(ch, sizeof ch, "%s %s %s", AR_L, pm->value, AR_R);
-				gput(y, fx, ch, a, fieldw);
-			} else gput(y, fx, pm->value, a, fieldw - 1);
+				gput(y, fx, ch, a0, fieldw);
+			} else gput(y, fx, pm->value, a0, fieldw - 1);
 		}
+		scrollbar(row + 1, col + ww - 2, visrows, 0, visrows, nvr, P_SBTHUMBW, P_SBTRACKW);
 		int bw = btn_width(S(T_SAVEAPPLY)) + 2 + btn_width(S(T_SAVE)) + 2 + btn_width(S(T_CANCEL));
 		int bx = col + (ww - bw) / 2;
 		if (bx < col + 1) bx = col + 1;

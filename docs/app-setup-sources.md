@@ -181,7 +181,60 @@ should not wait twice.
 
 Four kinds of field is the whole of it, deliberately. If your software needs
 more configuration than that, it has a config file, and the useful thing to do
-is say where it is in `do_help` rather than grow a wizard here.
+is say where it is in `do_help` rather than grow a wizard here. What follows —
+grouping fields and giving one a button — is not a fifth field kind; it is
+answering "which of my six fields does somebody actually have to look at,"
+which a field type was never going to fix.
+
+### Folding a run of fields together
+
+```sh
+# param: port     | 8080 | Listen port      | 监听端口
+# group: adv | Advanced | 高级 | collapsed
+# param: workers  | 4    | Worker processes | 工作进程数 | number
+# param: timeout  | 30   | Request timeout  | 超时时间   | number
+```
+
+Every `param:` line after a `group:` line joins it, until the next one —
+nothing goes on the param line itself. Fields declared before the first
+`group:` stay ungrouped, at the top, which is why a recipe that never groups
+anything needs no change at all. The fourth field is `collapsed` or
+`expanded` (default); a holder folds or unfolds it in the form with Enter or
+a click, same as everything else. Old binaries — anything before 2.9 — see a
+comment line with a colon they do not recognise and skip it, so a recipe
+using this shows every field flat on one, same as it always did.
+
+### A button belonging to one field
+
+```sh
+# param: target  |      | Camouflage site   | 伪装网站
+# action: target | scan | ↻ Refresh         | ↻ 重新扫描
+```
+
+`action: <field it belongs to> | <verb> | label | 中文标签` draws a button on
+its own row directly under that field. The field must already be declared —
+name the field before the action that refreshes it, same order `group:`
+already asks for. `<verb>` is whatever `case "$1" in …` your own script
+answers before it hands off to `app_main "$@"`:
+
+```sh
+[ "$1" = scan ] && { do_scan; exit $?; }   # before app_main "$@"
+app_main "$@"
+```
+
+Pressing the button runs that verb through the exact progress screen Install
+already uses — same bar, same step sentence, same log — and comes back to
+Settings with the form reloaded, so a verb that rewrites your own header (the
+way `rewrite_choices`-style code fills a chooser with what it just found) has
+somewhere for the new choices to show up without a holder leaving the screen.
+`private-pkg/realityscan.sh`'s own `↻ Refresh` next to Camouflage target is
+the worked example this was built against: one press re-scans a subnet and
+refreshes the dropdown, without also touching whatever configuration is
+already live.
+
+Still no sub-form, and that boundary has not moved: a field with a button can
+run one script and reload; it cannot open a second form of its own. That is
+still a config file's job.
 
 ---
 
