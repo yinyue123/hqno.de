@@ -4508,35 +4508,123 @@ static void domain_usage(FILE *out)
 	fprintf(out,
 		"Usage: app-setup domain <command>\n"
 		"\n"
+		"Commands:\n"
 		"  add <domain> <port> [self-hosted] [http-port]\n"
-		"                       point a domain at this container's <port>.\n"
-		"                       Default is a certificate this host manages;\n"
-		"                       \"self-hosted\" means this container terminates\n"
-		"                       its own TLS, and the optional last number is a\n"
-		"                       separate plain-HTTP port alongside it.\n"
-		"  del <domain>         stop answering for a domain\n"
-		"  ls                   list this container's domains\n"
-		"  help                 this text\n");
+		"                    claim a domain and point it at this container\n"
+		"  del <domain>      stop answering for a domain\n"
+		"  ls                list this container's domains, as a table\n"
+		"  help              this text\n"
+		"\n"
+		"Arguments to \"add\":\n"
+		"  <domain>       required, string. The host name to route, e.g.\n"
+		"                 example.com or *.example.com (wildcard first label\n"
+		"                 only). No scheme, no port, no path — just the name.\n"
+		"  <port>         required, integer 1-65535. The TCP port this\n"
+		"                 container is listening on. With a managed\n"
+		"                 certificate (the default) this is the plain-HTTP\n"
+		"                 backend port; with \"self-hosted\" it is the TLS\n"
+		"                 backend port instead.\n"
+		"  self-hosted    optional, literal keyword (type it exactly as\n"
+		"                 shown, or omit it). Leave it out to let this host\n"
+		"                 get you a certificate and terminate TLS for you —\n"
+		"                 the usual case. Include it to terminate TLS\n"
+		"                 yourself inside this container; traffic reaches\n"
+		"                 <port> still encrypted (SNI passthrough).\n"
+		"  [http-port]    optional, integer 1-65535. Only meaningful\n"
+		"                 together with \"self-hosted\": a second, plain-HTTP\n"
+		"                 port this container also answers on, alongside\n"
+		"                 its own TLS port. Skip it if this container only\n"
+		"                 speaks HTTPS.\n"
+		"\n"
+		"Examples:\n"
+		"  app-setup domain add example.com 8080\n"
+		"      Managed certificate. example.com:443 (HTTPS, cert handled by\n"
+		"      this host) and example.com:80 both forward to this\n"
+		"      container's port 8080.\n"
+		"\n"
+		"  app-setup domain add *.example.com 3000\n"
+		"      Same, but for a wildcard: any-name.example.com forwards to\n"
+		"      port 3000.\n"
+		"\n"
+		"  app-setup domain add example.com 8443 self-hosted\n"
+		"      This container terminates its own TLS on port 8443.\n"
+		"      example.com:443 is passed through untouched; nothing on :80.\n"
+		"\n"
+		"  app-setup domain add example.com 8443 self-hosted 8080\n"
+		"      Same as above, and example.com:80 also forwards to this\n"
+		"      container's port 8080 in plain HTTP.\n"
+		"\n"
+		"  app-setup domain del example.com\n"
+		"      Stop answering for example.com. Other domains on this\n"
+		"      container are unaffected.\n"
+		"\n"
+		"  app-setup domain ls\n"
+		"      List every domain this container currently answers for, as\n"
+		"      a table, with how many of your allowance are in use.\n");
 }
 
 /* Very small, deliberately not a JSON parser: every successful reply this
  * command ever gets back is exactly {"domains":[{"domain":"a"},…],"max":N}
  * (server/internal/api/domains.go's domainResult) and nothing else, so
  * pulling every "domain":"…" substring out by hand is exact for the one
- * shape this ever has to read. */
-static void domain_print_list(const char *json)
+ * shape this ever has to read. hqnode_sock_call's whole reply is a static
+ * 512-byte line, so a domain list can never hold more entries than that
+ * fits — this cap is just generous headroom, not a real limit anyone hits.
+ */
+#define DOMAIN_LIST_CAP 32
+
+static int domain_parse_list(const char *json, char rows[][254], int cap)
 {
 	const char *p = json;
-	int printed = 0;
-	while ((p = strstr(p, "\"domain\":\"")) != NULL) {
+	int n = 0;
+	while (n < cap && (p = strstr(p, "\"domain\":\"")) != NULL) {
 		p += 10; /* strlen("\"domain\":\"") */
 		const char *end = strchr(p, '"');
 		if (!end) break;
-		printf("  %.*s\n", (int)(end - p), p);
+		size_t len = (size_t)(end - p);
+		if (len > 253) len = 253;
+		memcpy(rows[n], p, len);
+		rows[n][len] = '\0';
+		n++;
 		p = end;
-		printed = 1;
 	}
-	if (!printed) printf("  (no domains)\n");
+	return n;
+}
+
+/* -1 if "max" is missing, which domain_print_table treats as "don't know
+ * the allowance" rather than zero. */
+static int domain_parse_max(const char *json)
+{
+	const char *p = strstr(json, "\"max\":");
+	if (!p) return -1;
+	return atoi(p + 6); /* strlen("\"max\":") */
+}
+
+static void domain_print_table(const char *json)
+{
+	static char rows[DOMAIN_LIST_CAP][254];
+	int n = domain_parse_list(json, rows, DOMAIN_LIST_CAP);
+	int max = domain_parse_max(json);
+
+	if (max >= 0) printf("Your domains (%d of %d used):\n\n", n, max);
+	else printf("Your domains:\n\n");
+
+	if (n == 0) {
+		printf("  (none yet — see \"app-setup domain help\" to add one)\n");
+		return;
+	}
+
+	size_t width = strlen("DOMAIN");
+	for (int i = 0; i < n; i++) {
+		size_t len = strlen(rows[i]);
+		if (len > width) width = len;
+	}
+	int idx_width = 1;
+	for (int t = n; t >= 10; t /= 10) idx_width++;
+
+	printf("  %-*s  %-*s\n", idx_width, "#", (int)width, "DOMAIN");
+	for (int i = 0; i < n; i++)
+		printf("  %-*d  %-*s\n", idx_width, i + 1, (int)width, rows[i]);
 }
 
 /* hqnode_sock_call's answer is one line: NULL if the socket could not be
@@ -4558,10 +4646,7 @@ static int domain_reply(const char *resp)
 		return 1;
 	}
 	const char *json = resp[2] == ' ' ? resp + 3 : resp + 2;
-	if (*json) {
-		printf("Your domains:\n");
-		domain_print_list(json);
-	}
+	if (*json) domain_print_table(json);
 	return 0;
 }
 
