@@ -4831,6 +4831,14 @@ int main(int argc, char **argv)
 		return shutdown_main(argv, "poweroff");
 	if (argc > 0 && !strcmp(prog_basename(argv[0]), "halt"))
 		return shutdown_main(argv, "halt");
+	// `domain` on its own, not only `app-setup domain` — the same multicall
+	// trick passwd/poweroff/halt already answer to, just with no real system
+	// binary standing behind this one to fall through to: argv[1:] is
+	// cli_domain's own sub-verb (add/del/ls/help), unlike shutdown_main's
+	// argv, which is forwarded whole because a real poweroff/halt is exec'd
+	// with it.
+	if (argc > 0 && !strcmp(prog_basename(argv[0]), "domain"))
+		return cli_domain(argc - 1, argv + 1);
 
 	/* English unless somebody says otherwise, and only APP_SETUP_LANG or
 	 * --lang says otherwise. LANG is not consulted: it describes the locale
