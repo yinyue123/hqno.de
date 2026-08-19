@@ -144,7 +144,11 @@ do_restore() {
 	[ -d "$_d/files" ] || die "that archive has no files in it"
 	echo
 	echo "This puts back, overwriting what is there now:"
-	(cd "$_d/files" && find . -maxdepth 3 -type d | sed 's|^\.|    /|' | head -20)
+	# `.` is the root of the copy and `./srv` is a path under it; substituting
+	# the dot alone turned the second into `//srv`, which reads as a typo in
+	# the one list somebody checks before overwriting their own files.
+	(cd "$_d/files" && find . -maxdepth 3 -type d |
+		sed -e 's|^\.$|    /|' -e 's|^\./|    /|' | head -20)
 	echo
 	warn "existing files at those paths are overwritten, not moved aside —"
 	warn "there is no one directory to move, the way there is for a site."

@@ -1315,6 +1315,90 @@ tmp_dir() {
 	printf '%s' "$_d"
 }
 
+# ------------------------------------------------------------------- cron --
+# Two families of image, and two different places a timer actually lives.
+#
+# Debian and the RHEL rebuilds ship vixie cron / cronie, which read drop-in
+# files from /etc/cron.d — one file per job, each line carrying the user it
+# runs as. Alpine's crond is busybox, which has never read that directory: it
+# reads one crontab per user out of /etc/crontabs, and those lines have no user
+# field because the file is already the answer to "whose".
+#
+# Writing the Debian shape on an Alpine box is the worst outcome available,
+# because it is not an error anybody sees. The file gets created, the install
+# says it worked, and nothing ever reads it — a backup nobody knows is not
+# running until the night they need it. On Alpine it was louder than that and
+# still wrong: /etc/cron.d does not exist at all, so the redirect failed and
+# `set -e` took the whole recipe down at "writing the schedule".
+#
+# The marker on the busybox side is a trailing `# app-setup:<name>` comment.
+# The shell that runs the command treats it as a comment, so it costs nothing,
+# and it gives grep one anchor to rewrite or remove the line by.
+
+# dropin, crontab, or none. Checked rather than derived from $PM: what matters
+# is which of the two a machine will actually read, and a container can have
+# been given either.
+cron_kind() {
+	if [ -d /etc/cron.d ];  then printf 'dropin'
+	elif have crontab;      then printf 'crontab'
+	else                         printf 'none'
+	fi
+}
+
+# cron_set <name> <five-field spec> <command>
+# Idempotent. An empty spec removes the timer and succeeds: "installed with the
+# schedule off" is a state a recipe is allowed to be in, and it is not this
+# function's business to have an opinion about it.
+cron_set() {
+	local _n _when _cmd _f _mark _cur
+	_n="$1"; _when="${2-}"; _cmd="${3-}"
+	_mark="# app-setup:$_n"
+	case "$(cron_kind)" in
+	dropin)
+		_f="/etc/cron.d/$_n"
+		# Debian's cron ignores a file in cron.d whose name has a dot in it,
+		# and silently: no log line, no error, the job simply never runs.
+		case "$_n" in *.*) warn "cron.d ignores filenames containing a dot — '$_n' will never fire" ;; esac
+		[ -n "$_when" ] || { rm -f "$_f"; return 0; }
+		cat > "$_f" <<EOF || return 1
+# app-setup — written by \`app-setup install $_n\`. Edit Settings rather than
+# this file; a reinstall overwrites it.
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+SHELL=/bin/sh
+$_when root $_cmd
+EOF
+		chmod 0644 "$_f"
+		;;
+	crontab)
+		# Read, drop our old line, add the new one, write the lot back.
+		# `crontab -` is stdin on busybox and on vixie alike.
+		_cur="$(crontab -l 2>/dev/null | grep -v "$_mark\$" || true)"
+		[ -z "$_when" ] || _cur="$(printf '%s\n%s %s %s' "$_cur" "$_when" "$_cmd" "$_mark")"
+		printf '%s\n' "$_cur" | sed '/^[[:space:]]*$/d' | crontab - || {
+			err "could not write root's crontab"
+			return 1
+		}
+		;;
+	*)
+		return 1
+		;;
+	esac
+	return 0
+}
+
+cron_clear() { cron_set "$1" "" ""; }
+
+# The line that is actually in place, or nothing. Read back rather than
+# remembered: what somebody is trying to find out here is whether the thing
+# they asked for is really there, and a value this file kept for itself would
+# answer a different question.
+cron_line_of() {
+	case "$(cron_kind)" in
+	dropin)  sed -n 's/^\([0-9*][^ ]*\([ \t]\+[^ \t]\+\)\{4\}\).*/\1/p' "/etc/cron.d/$1" 2>/dev/null | head -1 ;;
+	crontab) crontab -l 2>/dev/null | sed -n "s/^\(.*\) # app-setup:$1\$/\1/p" | head -1 ;;
+	esac
+}
+
 # ----------------------------------------------------------------- backup --
 #
 # Five steps, in the order they have to happen: get a tool that can upload,

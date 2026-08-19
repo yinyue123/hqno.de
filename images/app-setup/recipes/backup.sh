@@ -35,13 +35,19 @@
 # here; it changed wordpress.sh.
 . /usr/lib/app-setup/common.sh
 
-CRON=/etc/cron.d/app-setup-backup
-CHECK_FILE="$CRON"
+# The job's name, not a path: where a timer lives is the machine's business and
+# common.sh knows the two answers. This file used to name /etc/cron.d directly,
+# which is a directory Alpine does not have — see the cron section there.
+CRON_NAME=app-setup-backup
+# The recipe is installed when this exists, which is not the same as the timer
+# being set: `schedule = off` is a thing somebody is allowed to choose, and it
+# must not uninstall the card they chose it on. The timer is read back from
+# cron itself, so the two facts never drift apart.
+BK_STAMP="$APP_SETUP_STATE/backup.installed"
+CHECK_FILE="$BK_STAMP"
 
 # ------------------------------------------------------------------ status --
-# "Installed" means the schedule is in place, not that a package is — the whole
-# point of this recipe is the cron entry.
-is_installed() { [ -f "$CRON" ]; }
+is_installed() { [ -f "$BK_STAMP" ]; }
 
 version_line() {
 	local _last _n
@@ -49,8 +55,10 @@ version_line() {
 	_last="$(ls -1 "$BK_DIR"/*.tgz 2>/dev/null | sort -r | head -1)"
 	if [ "${_n:-0}" -gt 0 ]; then
 		printf '%s archives, newest %s' "$_n" "$(basename "$_last")"
-	else
+	elif [ -n "$(cron_line_of "$CRON_NAME")" ]; then
 		printf 'scheduled %s, nothing saved yet' "$(param schedule daily)"
+	else
+		printf 'no timer, nothing saved yet'
 	fi
 }
 
@@ -65,6 +73,17 @@ do_status() {
 # ----------------------------------------------------------------- install --
 # `off` still installs: somebody who wants to press the button by hand and
 # never on a timer should not have to leave the recipe uninstalled to get it.
+# Where the timer ended up, for the help text and the note. Somebody who wants
+# to look at it with their own eyes needs the answer for *this* machine, and it
+# is two different answers.
+cron_where() {
+	case "$(cron_kind)" in
+	dropin)  printf '/etc/cron.d/%s' "$CRON_NAME" ;;
+	crontab) printf "root's crontab (\`crontab -l\`)" ;;
+	*)       printf 'nowhere — this machine has no cron' ;;
+	esac
+}
+
 cron_line() {
 	case "$(param schedule daily)" in
 		off)    printf '' ;;
@@ -74,30 +93,21 @@ cron_line() {
 	esac
 }
 
+# Never fatal. A machine with no cron at all is a machine where the button
+# still works and the timer does not, and taking the whole install down over
+# that leaves somebody with neither.
 write_cron() {
 	local _when
 	_when="$(cron_line)"
-	if [ -z "$_when" ]; then
-		# The file still has to exist — is_installed is what draws the card,
-		# and a holder who set `off` has still installed this.
-		printf '# app-setup backup — schedule is off. Set it in Settings.\nPATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n' > "$CRON"
-	else
-		# Output goes to app-setup's own log rather than to cron's mail, which
-		# nothing in a container reads. The `--no-color` matters: a log full of
-		# escape sequences is a log nobody opens twice.
-		cat > "$CRON" <<EOF
-# app-setup backup — written by \`app-setup install backup\`, edit Settings
-# rather than this file; a reinstall overwrites it.
-PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-SHELL=/bin/sh
-$_when root app-setup --no-color backup $(param targets mysql | tr ',' ' ') >/dev/null 2>&1
-EOF
+	# Output goes to app-setup's own log rather than to cron's mail, which
+	# nothing in a container reads. The `--no-color` matters: a log full of
+	# escape sequences is a log nobody opens twice.
+	if cron_set "$CRON_NAME" "$_when" \
+	     "app-setup --no-color backup $(param targets mysql | tr ',' ' ') >/dev/null 2>&1"; then
+		return 0
 	fi
-	chmod 0644 "$CRON"
-	# Debian's cron ignores a file in cron.d whose name has a dot in it, and
-	# silently: no log line, no error, the job simply never runs. Ours has no
-	# dot, and this is here so that stays true if anybody renames it.
-	case "$(basename "$CRON")" in *.*) warn "cron.d ignores filenames containing a dot — this will never fire" ;; esac
+	warn "no cron on this machine — the ▶ button still works, the timer will not"
+	return 0
 }
 
 # Neither tool is in a RHEL rebuild's base repos, so the enterprise distros
@@ -133,8 +143,9 @@ do_install() {
 	install_tool
 
 	step "writing the schedule"
-	have crontab || have cron || have crond || warn "no cron found on this machine — the button still works, the timer will not"
+	mkdir -p "$APP_SETUP_STATE" && : > "$BK_STAMP"
 	write_cron
+	[ -z "$(cron_line)" ] || info "the timer is in $(cron_where)"
 	# The Settings form holds an S3 secret. params_save truncates without
 	# changing the mode, so setting it once here keeps it for every later save.
 	chmod 600 "$APP_SETUP_CONF/params/backup.conf" 2>/dev/null || true
@@ -149,7 +160,7 @@ do_install() {
 
 	save_note backup <<EOF
 backups     $BK_DIR/<name>_YYYYMMDDHHMMSS.tgz
-schedule    $(param schedule daily)$([ -n "$(cron_line)" ] && printf ' (%s)' "$(cron_line)")
+schedule    $(param schedule daily)$([ -n "$(cron_line)" ] && printf ' (%s), in %s' "$(cron_line)" "$(cron_where)")
 targets     $(param targets mysql)
 method      $(param method dump)
 keep        $(param keep 7) locally
@@ -160,7 +171,8 @@ EOF
 }
 
 do_uninstall() {
-	rm -f "$CRON"
+	cron_clear "$CRON_NAME" || true
+	rm -f "$BK_STAMP"
 	drop_note backup
 	ok "the schedule is gone."
 	info "$BK_DIR was left alone — your archives are in it."
@@ -262,7 +274,7 @@ do_help() {
     一致的）。除非你要连数据目录一起搬机器，才需要 files。
 
   定时
-    off / hourly / daily / weekly，写进 $CRON。
+    off / hourly / daily / weekly，写进 $(cron_where)。
     daily 是每天 4:17，weekly 是周日 4:17 —— 错开整点，因为整点是全世界
     的定时任务一起醒来的时刻。
 
@@ -312,7 +324,7 @@ Backup
     the data directory itself, to move it to another machine.
 
   Schedule
-    off / hourly / daily / weekly, written to $CRON.
+    off / hourly / daily / weekly, written to $(cron_where).
     daily is 04:17, weekly is Sunday 04:17 — off the hour on purpose, because
     the top of the hour is when every cron job on earth wakes up at once.
 
