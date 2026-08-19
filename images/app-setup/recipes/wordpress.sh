@@ -14,6 +14,8 @@
 # ports: 80
 # requires: nginx, php, mysql
 # service: nginx
+# param: backup | default | Backup | 备份 | default,dump,files
+# action: backup | backup | ▶ Back up now | ▶ 立即备份
 . /usr/lib/app-setup/common.sh
 
 WP_ROOT=/var/www/wordpress
@@ -101,7 +103,7 @@ define('$_k', '$(rand_pass 64)');"
 <?php
 /**
  * Written by app-setup on $(date -u +%Y-%m-%d). Safe to edit.
- * The password below is also in /root/.app-setup/wordpress.txt.
+ * The password below is also in /etc/app-setup/secrets/wordpress.txt.
  */
 
 define('DB_NAME',     '$WP_DB');
@@ -323,13 +325,68 @@ do_status() {
 	exit 3
 }
 
+# -------------------------------------------------------------- dump/load --
+# The database only. The files are what `backup` adds on top — a .sql on its
+# own is the thing people want before an upgrade, and it is small enough to
+# keep several of.
+do_dump() {
+	local _f
+	_f="$(dump_target wordpress sql "${1-}")"
+	step "dumping the $WP_DB database"
+	mysql_dump_db "$WP_DB" "$_f"
+	chmod 600 "$_f"
+	ok "$_f  ($(du -h "$_f" 2>/dev/null | awk '{print $1}'))"
+	info "put it back with:  app-setup load wordpress"
+	info "this is the database only; app-setup backup wordpress takes the files too"
+}
+
+do_load() {
+	local _f
+	_f="$(dump_source wordpress sql "${1-}")"
+	step "loading $_f"
+	warn "this replaces the $WP_DB database"
+	mysql_load_file "$_f"
+	ok "loaded"
+}
+
+# ------------------------------------------------------------------ backup --
+# A site is a database and a directory, and half of either one is worthless —
+# so both go into the same archive and come back together.
+do_backup() {
+	bk_begin wordpress
+	is_installed || die "wordpress is not installed here"
+	bk_quiesce
+	bk_mysql_db "$WP_DB"
+	step "copying ${WP_ROOT}"
+	bk_add "$WP_ROOT"
+	bk_finish
+}
+
+do_restore() {
+	local _d
+	bk_open wordpress "${1-}"
+	_d="$BK_UNPACKED"
+	bk_mysql_load "$_d"
+	if [ -d "$_d/files${WP_ROOT}" ]; then
+		step "putting the site files back"
+		# The old tree is moved aside rather than deleted: if this archive
+		# turns out to be the wrong one, what was here is still recoverable.
+		[ -d "$WP_ROOT" ] && mv "$WP_ROOT" "$WP_ROOT.before-restore.$(date -u +%Y%m%d%H%M%S)"
+		bk_restore_files "$_d"
+		chown -R "$(web_user)" "$WP_ROOT" 2>/dev/null || true
+	fi
+	bk_close
+	ok "wordpress restored"
+	info "the previous files, if any, are beside ${WP_ROOT} with a .before-restore stamp"
+}
+
 do_help() { cat <<'EOF'
 WordPress
 
   Where it is
-    /var/www/wordpress            the site
-    /var/www/wordpress/wp-config.php   database details and keys
-    /root/.app-setup/wordpress.txt     the same, readable by root only
+    /var/www/wordpress                    the site
+    /var/www/wordpress/wp-config.php      database details and keys
+    /etc/app-setup/secrets/wordpress.txt  the same, readable by root only
 
   Finishing the install
     Open the site in a browser. The first page asks for a title and an

@@ -31,11 +31,18 @@
 set -e
 
 APP_SETUP_LIB=1
-# Overridable so the demo recipes under images/app-setup/demo can be driven on
-# a workstation without writing anywhere a real install would. Nothing in a
-# published image sets either of these.
+# Everything a person might open lives under one directory, and that directory
+# is /etc, because that is where they will look: the recipes as *.sh, what the
+# Settings form saved in params/, generated passwords in secrets/ (0700, and
+# each file 0600). APP_SETUP_STATE is the other half — bookkeeping nobody
+# edits, the package-index refresh stamp above all — and stays in /var/lib.
+#
+# All three are overridable so the demo recipes under images/app-setup/demo can
+# be driven on a workstation without writing anywhere a real install would.
+# Nothing in a published image sets any of them.
+APP_SETUP_CONF="${APP_SETUP_CONF:-/etc/app-setup}"
 APP_SETUP_STATE="${APP_SETUP_STATE:-/var/lib/app-setup}"
-APP_SETUP_SECRETS="${APP_SETUP_SECRETS:-/root/.app-setup}"
+APP_SETUP_SECRETS="${APP_SETUP_SECRETS:-$APP_SETUP_CONF/secrets}"
 
 # ---------------------------------------------------------------- output --
 # Colour only on a real terminal. Under the TUI the output is a pipe that is
@@ -91,8 +98,9 @@ need_root() {
 #   # param: level| info          | Log level     | 日志级别   | debug,info,warn
 #
 # and reads it back with `param port 80`. The Settings form in app-setup edits
-# those and saves them under $APP_SETUP_STATE/params/<id>.conf; every verb then
-# runs with APP_PARAM_PORT and friends in its environment.
+# those and saves them under $APP_SETUP_CONF/params/<id>.conf — next to the
+# recipe itself, so one directory answers "where is the config"; every verb
+# then runs with APP_PARAM_PORT and friends in its environment.
 #
 # The default given here is what applies when nothing has been saved and when
 # somebody runs `sh /etc/app-setup/nginx.sh install` by hand, so a recipe never
@@ -1105,25 +1113,50 @@ php_bin() {
 # A suite is other recipes plus the wiring between them. Calling them rather
 # than repeating them is what stops LNMP and LAMP from disagreeing with the
 # nginx and MariaDB cards about what is installed.
+# app-setup hands a recipe its saved settings as APP_PARAM_* in the
+# environment. A recipe started by *another recipe* — `recipe files backup`,
+# which is how the backup card runs everything on its list — never went
+# through app-setup, so without this it sees only the defaults in its own
+# header.
+#
+# The symptom is the nastiest shape a bug can have here: pressing the button
+# works, because that call did come through app-setup, and the nightly run
+# silently saves nothing. Both `files` and `sqlite` are configured entirely by
+# their settings, so for them "nothing" is the whole backup.
+#
+# Always called inside a subshell, so the exports die with the child.
+param_export() {   # param_export <id>
+	local _f _line _n _v
+	_f="$APP_SETUP_CONF/params/$1.conf"
+	[ -f "$_f" ] || return 0
+	while IFS= read -r _line; do
+		case "$_line" in ''|\#*) continue ;; esac
+		_n="${_line%%=*}"; _v="${_line#*=}"
+		[ "$_n" != "$_line" ] || continue
+		_n="$(printf '%s' "$_n" | tr 'abcdefghijklmnopqrstuvwxyz-' 'ABCDEFGHIJKLMNOPQRSTUVWXYZ_')"
+		export "APP_PARAM_$_n=$_v"
+	done < "$_f"
+}
+
 recipe() {         # recipe <id> <verb>
 	local _d _found _verb _want
 	_want="$1"; _verb="$2"; _found=""
-	for _d in $(printf '%s' "${APP_SETUP_PATH:-/etc/app-setup:/usr/local/etc/app-setup}" | tr ':' ' '); do
+	for _d in $(printf '%s' "${APP_SETUP_PATH:-/etc/app-setup:/etc/app-setup/local}" | tr ':' ' '); do
 		[ -f "$_d/$_want.sh" ] && _found="$_d/$_want.sh"
 	done
 	[ -n "$_found" ] || die "this needs the '$_want' source, which is not on this machine"
 	step "$_verb: $_want"
-	sh "$_found" "$_verb"
+	( param_export "$_want"; sh "$_found" "$_verb" )
 }
 
 recipe_status() {  # 0 running, 1 stopped, 2 absent — same codes as the verb
 	local _d _found _want
 	_want="$1"; _found=""
-	for _d in $(printf '%s' "${APP_SETUP_PATH:-/etc/app-setup:/usr/local/etc/app-setup}" | tr ':' ' '); do
+	for _d in $(printf '%s' "${APP_SETUP_PATH:-/etc/app-setup:/etc/app-setup/local}" | tr ':' ' '); do
 		[ -f "$_d/$_want.sh" ] && _found="$_d/$_want.sh"
 	done
 	[ -n "$_found" ] || return 2
-	sh "$_found" status >/dev/null 2>&1
+	( param_export "$_want"; sh "$_found" status ) >/dev/null 2>&1
 }
 
 # Install a part only if it is missing. An application suite laid on top of a
@@ -1282,6 +1315,435 @@ tmp_dir() {
 	printf '%s' "$_d"
 }
 
+# ----------------------------------------------------------------- backup --
+#
+# Five steps, in the order they have to happen: get a tool that can upload,
+# quiesce whatever is being copied, pack it, put it somewhere that is not this
+# machine, and be able to walk all of it backwards. A recipe supplies only the
+# middle — it is the only thing that knows what its own data is — and the rest
+# lives here so that every archive is named the same way, pruned the same way
+# and uploaded to the same place:
+#
+#   do_backup() {
+#           bk_begin mysql                      # -> mysql_20210403123221.tgz
+#           bk_quiesce                          # stops the service if bk_method is files
+#           mysqldump --all-databases > "$(bk_path all.sql)"
+#           bk_add /etc/mysql                   # config travels with the data
+#           bk_finish                           # pack, upload, prune, restart
+#   }
+#
+# The settings all of this reads belong to the `backup` recipe, not to the
+# recipe being backed up: one destination and one schedule for the machine,
+# edited in one form, and `bk_conf` is how the other recipes see them.
+BK_DIR="${BK_DIR:-/data/backups}"
+
+# `dump` and `load` are the other half, and deliberately not the same thing as
+# `backup` and `restore`. A backup is the whole pipeline — packed, dated,
+# uploaded, pruned, on a timer. A dump is one plain file you can open, read,
+# scp somewhere, mail to somebody who asked, or feed to a different server.
+# Both exist because people want both, and a tool that only offers the
+# packaged one gets worked around with a half-remembered mysqldump line.
+DUMP_DIR="${DUMP_DIR:-/data/dumps}"
+
+# Where a dump should be written: what was asked for, or a dated name under
+# $DUMP_DIR using the same stamp the archives use.
+dump_target() {    # dump_target <prefix> <ext> [given]
+	local _g
+	_g="${3-}"
+	if [ -n "$_g" ]; then
+		case "$_g" in */*) : ;; *) _g="$DUMP_DIR/$_g" ;; esac
+		mkdir -p "$(dirname "$_g")"
+		printf '%s' "$_g"
+		return 0
+	fi
+	mkdir -p "$DUMP_DIR"
+	printf '%s/%s_%s.%s' "$DUMP_DIR" "$1" "$(date -u +%Y%m%d%H%M%S)" "$2"
+}
+
+# Which dump to read: what was named, or the newest of that kind. Same
+# name-sorts-as-time trick as bk_latest.
+dump_source() {    # dump_source <prefix> <ext> [given]
+	local _f _g
+	_g="${3-}"
+	if [ -n "$_g" ]; then
+		[ -f "$_g" ] && { printf '%s' "$_g"; return 0; }
+		[ -f "$DUMP_DIR/$_g" ] && { printf '%s' "$DUMP_DIR/$_g"; return 0; }
+		die "no such dump: $_g"
+	fi
+	_f="$(ls -1 "$DUMP_DIR/${1}_"*".$2" 2>/dev/null | sort -r | head -1)"
+	[ -n "$_f" ] || die "no $1 dump in $DUMP_DIR — make one with: app-setup dump $1"
+	printf '%s' "$_f"
+}
+
+# The Settings form writes the S3 secret into params/backup.conf, and a secret
+# key that any process on the box can read is not much of a secret. fopen("w")
+# truncates without touching the mode, so app-setup's own saves keep whatever
+# is set here — but the *first* save creates the file at the umask, so this
+# re-asserts it on every read rather than once at install.
+bk_conf() {        # bk_conf <key> [default]
+	local _f _v
+	_f="$APP_SETUP_CONF/params/backup.conf"
+	[ -f "$_f" ] || { printf '%s' "${2-}"; return 0; }
+	chmod 600 "$_f" 2>/dev/null || true
+	_v="$(sed -n "s/^$1=//p" "$_f" | head -1)"
+	[ -n "$_v" ] || _v="${2-}"
+	printf '%s' "$_v"
+}
+
+# The one piece of naming the whole feature is judged on. UTC, because a
+# machine that moves timezone or crosses a DST boundary must not produce two
+# archives an hour apart that sort in the wrong order.
+bk_name() {        # bk_name <prefix> -> mysql_20210403123221.tgz
+	printf '%s_%s.tgz' "$1" "$(date -u +%Y%m%d%H%M%S)"
+}
+
+bk_begin() {       # bk_begin <prefix>
+	BK_PREFIX="$1"
+	BK_ARCHIVE="$(bk_name "$1")"
+	BK_WORK="$(tmp_dir)"
+	BK_SVC_WAS=""
+	mkdir -p "$BK_WORK/$BK_PREFIX"
+	# Whatever happens between here and bk_finish — a dump that fails, a full
+	# disk, somebody's Ctrl-C — the service must come back up and the staging
+	# directory must not survive. A backup that leaves the database stopped is
+	# worse than no backup at all, which is the whole reason this trap exists
+	# rather than a tidy-up at the end of do_backup.
+	trap 'bk_abort' EXIT INT TERM
+	step "backing up $BK_PREFIX"
+}
+
+bk_abort() {
+	bk_resume
+	[ -n "${BK_WORK:-}" ] && rm -rf "$BK_WORK"
+	BK_WORK=""
+}
+
+# Where a dump should write itself. Inside the staging tree, so it lands in the
+# archive without a second copy.
+bk_path() {        # bk_path <name> -> /tmp/…/mysql/<name>
+	mkdir -p "$BK_WORK/$BK_PREFIX"
+	printf '%s' "$BK_WORK/$BK_PREFIX/$1"
+}
+
+# A file or directory copied in under files/, keeping its absolute path, so a
+# restore is `cp -a files/. /` and nothing has to remember where it came from.
+# Copied with tar rather than cp, because an exclude list has to be honoured
+# *while* copying: a node_modules or a cache directory that gets copied and
+# then pruned out of the staging tree has already cost the disk and the
+# minutes. $BK_EXCLUDE is a space-separated list of tar patterns and is unset
+# for everything that does not want one.
+#
+# The backup directories are always excluded. A recipe told to save /data
+# would otherwise pack every previous archive into the new one, and each
+# night's backup would be bigger than the last until the disk filled.
+bk_add() {         # bk_add <path>
+	local _e _ex _rel
+	[ -e "$1" ] || { warn "nothing at $1 — skipped"; return 0; }
+	case "$1" in
+		/|/proc|/sys|/dev|/proc/*|/sys/*|/dev/*|/run|/run/*)
+			warn "refusing to copy $1 — that is not a thing to put in a backup"
+			return 0 ;;
+	esac
+	_ex="--exclude=${BK_DIR#/} --exclude=${DUMP_DIR#/}"
+	for _e in ${BK_EXCLUDE:-}; do _ex="$_ex --exclude=$_e"; done
+	_rel="${1#/}"
+	mkdir -p "$BK_WORK/$BK_PREFIX/files"
+	# shellcheck disable=SC2086  # $_ex is our own list of flags, split on purpose
+	(cd / && tar cf - $_ex -- "$_rel") 2>/dev/null |
+		tar xf - -C "$BK_WORK/$BK_PREFIX/files" 2>/dev/null ||
+		warn "could not copy $1 in full — check the log"
+}
+
+# `dump` takes a hot logical copy and never interrupts anybody; `files` stops
+# the service first, which is the only honest way to copy a data directory
+# out from under a running database. A recipe calls both of these either way
+# and lets the setting decide — that is what keeps do_backup readable.
+# The machine-wide setting lives on the `backup` recipe; a single database can
+# override it with its own Backup field, because "everything nightly by dump,
+# except this one which has to be a cold copy" is a real thing to want and the
+# alternative is two schedules.
+bk_method() {
+	local _m
+	_m="$(param backup default)"
+	case "$_m" in dump|files) printf '%s' "$_m"; return 0 ;; esac
+	bk_conf method dump
+}
+
+bk_quiesce() {
+	local _s
+	[ "$(bk_method)" = files ] || return 0
+	_s="$(svc)"
+	[ -n "$_s" ] || return 0
+	svc_running "$_s" || return 0
+	BK_SVC_WAS="$_s"
+	step "stopping $_s so the files cannot change while they are copied"
+	svc_stop "$_s"
+}
+
+bk_resume() {
+	[ -n "${BK_SVC_WAS:-}" ] || return 0
+	step "starting $BK_SVC_WAS again"
+	svc_start "$BK_SVC_WAS" || err "$BK_SVC_WAS did not come back up — start it yourself"
+	BK_SVC_WAS=""
+}
+
+bk_finish() {
+	local _arch _sz
+	_arch="$BK_DIR/$BK_ARCHIVE"
+	mkdir -p "$BK_DIR" || die "cannot write to $BK_DIR"
+	step "packing $BK_ARCHIVE"
+	tar czf "$_arch" -C "$BK_WORK" "$BK_PREFIX" || die "could not pack the archive"
+	chmod 600 "$_arch"
+	# The service goes back up before the upload, not after: a slow or broken
+	# remote must not be the reason a site is down for another two minutes.
+	bk_resume
+	rm -rf "$BK_WORK"; BK_WORK=""
+	trap - EXIT INT TERM
+	_sz="$(du -h "$_arch" 2>/dev/null | awk '{print $1}')"
+	ok "$_arch${_sz:+  ($_sz)}"
+	bk_upload "$_arch"
+	bk_prune "$BK_PREFIX"
+}
+
+# Everything that talks to the bucket goes through one of these two, so the
+# credentials are assembled in exactly one place and a typo cannot make upload
+# work while download quietly does not.
+#
+# rclone is configured entirely from the environment: nothing is written to
+# /root/.config/rclone.conf, so the secret never outlives the process. `Other`
+# is the provider that works for every S3-compatible endpoint there is —
+# Aliyun OSS, Tencent COS, Cloudflare R2, Backblaze B2, MinIO.
+bk_rclone() {
+	RCLONE_CONFIG_BK_TYPE=s3 \
+	RCLONE_CONFIG_BK_PROVIDER="$([ -n "$(bk_conf endpoint)" ] && echo Other || echo AWS)" \
+	RCLONE_CONFIG_BK_ACCESS_KEY_ID="$(bk_conf access_key)" \
+	RCLONE_CONFIG_BK_SECRET_ACCESS_KEY="$(bk_conf secret_key)" \
+	RCLONE_CONFIG_BK_ENDPOINT="$(bk_conf endpoint)" \
+	RCLONE_CONFIG_BK_REGION="$(bk_conf region us-east-1)" \
+	rclone --no-check-certificate=false "$@"
+}
+
+bk_aws() {
+	local _ep
+	_ep="$(bk_conf endpoint)"
+	AWS_ACCESS_KEY_ID="$(bk_conf access_key)" \
+	AWS_SECRET_ACCESS_KEY="$(bk_conf secret_key)" \
+	AWS_DEFAULT_REGION="$(bk_conf region us-east-1)" \
+	aws ${_ep:+--endpoint-url "$_ep"} "$@"
+}
+
+# s3://bucket/some/prefix, as the two tools each want to see it.
+bk_remote_set() {  # sets BK_TOOL, BK_BUCKET, BK_KEY; non-zero if not configured
+	local _rem
+	_rem="$(bk_conf remote)"
+	BK_TOOL="$(bk_conf tool rclone)"
+	[ -n "$_rem" ] && [ "$BK_TOOL" != none ] || return 1
+	BK_BUCKET="$(printf '%s' "${_rem#s3://}" | cut -d/ -f1)"
+	case "${_rem#s3://}" in
+		*/*) BK_KEY="$(printf '%s' "${_rem#s3://}" | cut -d/ -f2-)" ;;
+		*)   BK_KEY="" ;;
+	esac
+	return 0
+}
+
+bk_upload() {      # bk_upload <archive>
+	bk_remote_set || {
+		info "no upload target set — the archive is only on this machine."
+		info "one disk holding both the site and its backups is not a backup."
+		return 0
+	}
+	step "uploading $(basename "$1")"
+	case "$BK_TOOL" in
+	rclone)
+		have rclone || { err "rclone is not installed — run: app-setup install backup"; return 1; }
+		bk_rclone copy --s3-no-check-bucket "$1" "BK:$BK_BUCKET${BK_KEY:+/$BK_KEY}" ||
+			{ err "upload failed — the archive is still in $BK_DIR"; return 1; }
+		;;
+	aws)
+		have aws || { err "aws-cli is not installed — run: app-setup install backup"; return 1; }
+		bk_aws s3 cp "$1" "s3://$BK_BUCKET${BK_KEY:+/$BK_KEY}/$(basename "$1")" >/dev/null ||
+			{ err "upload failed — the archive is still in $BK_DIR"; return 1; }
+		;;
+	*) err "unknown upload tool: $BK_TOOL"; return 1 ;;
+	esac
+	ok "uploaded to $(bk_conf remote)"
+}
+
+# The half that makes uploading worth anything. The local copy is the one that
+# gets pruned, or lost with the disk, so a restore has to be able to reach past
+# it — otherwise the bucket is a place data goes and never comes back from.
+bk_download() {    # bk_download <filename> <dest>
+	bk_remote_set || return 1
+	step "fetching $1 from $(bk_conf remote)"
+	case "$BK_TOOL" in
+	rclone)
+		have rclone || return 1
+		bk_rclone copyto "BK:$BK_BUCKET${BK_KEY:+/$BK_KEY}/$1" "$2" >/dev/null 2>&1 ;;
+	aws)
+		have aws || return 1
+		bk_aws s3 cp "s3://$BK_BUCKET${BK_KEY:+/$BK_KEY}/$1" "$2" >/dev/null 2>&1 ;;
+	*) return 1 ;;
+	esac
+}
+
+# Names only, newest last, so `| tail -1` is the newest — the same ordering the
+# fixed-width UTC stamp gives the local directory.
+bk_remote_ls() {   # bk_remote_ls [prefix]
+	bk_remote_set || return 1
+	case "$BK_TOOL" in
+	rclone)
+		have rclone || return 1
+		bk_rclone lsf "BK:$BK_BUCKET${BK_KEY:+/$BK_KEY}" 2>/dev/null ;;
+	aws)
+		have aws || return 1
+		bk_aws s3 ls "s3://$BK_BUCKET${BK_KEY:+/$BK_KEY}/" 2>/dev/null | awk '{print $NF}' ;;
+	*) return 1 ;;
+	esac | grep "^${1:-}.*\.tgz$" | sort
+}
+
+# Local only. Deleting somebody's remote history on a schedule is a decision
+# for their bucket's lifecycle rules, not for a shell script that might be
+# running with the wrong prefix.
+bk_prune() {       # bk_prune <prefix>
+	local _f _keep _n
+	_keep="$(bk_conf keep 7)"
+	case "$_keep" in ''|*[!0-9]*) return 0 ;; esac
+	[ "$_keep" -gt 0 ] || return 0
+	_n=0
+	# Newest first by name, which is why the stamp is fixed-width and UTC.
+	for _f in $(ls -1 "$BK_DIR/${1}_"*.tgz 2>/dev/null | sort -r); do
+		_n=$((_n + 1))
+		[ "$_n" -gt "$_keep" ] || continue
+		rm -f "$_f" && info "pruned $(basename "$_f")"
+	done
+}
+
+# The newest archive for a prefix, which is what `restore` with no argument
+# means and the only thing anybody wants at three in the morning.
+bk_latest() {      # bk_latest <prefix>
+	ls -1 "$BK_DIR/${1}_"*.tgz 2>/dev/null | sort -r | head -1
+}
+
+# Unpack an archive and set $BK_UNPACKED to the directory a recipe reads out of.
+# Takes a full path, a bare filename in $BK_DIR, or nothing at all — with
+# nothing it takes the newest, which is what `restore` means at three in the
+# morning.
+#
+# It sets a variable rather than echoing the path, and that is not a style
+# choice: `_d="$(bk_open mysql)"` runs all of this in a subshell, so BK_WORK
+# never reaches the caller and the EXIT trap fires the moment the substitution
+# closes — deleting the unpacked archive before the recipe can read a byte of
+# it. Every progress line here goes to stderr for the same reason, so a caller
+# who does capture output gets nothing surprising in it.
+bk_open() {        # bk_open <prefix> [archive]; sets $BK_UNPACKED
+	local _a _r
+	_a="${2-}"
+	if [ -z "$_a" ]; then
+		_a="$(bk_latest "$1")"
+		# Nothing local is the normal case after a disk is replaced, and it is
+		# exactly when somebody needs this most — so look in the bucket before
+		# giving up, rather than telling them their backups are gone.
+		if [ -z "$_a" ]; then
+			_r="$(bk_remote_ls "$1" 2>/dev/null | tail -1)"
+			[ -n "$_r" ] || die "no backup for $1 in $BK_DIR and none in the bucket either"
+			mkdir -p "$BK_DIR"
+			bk_download "$_r" "$BK_DIR/$_r" || die "could not download $_r"
+			_a="$BK_DIR/$_r"
+		fi
+	elif [ ! -f "$_a" ]; then
+		if [ -f "$BK_DIR/$_a" ]; then
+			_a="$BK_DIR/$_a"
+		else
+			mkdir -p "$BK_DIR"
+			bk_download "$(basename "$_a")" "$BK_DIR/$(basename "$_a")" ||
+				die "no such archive here or in the bucket: $_a"
+			_a="$BK_DIR/$(basename "$_a")"
+		fi
+	fi
+	[ -f "$_a" ] || die "no such archive: $_a"
+	BK_WORK="$(tmp_dir)"
+	trap 'bk_close' EXIT INT TERM
+	tar xzf "$_a" -C "$BK_WORK" || die "$_a will not unpack — is it a complete download?"
+	BK_UNPACKED="$BK_WORK/$1"
+	[ -d "$BK_UNPACKED" ] || die "$_a does not look like a $1 backup"
+	info "restoring from $(basename "$_a")" >&2
+}
+
+bk_close() {
+	[ -n "${BK_WORK:-}" ] && rm -rf "$BK_WORK"
+	BK_WORK=""; BK_UNPACKED=""
+	trap - EXIT INT TERM
+	return 0
+}
+
+# WordPress, Typecho and Nextcloud all keep one database and one directory,
+# and all three would otherwise repeat the same twelve lines. The database is
+# dumped through mysql_root, so it works whether or not the mysql recipe has
+# written $MY_CNF yet.
+# Said out loud at install time, because "can this machine take a backup at
+# all" is worth knowing on the day you install the database rather than on the
+# night you need one. A distro that splits its client package differently is
+# the failure this catches.
+dump_tool_check() {  # dump_tool_check <command> <sentence>
+	if have "$1"; then
+		ok "$1 is here — $2"
+	else
+		warn "$1 is missing; app-setup dump and backup will not work for this"
+	fi
+}
+
+# Every database on the server to one file. Lives here rather than in mysql.sh
+# because the LNMP and LAMP suites need exactly the same thing, and two
+# implementations of "how do you dump this server" drift — the one that drifts
+# is always the one on the timer that nobody watches.
+mysql_dump_all() { # mysql_dump_all <file>
+	if [ -r "$MY_CNF" ]; then
+		mysqldump --defaults-file="$MY_CNF" --single-transaction --quick \
+			--routines --events --all-databases > "$1"
+	else
+		mysqldump --protocol=socket -uroot --single-transaction --quick \
+			--routines --events --all-databases > "$1"
+	fi || die "mysqldump failed — is the server running, and is $MY_CNF still right?"
+	[ -s "$1" ] || die "the dump came out empty; that is not a backup"
+}
+
+# One database to one file. `--databases` rather than a bare name so the dump
+# carries its own CREATE DATABASE and USE, and loading it recreates the schema
+# instead of needing one to exist first.
+mysql_dump_db() {  # mysql_dump_db <database> <file>
+	if [ -r "$MY_CNF" ]; then
+		mysqldump --defaults-file="$MY_CNF" --single-transaction --quick \
+			--routines --events --databases "$1" > "$2"
+	else
+		mysqldump --protocol=socket -uroot --single-transaction --quick \
+			--routines --events --databases "$1" > "$2"
+	fi || die "could not dump the $1 database"
+	[ -s "$2" ] || die "the dump came out empty; that is not a backup"
+}
+
+mysql_load_file() { # mysql_load_file <file>
+	[ -f "$1" ] || die "no such dump: $1"
+	mysql_root < "$1" || die "the import failed"
+}
+
+bk_mysql_db() {    # bk_mysql_db <database>
+	step "dumping the $1 database"
+	mysql_dump_db "$1" "$(bk_path db.sql)"
+}
+
+bk_mysql_load() {  # bk_mysql_load <dir from bk_open>
+	[ -f "$1/db.sql" ] || die "that archive has no database dump in it"
+	step "loading the database back"
+	mysql_load_file "$1/db.sql"
+}
+
+# The other half of bk_add: everything it saved goes back where it came from.
+bk_restore_files() {   # bk_restore_files <dir from bk_open>
+	[ -d "$1/files" ] || return 0
+	step "putting the saved files back"
+	cp -a "$1/files/." / || warn "some files could not be written back"
+}
+
 # ----------------------------------------------------------- default verbs --
 # A recipe that wants different behaviour defines the same function after
 # sourcing this file; the later definition wins.
@@ -1318,6 +1780,14 @@ do_enable()    { _s="$(svc)"; [ -n "$_s" ] || return 0; svc_enable "$_s"; ok "$_
 do_disable()   { _s="$(svc)"; [ -n "$_s" ] || return 0; svc_disable "$_s"; ok "$_s will not start at boot"; }
 do_help()      { echo "This source ships no documentation."; }
 
+# Not every recipe has data. htop has nothing to save and saying so is a
+# better answer than an empty archive that looks like a backup for a year and
+# then turns out to be one at the worst possible moment.
+do_backup()    { warn "this software has no backup in its recipe — nothing was saved"; return 0; }
+do_restore()   { warn "this software has no restore in its recipe"; return 0; }
+do_dump()      { warn "this software has no dump in its recipe"; return 0; }
+do_load()      { warn "this software has no load in its recipe"; return 0; }
+
 # The one function app-setup reads a value out of rather than an exit code.
 #
 #   exit 0  running, or — when there is no service — simply installed
@@ -1351,6 +1821,16 @@ app_main() {
 		enable)             need_root; do_enable ;;
 		disable)            need_root; do_disable ;;
 		status)             do_status ;;
+		backup)             need_root; do_backup ;;
+		# `shift` so a recipe run by hand can be handed one archive —
+		# `sh /etc/app-setup/mysql.sh restore mysql_20210403123221.tgz`. With
+		# no argument both this and `app-setup restore mysql` take the newest.
+		restore)            need_root; shift; do_restore "$@" ;;
+		# Same shift, same reason: `sh /etc/app-setup/mysql.sh dump /tmp/x.sql`
+		# and `… load /tmp/x.sql` both name a file. With no argument, dump
+		# picks a dated name and load takes the newest.
+		dump)               need_root; shift; do_dump "$@" ;;
+		load)               need_root; shift; do_load "$@" ;;
 		help|docs|doc)      do_help ;;
 		*)                  err "unknown verb: $_verb"; exit 64 ;;
 	esac

@@ -60,17 +60,25 @@ tree without appearing as software.
 
 | Path | What it is |
 |---|---|
-| `/etc/app-setup/*.sh` | the sources. Yours go here next to the shipped ones |
+| `/etc/app-setup/*.sh` | the shipped sources |
+| `/etc/app-setup/local/*.sh` | your own. Same id as a shipped one and yours wins |
+| `/etc/app-setup/params/<id>.conf` | what the Settings form saved for a source |
+| `/etc/app-setup/secrets/<id>.txt` | generated passwords, mode 600 in a 0700 directory |
 | `/usr/lib/app-setup/common.sh` | the helper library every source sources |
 | `/var/log/app-setup/<id>.log` | every action's output, appended |
-| `/var/lib/app-setup/` | state — the package-index refresh stamp lives here |
-| `/root/.app-setup/<id>.txt` | generated passwords, mode 600 |
+| `/var/lib/app-setup/` | bookkeeping — the package-index refresh stamp lives here |
+
+Everything you might want to open is under `/etc/app-setup`, which is the point
+of it: one directory, and it is the one you would have looked in anyway.
+`$APP_SETUP_CONF` moves `params/` and `secrets/` if you need them elsewhere.
 
 Search order is `$APP_SETUP_PATH`, which defaults to
-`/etc/app-setup:/usr/local/etc/app-setup`. Later directories win, so a file in
-`/usr/local/etc/app-setup/nginx.sh` replaces the shipped `nginx` entry without
+`/etc/app-setup:/etc/app-setup/local`. Later directories win, so a file in
+`/etc/app-setup/local/nginx.sh` replaces the shipped `nginx` entry without
 editing anything. That is the intended way to override one of ours: leave the
-original alone so an image update can still replace it.
+original alone so an image update can still replace it. `local/` is also the
+half that survives app-setup reinstalling its own recipes, which only ever
+replaces `*.sh` in the parent directory.
 
 To try a source without installing it anywhere:
 
@@ -168,8 +176,9 @@ Giving the default twice is not redundancy — it is what makes
 no form and no saved file anywhere. **A recipe must never require that the
 form has been opened.**
 
-Saved values live in `/var/lib/app-setup/params/<id>.conf`, one `name=value` a
-line, and `app-setup set myapp port=9090` edits them from a script.
+Saved values live in `/etc/app-setup/params/<id>.conf`, next to the source they
+configure, one `name=value` a line, and `app-setup set myapp port=9090` edits
+them from a script.
 
 The form has three buttons, and they are LuCI's: **Save & Apply** writes the
 settings and then runs your `install`, **Save** writes them and stops, and
@@ -254,6 +263,10 @@ gets a default that works from `PKGS` and `SERVICE`.
 | `do_disable` | the same row again | `svc_disable` |
 | `do_status` | constantly — see below | derived from `is_installed` and `SERVICE` |
 | `do_help` | the How-to-use-it row | "this source ships no documentation" |
+| `do_backup` | `app-setup backup <id>`, and the schedule | "this software has no backup in its recipe" |
+| `do_restore` | `app-setup restore <id>` | the same |
+| `do_dump` | `app-setup dump <id>` | "this software has no dump in its recipe" |
+| `do_load` | `app-setup load <id>` | the same |
 | `is_installed` | inside `do_status` | `CHECK_PKG`, else `CHECK_BIN`, else `CHECK_FILE`, else all of `PKGS` |
 | `version_line` | inside `do_status` | nothing |
 
@@ -463,7 +476,7 @@ log — nobody scrolls back through 900 lines of `apt` output.
 
 ```sh
 pw="$(rand_pass 24)"
-save_note myapp <<EOF          # writes /root/.app-setup/myapp.txt, mode 600
+save_note myapp <<EOF          # /etc/app-setup/secrets/myapp.txt, mode 600
 password   $pw
 EOF
 show_note myapp                # print it again at the end of the install
@@ -493,6 +506,100 @@ port_busy 80; require_ports 80 443
 ```
 
 ---
+
+## Backing your software up
+
+If your source keeps data, give it `do_backup` and `do_restore`. You describe
+what the data *is*; the library names the archive, packs it, uploads it,
+prunes it and puts the service back afterwards.
+
+```sh
+do_backup() {
+        bk_begin myapp                 # names myapp_20260819033240.tgz
+        bk_quiesce                     # stops SERVICE if the method is `files`
+        myapp dump > "$(bk_path data.sql)"
+        bk_add /etc/myapp              # config travels with the data
+        bk_finish                      # tar, upload, prune, restart
+}
+
+do_restore() {
+        bk_open myapp "${1-}"          # newest, or the archive named
+        myapp load < "$BK_UNPACKED/data.sql"
+        bk_restore_files "$BK_UNPACKED"
+        bk_close
+}
+```
+
+| Helper | What it does |
+|---|---|
+| `bk_begin <prefix>` | starts an archive, and installs the trap that restarts the service if anything below fails |
+| `bk_path <name>` | a path inside the archive for a dump to write to |
+| `bk_add <path>` | copies a file or directory in, keeping its absolute path. Honours `$BK_EXCLUDE`, never packs the backup directories, refuses `/` and friends |
+| `bk_quiesce` / `bk_resume` | stop and start `SERVICE`, but only when the method is `files` |
+| `bk_finish` | pack, restart, upload, prune |
+| `bk_open <prefix> [archive]` | unpack into `$BK_UNPACKED` — downloads from the bucket if there is no local copy |
+| `bk_restore_files <dir>` | put back everything `bk_add` saved |
+| `bk_close` | clean up |
+| `bk_mysql_db <db>` / `bk_mysql_load <dir>` | one MySQL database, for sources that keep one |
+| `dump_target <prefix> <ext> [given]` | where a dump should be written — what was asked for, or a dated name under `/data/dumps` |
+| `dump_source <prefix> <ext> [given]` | which dump to read — what was named, or the newest |
+| `mysql_dump_db <db> <file>` / `mysql_load_file <file>` | the same database, as a plain file |
+| `dump_tool_check <cmd> <sentence>` | say at install time whether the dump tool is actually here |
+
+### `dump` and `load`
+
+Worth having as well as `backup`, and not the same thing. A backup is the whole
+pipeline — packed, dated, uploaded, pruned, on a timer. A dump is one plain
+file somebody can open, `scp`, or feed to another server:
+
+```sh
+do_dump() {
+        local _f
+        _f="$(dump_target myapp sql "${1-}")"
+        myapp export > "$_f" || die "the export failed"
+        [ -s "$_f" ] || die "the dump came out empty; that is not a backup"
+        chmod 600 "$_f"
+        ok "$_f"
+}
+
+do_load() {
+        local _f
+        _f="$(dump_source myapp sql "${1-}")"
+        myapp import < "$_f" || die "the import failed"
+}
+```
+
+Make `do_backup` and `do_dump` call the *same* function with different
+destinations. Two separate implementations of "how do you dump this database"
+drift, and the one that drifts is always the one on the timer that nobody
+watches.
+
+Whatever produces the dump has to actually be installed — name it in `PKGS`
+rather than trusting a metapackage, and end `do_install` with
+`dump_tool_check`, so a distro that splits its client package differently is
+found on installation day and not on the night somebody needs a restore.
+
+Two rules worth following, both learned the expensive way:
+
+**Fail loudly, never quietly.** Check the dump is non-empty before letting
+`bk_finish` pack it. A zero-byte file inside a well-named archive looks like a
+backup for a year and is discovered not to be one at the worst possible moment.
+
+**Never leave the service down.** `bk_begin` traps `EXIT`, `INT` and `TERM` so
+a failed dump or a Ctrl-C still restarts what `bk_quiesce` stopped. If you stop
+something yourself, set `BK_SVC_WAS` to its name so that trap covers it too.
+
+`bk_open` sets a variable instead of echoing a path on purpose: writing
+`d="$(bk_open myapp)"` would run it in a subshell, and the trap would delete the
+unpacked archive the instant the substitution closed.
+
+Config files, not just data: `bk_add` whatever your software needs to come back
+as it was. A database restored under a default config is a different server.
+
+If your software has no recipe here at all — something you wrote yourself —
+you do not need one. The shipped `files` source takes a list of paths and
+globs in its settings and backs them up on the same schedule; put `files` in
+the backup card's list next to `mysql`.
 
 ## Writing for more than one distro
 
@@ -684,19 +791,19 @@ If you maintain several machines, keep the sources in a git repository and
 check it out to a directory of its own:
 
 ```sh
-git clone https://example.com/my-app-setup.git /usr/local/etc/app-setup
+git clone https://example.com/my-app-setup.git /etc/app-setup/local
 ```
 
-`/usr/local/etc/app-setup` is already on the default `APP_SETUP_PATH`, and it
-comes *after* `/etc/app-setup`, so a file there with the same name as one of
-ours replaces it. Nothing else is needed — no registration, no index file.
+`/etc/app-setup/local` is already on the default `APP_SETUP_PATH`, and it comes
+*after* `/etc/app-setup`, so a file there with the same name as one of ours
+replaces it. Nothing else is needed — no registration, no index file.
 
 To make them survive a reinstall of the container, clone into `/data` instead
 and link it:
 
 ```sh
 git clone https://example.com/my-app-setup.git /data/app-setup
-ln -s /data/app-setup /usr/local/etc/app-setup
+ln -s /data/app-setup /etc/app-setup/local
 ```
 
 Your own tab, if you have enough of them, is one header line in any one source:

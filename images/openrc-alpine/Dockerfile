@@ -133,6 +133,14 @@ RUN set -eux; \
 #   /usr/lib/app-setup/         the helpers every recipe sources
 #   /etc/app-setup/*.sh         one file per package — a holder may edit these,
 #                               and their own go here too
+#   /etc/app-setup/local/*.sh   a holder's own, overriding ours by id
+#   /etc/app-setup/params/      what the Settings form saved, one file per id
+#   /etc/app-setup/secrets/     generated passwords, 0700 and each file 0600
+#
+# The three subdirectories sit next to the recipes on purpose: one directory
+# answers "where is the config on this machine", and the answer is /etc, the
+# same as it is for nginx or MariaDB. They are created empty here and filled
+# at run time, so an image carries no holder's recipe, port or password.
 #
 # Last, and in its own layer, because a wording fix in one recipe should not
 # invalidate the package installs above it.
@@ -170,6 +178,8 @@ RUN set -eux; \
     chmod 0755 /bin/app-setup /etc/app-setup/*.sh; \
     chmod 0644 /usr/lib/app-setup/*.sh; \
     mkdir -p /var/log/app-setup /var/lib/app-setup /usr/local/bin /usr/local/sbin; \
+    mkdir -p /etc/app-setup/local /etc/app-setup/params /etc/app-setup/secrets; \
+    chmod 0700 /etc/app-setup/secrets; \
     test -x /usr/bin/passwd; \
     ln -sf /bin/app-setup /usr/local/bin/passwd; \
     test -x /sbin/poweroff; \

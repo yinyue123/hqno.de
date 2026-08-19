@@ -13,6 +13,8 @@
 # memory: 768M
 # ports: 80, 3306
 # service: nginx
+# param: backup | default | Backup | 备份 | default,dump,files
+# action: backup | backup | ▶ Back up now | ▶ 立即备份
 . /usr/lib/app-setup/common.sh
 
 version_line() {
@@ -78,7 +80,7 @@ li{margin:.2em 0}</style>
   <li><?= htmlspecialchars($db) ?></li>
 </ul>
 <p>This file is <code><?= __FILE__ ?></code>. Replace it with your site.</p>
-<p>Your database password is in <code>/root/.app-setup/mysql.txt</code>.
+<p>Your database password is in <code>/etc/app-setup/secrets/mysql.txt</code>.
 Run <code>app-setup</code> to add WordPress, Typecho or Nextcloud on top.</p>
 EOF
 	else
@@ -137,13 +139,50 @@ do_status() {
 	exit 3
 }
 
+# ------------------------------------------------------------------ backup --
+# A LNMP box's data is whatever the holder put on top of it: every database on
+# the server, and the document root. `mysql` alone would miss the site, and
+# `wordpress` only covers a site it installed itself — somebody who wrote their
+# own PHP into $WEBROOT is covered by nothing else, which is exactly the person
+# who has no other copy of it.
+do_backup() {
+	bk_begin lnmp
+	is_installed || die "LNMP is not installed here"
+	bk_quiesce
+	step "dumping every database"
+	mysql_dump_all "$(bk_path all.sql)"
+	step "copying $WEBROOT"
+	bk_add "$WEBROOT"
+	bk_finish
+}
+
+do_restore() {
+	local _d
+	bk_open lnmp "${1-}"
+	_d="$BK_UNPACKED"
+	[ -f "$_d/all.sql" ] || die "that archive has no database dump in it"
+	step "loading every database back"
+	mysql_load_file "$_d/all.sql"
+	if [ -d "$_d/files$WEBROOT" ]; then
+		step "putting $WEBROOT back"
+		# Moved aside rather than deleted: if this is the wrong archive, what
+		# was there is still recoverable.
+		[ -d "$WEBROOT" ] && mv "$WEBROOT" "$WEBROOT.before-restore.$(date -u +%Y%m%d%H%M%S)"
+		bk_restore_files "$_d"
+		chown -R "$(web_user)":"$(web_group)" "$WEBROOT" 2>/dev/null || true
+	fi
+	bk_close
+	ok "LNMP restored"
+	info "the previous $WEBROOT, if any, is beside it with a .before-restore stamp"
+}
+
 do_help() { cat <<'EOF'
 LNMP — Linux, Nginx, MariaDB, PHP
 
   What you have now
     nginx    serving /var/www/html on port 80
     PHP-FPM  handling .php in that directory
-    MariaDB  on 127.0.0.1:3306, root password in /root/.app-setup/mysql.txt
+    MariaDB  on 127.0.0.1:3306, root password in /etc/app-setup/secrets/mysql.txt
 
     Check all three at once:  curl http://127.0.0.1/
 

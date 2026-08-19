@@ -13,6 +13,8 @@
 # memory: 64M
 # ports: 6379
 # service: redis
+# param: backup | default | Backup | 备份 | default,dump,files
+# action: backup | backup | ▶ Back up now | ▶ 立即备份
 . /usr/lib/app-setup/common.sh
 
 PKGS="redis-server"
@@ -145,6 +147,7 @@ EOF
 	fi
 	ok "Redis is running on 127.0.0.1:6379"
 	show_note redis
+	dump_tool_check redis-cli "app-setup dump redis writes an .rdb snapshot"
 }
 
 do_uninstall() {
@@ -155,14 +158,105 @@ do_uninstall() {
 	info "/var/lib/redis was left in place"
 }
 
+# -------------------------------------------------------- dump/load/backup --
+# Redis has no mysqldump, and it does not need one: `redis-cli --rdb` asks the
+# server for a full RDB and streams it out. That is better than BGSAVE plus a
+# copy of dump.rdb, which races the fork that is still writing the file, and it
+# works against a Redis that is not on this filesystem at all.
+redis_cli_auth() {
+	local _pw
+	_pw="$(sed -n 's/^requirepass //p' "$(redis_conf)" 2>/dev/null | tail -1 | tr -d '"')"
+	if [ -n "$_pw" ]; then redis-cli -a "$_pw" --no-auth-warning "$@"
+	else                   redis-cli "$@"; fi
+}
+
+redis_dir() {
+	local _d
+	_d="$(redis_cli_auth --raw CONFIG GET dir 2>/dev/null | sed -n 2p)"
+	[ -n "$_d" ] || _d=/var/lib/redis
+	printf '%s' "$_d"
+}
+
+redis_rdb_to() {   # redis_rdb_to <file>
+	redis_cli_auth --rdb "$1" >/dev/null 2>&1 ||
+		die "could not get a snapshot — is redis running, and is the password in $(redis_conf) still current?"
+	[ -s "$1" ] || die "the snapshot came out empty; that is not a backup"
+}
+
+do_dump() {
+	local _f
+	_f="$(dump_target redis rdb "${1-}")"
+	step "asking redis for a snapshot"
+	redis_rdb_to "$_f"
+	chmod 600 "$_f"
+	ok "$_f  ($(du -h "$_f" 2>/dev/null | awk '{print $1}'))"
+	info "put it back with:  app-setup load redis"
+}
+
+# Loading is a stop-copy-start and cannot be anything else: Redis reads
+# dump.rdb once, at startup, and writes its own out on the way down — so
+# replacing the file under a running server means the shutdown save overwrites
+# exactly what was just restored.
+redis_rdb_from() { # redis_rdb_from <file>
+	local _dir
+	_dir="$(redis_dir)"
+	step "stopping $(svc)"
+	svc_stop "$(svc)"
+	cp "$1" "$_dir/dump.rdb" || die "could not write $_dir/dump.rdb"
+	chown redis:redis "$_dir/dump.rdb" 2>/dev/null || true
+	svc_start "$(svc)" || die "redis will not start on that snapshot"
+}
+
+do_load() {
+	local _f
+	_f="$(dump_source redis rdb "${1-}")"
+	step "loading $_f"
+	warn "this replaces everything currently in Redis"
+	redis_rdb_from "$_f"
+	ok "loaded — $(redis_cli_auth --raw DBSIZE 2>/dev/null || echo '?') keys"
+}
+
+do_backup() {
+	bk_begin redis
+	if [ "$(bk_method)" = files ]; then
+		bk_quiesce
+		bk_add "$(redis_dir)"
+	else
+		step "asking redis for a snapshot"
+		redis_rdb_to "$(bk_path dump.rdb)"
+	fi
+	bk_add "$(redis_conf)"
+	bk_finish
+}
+
+do_restore() {
+	local _d _dir
+	bk_open redis "${1-}"
+	_d="$BK_UNPACKED"
+	_dir="$(redis_dir)"
+	if [ -f "$_d/dump.rdb" ]; then
+		redis_rdb_from "$_d/dump.rdb"
+	elif [ -d "$_d/files$_dir" ]; then
+		step "stopping $(svc) to put the data directory back"
+		svc_stop "$(svc)"
+		bk_restore_files "$_d"
+		chown -R redis:redis "$_dir" 2>/dev/null || true
+		svc_start "$(svc)" || die "redis will not start on the restored data directory"
+	else
+		die "that archive has no snapshot in it"
+	fi
+	ok "restored — $(redis_cli_auth --raw DBSIZE 2>/dev/null || echo '?') keys"
+	bk_close
+}
+
 do_help() { cat <<'EOF'
 Redis
 
   Your password
-    cat /root/.app-setup/redis.txt
+    cat /etc/app-setup/secrets/redis.txt
 
   Talk to it
-    redis-cli -a "$(awk '/password/{print $2}' /root/.app-setup/redis.txt)" ping
+    redis-cli -a "$(awk '/password/{print $2}' /etc/app-setup/secrets/redis.txt)" ping
     → PONG
 
     Or start redis-cli and type: AUTH thepassword

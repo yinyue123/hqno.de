@@ -13,6 +13,8 @@
 # memory: 768M
 # ports: 80, 3306
 # service: apache2
+# param: backup | default | Backup | 备份 | default,dump,files
+# action: backup | backup | ▶ Back up now | ▶ 立即备份
 . /usr/lib/app-setup/common.sh
 
 SERVICE="apache2"
@@ -96,7 +98,7 @@ code{background:#f4f4f5;padding:.1em .35em;border-radius:3px}</style>
   <li>.htaccess is enabled for this directory</li>
 </ul>
 <p>This file is <code><?= __FILE__ ?></code>. Replace it with your site.</p>
-<p>Your database password is in <code>/root/.app-setup/mysql.txt</code>.</p>
+<p>Your database password is in <code>/etc/app-setup/secrets/mysql.txt</code>.</p>
 EOF
 	else
 		info "$WEBROOT already has a page in it that app-setup did not write."
@@ -139,6 +141,43 @@ do_status() {
 	exit 3
 }
 
+# ------------------------------------------------------------------ backup --
+# A LAMP box's data is whatever the holder put on top of it: every database on
+# the server, and the document root. `mysql` alone would miss the site, and
+# `wordpress` only covers a site it installed itself — somebody who wrote their
+# own PHP into $WEBROOT is covered by nothing else, which is exactly the person
+# who has no other copy of it.
+do_backup() {
+	bk_begin lamp
+	is_installed || die "LAMP is not installed here"
+	bk_quiesce
+	step "dumping every database"
+	mysql_dump_all "$(bk_path all.sql)"
+	step "copying $WEBROOT"
+	bk_add "$WEBROOT"
+	bk_finish
+}
+
+do_restore() {
+	local _d
+	bk_open lamp "${1-}"
+	_d="$BK_UNPACKED"
+	[ -f "$_d/all.sql" ] || die "that archive has no database dump in it"
+	step "loading every database back"
+	mysql_load_file "$_d/all.sql"
+	if [ -d "$_d/files$WEBROOT" ]; then
+		step "putting $WEBROOT back"
+		# Moved aside rather than deleted: if this is the wrong archive, what
+		# was there is still recoverable.
+		[ -d "$WEBROOT" ] && mv "$WEBROOT" "$WEBROOT.before-restore.$(date -u +%Y%m%d%H%M%S)"
+		bk_restore_files "$_d"
+		chown -R "$(web_user)":"$(web_group)" "$WEBROOT" 2>/dev/null || true
+	fi
+	bk_close
+	ok "LAMP restored"
+	info "the previous $WEBROOT, if any, is beside it with a .before-restore stamp"
+}
+
 do_help() { cat <<'EOF'
 LAMP — Linux, Apache, MariaDB, PHP
 
@@ -152,7 +191,7 @@ LAMP — Linux, Apache, MariaDB, PHP
     Apache   serving /var/www/html on port 80, mod_rewrite on,
              AllowOverride All so .htaccess works
     PHP      through the Apache module or php-fpm, depending on the distro
-    MariaDB  on 127.0.0.1:3306, password in /root/.app-setup/mysql.txt
+    MariaDB  on 127.0.0.1:3306, password in /etc/app-setup/secrets/mysql.txt
 
   Names, by distro
     Debian, Ubuntu, Alpine      the service is apache2

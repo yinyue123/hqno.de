@@ -13,6 +13,8 @@
 # memory: 400M
 # ports: 3306
 # service: mariadb
+# param: backup | default | Backup | 备份 | default,dump,files
+# action: backup | backup | ▶ Back up now | ▶ 立即备份
 . /usr/lib/app-setup/common.sh
 
 PKGS="mariadb-server mariadb-client"
@@ -197,6 +199,16 @@ EOF
 
 	# The default test database and the anonymous users are what
 	# mysql_secure_installation removes, and there is no reason to keep them.
+	# mysqldump ships in the client package, which is in PKGS — but a distro
+	# that splits it differently would leave `backup` broken and nobody would
+	# find out until the night it mattered.
+	if have mysqldump; then
+		ok "mysqldump is here — app-setup dump mysql writes a .sql you can read"
+	else
+		pkg_install_optional mariadb-backup mariadb-client mysql-client
+		have mysqldump || warn "mysqldump is missing; app-setup dump/backup will not work here"
+	fi
+
 	mysql_root -e "DROP DATABASE IF EXISTS test;" 2>/dev/null || true
 	mysql_root -e "DELETE FROM mysql.user WHERE User=''; FLUSH PRIVILEGES;" 2>/dev/null || true
 
@@ -219,6 +231,82 @@ do_uninstall() {
 	warn "Remove it yourself if you mean it:  rm -rf /var/lib/mysql"
 }
 
+# ------------------------------------------------------------------ backup --
+# `dump` is the default and the right answer for InnoDB: --single-transaction
+# takes a consistent snapshot without locking anybody out, so a nightly backup
+# costs the site nothing. `files` exists for the other job — moving the data
+# directory itself to another machine — and for that the server has to be
+# stopped, which bk_quiesce does when the setting says so.
+do_backup() {
+	bk_begin mysql
+	bk_quiesce
+	if [ "$(bk_method)" = files ]; then
+		bk_add /var/lib/mysql
+	else
+		step "dumping every database"
+		# An empty or truncated dump that gets tarred up anyway is the failure
+		# mode this whole feature exists to prevent; mysql_dump_all checks.
+		mysql_dump_all "$(bk_path all.sql)"
+	fi
+	# The config travels with the data either way. Restoring a dump onto a
+	# server sized for a different machine is how you find out the sizing
+	# drop-in mattered.
+	bk_add /etc/mysql
+	bk_add /etc/my.cnf.d
+	bk_add /root/.my.cnf
+	bk_finish
+}
+
+# -------------------------------------------------------------- dump/load --
+# The same call the scheduled backup makes, writing one plain .sql where
+# somebody can actually look at it. `app-setup dump mysql` and a mysqldump line
+# typed from memory produce the same file; this one just gets the flags right.
+do_dump() {
+	local _f
+	_f="$(dump_target mysql sql "${1-}")"
+	step "dumping every database"
+	mysql_dump_all "$_f"
+	chmod 600 "$_f"
+	ok "$_f  ($(du -h "$_f" 2>/dev/null | awk '{print $1}'))"
+	info "put it back with:  app-setup load mysql"
+}
+
+do_load() {
+	local _f
+	_f="$(dump_source mysql sql "${1-}")"
+	step "loading $_f"
+	warn "this replaces every database named in that file"
+	mysql_root < "$_f" || die "the import failed"
+	mysql_root -e "FLUSH PRIVILEGES;" 2>/dev/null || true
+	ok "loaded"
+}
+
+do_restore() {
+	local _d
+	bk_open mysql "${1-}"
+	_d="$BK_UNPACKED"
+	if [ -f "$_d/all.sql" ]; then
+		svc_running "$(svc)" || { step "starting $(svc)"; svc_start "$(svc)"; }
+		step "loading all.sql — this replaces the databases in it"
+		mysql_root < "$_d/all.sql" || die "the import failed; nothing else was touched"
+		mysql_root -e "FLUSH PRIVILEGES;" 2>/dev/null || true
+		ok "databases restored"
+	elif [ -d "$_d/files/var/lib/mysql" ]; then
+		step "stopping $(svc) to put the data directory back"
+		svc_stop "$(svc)"
+		rm -rf /var/lib/mysql
+		bk_restore_files "$_d"
+		chown -R mysql:mysql /var/lib/mysql 2>/dev/null || true
+		svc_start "$(svc)" || die "MariaDB will not start on the restored data directory"
+		ok "data directory restored"
+	else
+		die "that archive has neither a dump nor a data directory in it"
+	fi
+	bk_close
+	warn "the config in the archive was NOT written back — check it by hand if"
+	warn "you need it:  tar tzf <archive> | grep etc/"
+}
+
 do_help() { cat <<'EOF'
 MySQL (MariaDB)
 
@@ -228,7 +316,7 @@ MySQL (MariaDB)
     written for MySQL does not know the difference.
 
   Your root password
-    cat /root/.app-setup/mysql.txt
+    cat /etc/app-setup/secrets/mysql.txt
     It is also in /root/.my.cnf, which is why `mysql` as root just works
     with no password on this machine.
 
@@ -242,11 +330,29 @@ MySQL (MariaDB)
     truncate a row at the first one.
 
   Backup and restore
-    mysqldump --single-transaction --all-databases > /data/all.sql
-    mysql < /data/all.sql
+    app-setup install backup     once, to set a bucket and a schedule
+    app-setup backup mysql       now — mysql_20210403123221.tgz
+    app-setup restore mysql      the newest one back again
+
+    Install `Backup` and this runs itself nightly and uploads off the
+    machine. The archive holds a --single-transaction dump of every
+    database plus the config, and nothing stops while it is taken.
+
+  Just a .sql file, right now
+    app-setup dump mysql         /data/dumps/mysql_20260819034206.sql
+    app-setup load mysql         the newest one back in
+
+    That is plain SQL — open it, grep it, scp it, feed it to another
+    server. Name one if you want:
+      sh /etc/app-setup/mysql.sh dump /data/before-the-upgrade.sql
+      sh /etc/app-setup/mysql.sh load /data/before-the-upgrade.sql
+
+    By hand, if you would rather:
+      mysqldump --single-transaction --all-databases > /data/all.sql
+      mysql < /data/all.sql
 
     /data survives a reinstall of this container; /var/lib/mysql does not.
-    A backup anywhere else is not a backup.
+    A backup on the same disk as the database is not a backup.
 
   Connecting from outside this container
     By default it listens on 127.0.0.1 only, which is the right answer. If

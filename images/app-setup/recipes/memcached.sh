@@ -21,6 +21,23 @@ CHECK_BIN="memcached"
 
 version_line() { printf 'memcached %s' "$(memcached --version 2>/dev/null | sed 's/memcached //')"; }
 
+# ------------------------------------------------------------------ backup --
+# There is deliberately nothing here. memcached holds nothing that is not a
+# copy of something else — that is the entire design, and everything in it is
+# expected to vanish on restart. An empty archive appearing nightly under a
+# confident name would be worse than this message, because it would look like
+# cover somebody does not have.
+#
+# It answers 0, not an error, so a scheduled run naming several targets does
+# not fail on this one.
+do_backup() {
+	info "memcached is a cache: everything in it is a copy of something else"
+	info "and is meant to be lost on restart. There is nothing to back up."
+	info "Back up whatever it caches — usually the database behind it."
+	return 0
+}
+do_dump() { do_backup; }
+
 # KEY="value" in a shell-sourced conf file: replace the line if it is there,
 # add it if it is not. Never append blindly — these files are sourced, so a
 # second assignment silently wins over the first and the file stops saying

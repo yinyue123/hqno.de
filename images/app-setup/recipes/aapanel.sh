@@ -18,6 +18,21 @@
 BT_HOME=/www/server/panel
 SERVICE="bt"
 
+# ------------------------------------------------------------------ backup --
+# Deliberately not implemented, and saying so beats the generic message. aaPanel
+# owns /www entirely — its own MySQL, its own sites, its own users — and it
+# ships its own backup with its own schedule and its own idea of where things
+# go. A second scheduler copying the same files underneath it would be two
+# tools disagreeing about one directory, which is how you end up with an
+# archive that restores into a panel that has moved on.
+do_backup() {
+	info "aaPanel backs itself up: open the panel, then 计划任务 / Cron, and add"
+	info "a backup task. It knows its own sites and databases; app-setup does not."
+	info "Nothing under /www is managed here — see: app-setup docs aapanel"
+	return 0
+}
+do_dump() { do_backup; }
+
 version_line() {
 	_v="$(cat "$BT_HOME/class/common.py" 2>/dev/null | awk -F"'" '/g.version *=/ {print $2; exit}')"
 	[ -n "$_v" ] || _v="$(cat /www/server/panel/data/version.pl 2>/dev/null)"

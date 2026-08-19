@@ -14,6 +14,8 @@
 # ports: 80
 # requires: nginx, php, mysql
 # service: nginx
+# param: backup | default | Backup | 备份 | default,dump,files
+# action: backup | backup | ▶ Back up now | ▶ 立即备份
 . /usr/lib/app-setup/common.sh
 
 NC_ROOT=/var/www/nextcloud
@@ -330,6 +332,87 @@ do_status() {
 	exit 3
 }
 
+# -------------------------------------------------------------- dump/load --
+# The database only. The files are what `backup` adds on top — a .sql on its
+# own is the thing people want before an upgrade, and it is small enough to
+# keep several of.
+do_dump() {
+	local _f
+	_f="$(dump_target nextcloud sql "${1-}")"
+	step "dumping the $NC_DB database"
+	mysql_dump_db "$NC_DB" "$_f"
+	chmod 600 "$_f"
+	ok "$_f  ($(du -h "$_f" 2>/dev/null | awk '{print $1}'))"
+	info "put it back with:  app-setup load nextcloud"
+	info "this is the database only; app-setup backup nextcloud takes the files too"
+}
+
+do_load() {
+	local _f
+	_f="$(dump_source nextcloud sql "${1-}")"
+	step "loading $_f"
+	warn "this replaces the $NC_DB database"
+	mysql_load_file "$_f"
+	ok "loaded"
+}
+
+# ------------------------------------------------------------------ backup --
+# Maintenance mode, not a stopped web server: Nextcloud's own way of saying
+# "no writes right now" keeps the database and the file tree agreeing with each
+# other, which is the pair that actually has to be consistent. Without it a
+# user uploading during the backup lands a row in oc_filecache pointing at a
+# file that is not in the archive.
+#
+# The data directory is the one that can be enormous. It is copied because a
+# Nextcloud database without its files restores to a list of everything the
+# user has lost; if that is too much for this machine, back the two up
+# separately and say so — do not quietly ship half.
+do_backup() {
+	local _maint
+	bk_begin nextcloud
+	is_installed || die "Nextcloud is not installed here"
+	_maint=""
+	if occ maintenance:mode --on >/dev/null 2>&1; then
+		_maint=1
+		info "maintenance mode on — the site says 'be right back' until this finishes"
+	else
+		warn "could not enter maintenance mode; backing up a live site anyway"
+	fi
+
+	bk_mysql_db "$NC_DB"
+	step "copying $NC_ROOT"
+	bk_add "$NC_ROOT"
+	step "copying $NC_DATA — this is the big one"
+	bk_add "$NC_DATA"
+
+	[ -n "$_maint" ] && occ maintenance:mode --off >/dev/null 2>&1
+	bk_finish
+}
+
+do_restore() {
+	local _d
+	bk_open nextcloud "${1-}"
+	_d="$BK_UNPACKED"
+	bk_mysql_load "$_d"
+	occ maintenance:mode --on >/dev/null 2>&1 || true
+	if [ -d "$_d/files$NC_ROOT" ] || [ -d "$_d/files$NC_DATA" ]; then
+		step "putting the files back"
+		[ -d "$NC_ROOT" ] && mv "$NC_ROOT" "$NC_ROOT.before-restore.$(date -u +%Y%m%d%H%M%S)"
+		[ -d "$NC_DATA" ] && mv "$NC_DATA" "$NC_DATA.before-restore.$(date -u +%Y%m%d%H%M%S)"
+		bk_restore_files "$_d"
+		chown -R "$(web_user)":"$(web_group)" "$NC_ROOT" "$NC_DATA" 2>/dev/null || true
+		chmod 750 "$NC_DATA" 2>/dev/null || true
+	fi
+	occ maintenance:mode --off >/dev/null 2>&1 || true
+	# The file cache is a database table describing a directory tree. Restoring
+	# both from the same archive keeps them in step, but a scan costs nothing
+	# and is the difference between "my files are gone" and "there they are".
+	step "rescanning files"
+	occ files:scan --all >/dev/null 2>&1 || warn "occ files:scan failed — run it yourself once the site is up"
+	bk_close
+	ok "Nextcloud restored"
+}
+
 do_help() { cat <<'EOF'
 Nextcloud
 
@@ -339,7 +422,7 @@ Nextcloud
     and contacts over CalDAV/CardDAV, and a web interface for the rest.
 
   Logging in
-    cat /root/.app-setup/nextcloud.txt        the admin password
+    cat /etc/app-setup/secrets/nextcloud.txt   the admin password
     The account is `admin`. Change the password after the first login.
 
   "Access through untrusted domain"

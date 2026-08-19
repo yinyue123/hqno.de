@@ -65,11 +65,12 @@
 #include <time.h>
 #include <unistd.h>
 
-#define APP_VERSION   "2.9.0"
+#define APP_VERSION   "2.10.0"
 #define MAX_PKGS      512
 #define MAX_CATS      32
 #define MAX_PARAMS    12
-#define DEFAULT_PATH  "/etc/app-setup:/usr/local/etc/app-setup"
+#define DEFAULT_PATH  "/etc/app-setup:/etc/app-setup/local"
+#define DEFAULT_CONF  "/etc/app-setup"
 #define DEFAULT_STATE "/var/lib/app-setup"
 #define LOG_DIR       "/var/log/app-setup"
 #define LOG_KEEP      400        /* lines of a running action held for the pane */
@@ -240,6 +241,17 @@ typedef struct {
 	int  folded;    /* the header's own `collapsed` keyword; toggled live too */
 } Group;
 
+#define MAX_BUTTONS 6
+
+/* A package-level control, declared by `# button:` (add_button). Unlike
+ * `# action:`, which belongs to one field inside Settings, this sits on the
+ * app screen's own verb row — see build_actions for what declaring even one
+ * of these does to that row. */
+typedef struct {
+	char verb[32];
+	char label[64], label_zh[96];
+} Btn;
+
 typedef struct {
 	char id[64];
 	char path[512];
@@ -262,6 +274,9 @@ typedef struct {
 	 * the header's first `# group:` line, meaningless once load_recipe
 	 * returns — nothing reads it after parsing finishes. */
 	int  cur_group;
+
+	Btn  buttons[MAX_BUTTONS];
+	int  nbuttons;
 
 	int  status;          /* ST_* */
 	int  enabled;         /* -1 unknown, 0 no, 1 yes */
@@ -349,6 +364,20 @@ static void human_size(long long b, char *out, size_t cap)
 	while (v >= 1024.0 && i < 4) { v /= 1024.0; i++; }
 	if (v >= 100 || i == 0) snprintf(out, cap, "%.0f%s", v, u[i]);
 	else                    snprintf(out, cap, "%.1f%s", v, u[i]);
+}
+
+/* Two directories, and the difference is who is expected to open them.
+ *
+ * conf_dir() is configuration — the recipes themselves and the settings the
+ * form saves for them — and it is /etc, because that is the first place
+ * anybody looks and the only place worth telling somebody to look. state_dir()
+ * is what app-setup keeps for its own bookkeeping, the package-index refresh
+ * stamp above all, which nobody edits and nobody should have to step over on
+ * the way to a port number. */
+static const char *conf_dir(void)
+{
+	const char *e = getenv("APP_SETUP_CONF");
+	return e && *e ? e : DEFAULT_CONF;
 }
 
 static const char *state_dir(void)
@@ -934,6 +963,46 @@ static void add_action(Pkg *p, const char *spec)
 	         nf > 3 && *f[3] ? f[3] : pm->action_label);
 }
 
+/* `button: verb | English label | 中文标签`
+ *
+ * A control on the app screen's own verb row — Install/Start/Stop/Log/
+ * Settings/Details/Uninstall live there because that state machine is right
+ * for a service. It is not right for a recipe that is not one: private-pkg/
+ * clients.sh installs nothing, has no service, and is always "installed", so
+ * every one of those seven verbs is either always the same answer or
+ * actively misleading (do_install's only effect was dumping the guide text
+ * into a log file nobody asked to keep). Declaring even one `# button:`
+ * replaces that whole computed row with exactly the buttons named here, in
+ * the order named here — build_actions is where that swap happens.
+ *
+ * Each one runs through screen_docs_verb: the verb's stdout, captured and
+ * paged, the same mechanism `# How to use it` already runs `help` through.
+ * Nothing here touches /var/log/app-setup — that log is for verbs that take
+ * real time and can fail (install, start, stop); a button that only prints
+ * text should not leave a growing file behind every time somebody reads it.
+ * A verb that needs the streaming/progress screen instead is what
+ * `# action:` (add_action, field-scoped) is for. */
+static void add_button(Pkg *p, const char *spec)
+{
+	if (p->nbuttons >= MAX_BUTTONS) return;
+	char buf[256];
+	copy_str(buf, sizeof buf, spec);
+
+	char *f[3] = { buf, NULL, NULL };
+	int nf = 1;
+	for (char *q = buf; *q && nf < 3; q++)
+		if (*q == '|') { *q = '\0'; f[nf++] = q + 1; }
+	for (int i = 0; i < nf; i++) trim(f[i]);
+	if (!*f[0]) return;
+
+	Btn *b = &p->buttons[p->nbuttons];
+	memset(b, 0, sizeof *b);
+	copy_str(b->verb, sizeof b->verb, f[0]);
+	copy_str(b->label, sizeof b->label, nf > 1 && *f[1] ? f[1] : f[0]);
+	copy_str(b->label_zh, sizeof b->label_zh, nf > 2 && *f[2] ? f[2] : b->label);
+	p->nbuttons++;
+}
+
 static void set_field(Pkg *p, const char *k, const char *v)
 {
 	if      (!strcmp(k, "id"))          copy_str(p->id, sizeof p->id, v);
@@ -952,6 +1021,7 @@ static void set_field(Pkg *p, const char *k, const char *v)
 	else if (!strcmp(k, "param"))       add_param(p, v);
 	else if (!strcmp(k, "group"))       add_group(p, v);
 	else if (!strcmp(k, "action"))      add_action(p, v);
+	else if (!strcmp(k, "button"))      add_button(p, v);
 	else if (!strcmp(k, "category")) {
 		char tmp[192];
 		copy_str(tmp, sizeof tmp, v);
@@ -1057,13 +1127,19 @@ static void scan_dir(const char *dir)
 	closedir(d);
 }
 
-/* Saved settings live beside the state a recipe keeps, one file per package,
- * `NAME=value` a line. Written by the form, read here, and handed to every
- * verb as environment. A value the recipe no longer declares is dropped on
- * the next save rather than kept forever. */
+/* Saved settings live beside the recipe they configure — /etc/app-setup/params
+ * next to /etc/app-setup/nginx.sh — one file per package, `NAME=value` a line.
+ * Written by the form, read here, and handed to every verb as environment. A
+ * value the recipe no longer declares is dropped on the next save rather than
+ * kept forever.
+ *
+ * These were under /var/lib for a while, which was defensible and unfindable:
+ * somebody who had set a port in the form and wanted to see it again had no
+ * reason to guess /var/lib, and every other answer to "where is the config"
+ * on this machine is /etc. */
 static void params_path(const Pkg *p, char *out, size_t cap)
 {
-	snprintf(out, cap, "%.400s/params/%.64s.conf", state_dir(), p->id);
+	snprintf(out, cap, "%.400s/params/%.64s.conf", conf_dir(), p->id);
 }
 
 static void params_load(Pkg *p)
@@ -1091,7 +1167,7 @@ static void params_load(Pkg *p)
 static int params_save(const Pkg *p)
 {
 	char dir[600], path[600];
-	snprintf(dir, sizeof dir, "%s/params", state_dir());
+	snprintf(dir, sizeof dir, "%s/params", conf_dir());
 	mkdir_p(dir);
 	params_path(p, path, sizeof path);
 	FILE *f = fopen(path, "w");
@@ -1111,7 +1187,7 @@ static void scan_all(void)
 	/* strtok_r, and not strtok, because scan_dir parses a recipe on the way
 	 * past and every recipe with a `category:` line splits it — with strtok
 	 * that inner call resets this loop's cursor and the walk ends after the
-	 * first directory. Which meant /usr/local/etc/app-setup was never read:
+	 * first directory. Which meant the second entry was never read:
 	 * no overriding a shipped recipe, and no keeping your own under /data.
 	 * The one-directory case looked perfect, so it survived a long time. */
 	char *save = NULL;
@@ -3136,17 +3212,27 @@ static void screen_log(Pkg *p)
 	free(buf);
 }
 
-static void screen_docs(Pkg *p)
+/* Run `verb`, capture its stdout (20s, same deadline Docs always used),
+ * page it. Docs itself is now the `help`-flavoured call of this — and it is
+ * also what a `# button:` verb runs through (build_actions/add_button),
+ * so a recipe with no service and no install can still hand back text
+ * without going anywhere near /var/log/app-setup. */
+static void screen_docs_verb(Pkg *p, const char *verb, const char *title)
 {
 	char out[32768];
 	g_env_pkg = p;
-	int rc = run_capture(p->path, "help", out, sizeof out, 20, 1);
+	int rc = run_capture(p->path, verb, out, sizeof out, 20, 1);
 	g_env_pkg = NULL;
 	if (rc != 0 && !out[0]) snprintf(out, sizeof out, "%s", S(T_NODOC));
 	strip_ansi(out);
+	pager(title, out);
+}
+
+static void screen_docs(Pkg *p)
+{
 	char title[256];
 	snprintf(title, sizeof title, "%s %s %s", pkg_name(p), MK_DOT, S(T_DOCS));
-	pager(title, out);
+	screen_docs_verb(p, "help", title);
 }
 
 /* ------------------------------------------------------------- the cover --
@@ -3209,9 +3295,11 @@ static void draw_cover(int row, int col, int w, int rows, const Pkg *p, const ch
  * Choosing what to do is the same gesture as choosing what to do it to.
  */
 enum { A_INSTALL = 1, A_REMOVE, A_START, A_STOP, A_RESTART, A_BOOT,
-       A_STATUS, A_DETAILS, A_PARAMS, A_DOCS, A_LOG };
+       A_STATUS, A_DETAILS, A_PARAMS, A_DOCS, A_LOG, A_BUTTON };
 
-typedef struct { int act; char label[64]; char aux[32]; int dim; } Action;
+/* `verb` is only ever read when `act == A_BUTTON` — every other action's
+ * verb is implied by `act` itself and dispatched by name in screen_app. */
+typedef struct { int act; char label[64]; char aux[32]; int dim; char verb[32]; } Action;
 
 /* Fill in the Log entry: grey until something has been run on this package,
  * carrying the file's size when there is one — which answers "is there
@@ -3239,6 +3327,24 @@ static void add_log_action(const Pkg *p, Action *a)
 static int build_actions(const Pkg *p, Action *a)
 {
 	int n = 0;
+
+	/* A recipe that declares `# button:` owns this row completely — see
+	 * add_button's comment for why. Nothing below this block runs for it:
+	 * no Install/Log/Settings/Details/Uninstall computed from state that
+	 * does not describe what the recipe actually is. */
+	if (p->nbuttons) {
+		for (int i = 0; i < p->nbuttons && n < p->nbuttons; i++) {
+			const Btn *b = &p->buttons[i];
+			a[n].act = A_BUTTON;
+			copy_str(a[n].label, 64, (g_zh && b->label_zh[0]) ? b->label_zh : b->label);
+			copy_str(a[n].verb, sizeof a[n].verb, b->verb);
+			a[n].aux[0] = '\0';
+			a[n].dim = 0;
+			n++;
+		}
+		return n;
+	}
+
 	int inst = pkg_installed(p);
 
 	if (!inst) {
@@ -3693,6 +3799,12 @@ static void screen_app(Pkg *p)
 		case A_STOP:    screen_progress(p, "stop", NULL); break;
 		case A_RESTART: screen_progress(p, "restart", NULL); break;
 		case A_BOOT:    screen_progress(p, p->enabled == 1 ? "disable" : "enable", NULL); break;
+		case A_BUTTON: {
+			char title[256];
+			snprintf(title, sizeof title, "%s %s %s", pkg_name(p), MK_DOT, v.acts[v.sel].label);
+			screen_docs_verb(p, v.acts[v.sel].verb, title);
+			break;
+		}
 		}
 		v.bscroll = 0;
 	}
@@ -4447,6 +4559,8 @@ static int cli_doctor(void)
 	printf("disk free   %s on /\n", disk);
 	printf("root        %s\n", geteuid() == 0 ? "yes" : (have_cmd("sudo") ? "no, sudo present" : "no, and no sudo"));
 	printf("sources     %s\n", getenv("APP_SETUP_PATH") ? getenv("APP_SETUP_PATH") : DEFAULT_PATH);
+	printf("settings    %s/params\n", conf_dir());
+	printf("passwords   %s/secrets\n", conf_dir());
 	printf("state       %s\n", state_dir());
 	printf("recipes     %d\n", g_npkg);
 	printf("logs        %s\n", log_dir());
@@ -4641,6 +4755,10 @@ static void usage(FILE *f)
 	  "  app-setup remove <id>...\n"
 	  "  app-setup start|stop|restart <id>...\n"
 	  "  app-setup enable|disable <id>...   start at boot, or stop doing that\n"
+	  "  app-setup backup <id>...     pack it, and upload it if a bucket is set\n"
+	  "  app-setup restore <id>...    put the newest archive back\n"
+	  "  app-setup dump <id>...       one plain .sql (or .rdb) file you can read\n"
+	  "  app-setup load <id>...       feed the newest one back in\n"
 	  "  app-setup set <id> [k=v ...] show or change a recipe's settings\n"
 	  "  app-setup docs <id>          what the recipe says about itself\n"
 	  "  app-setup doctor             what this machine looks like to app-setup\n"
@@ -4664,8 +4782,11 @@ static void usage(FILE *f)
 	  "  --no-color      no escape sequences in the CLI output\n"
 	  "  --version\n"
 	  "\n"
-	  "Sources are /etc/app-setup/*.sh; APP_SETUP_PATH overrides where they are\n"
-	  "read from. Action output is appended to %s/<id>.log.\n",
+	  "Everything you might want to edit is under /etc/app-setup — the recipes\n"
+	  "as *.sh, your own in local/ where they override ours by id, what the\n"
+	  "Settings form saved in params/, generated passwords in secrets/.\n"
+	  "APP_SETUP_PATH overrides where recipes are read from and APP_SETUP_CONF\n"
+	  "where the rest lives. Action output is appended to %s/<id>.log.\n",
 	  APP_VERSION, LOG_DIR);
 }
 
@@ -5340,6 +5461,13 @@ int main(int argc, char **argv)
 	else if (!strcmp(cmd, "restart")) rc = na ? cli_run("restart", na, aa) : (usage(stderr), 2);
 	else if (!strcmp(cmd, "enable"))  rc = na ? cli_run("enable", na, aa) : (usage(stderr), 2);
 	else if (!strcmp(cmd, "disable")) rc = na ? cli_run("disable", na, aa) : (usage(stderr), 2);
+	else if (!strcmp(cmd, "backup"))  rc = na ? cli_run("backup", na, aa) : (usage(stderr), 2);
+	/* Restore takes ids, not filenames — cli_run treats every argument as a
+	 * package. Naming one archive out of several is `sh /etc/app-setup/<id>.sh
+	 * restore <file>`, which the recipe's own help says. */
+	else if (!strcmp(cmd, "restore")) rc = na ? cli_run("restore", na, aa) : (usage(stderr), 2);
+	else if (!strcmp(cmd, "dump"))    rc = na ? cli_run("dump", na, aa) : (usage(stderr), 2);
+	else if (!strcmp(cmd, "load"))    rc = na ? cli_run("load", na, aa) : (usage(stderr), 2);
 	else if (!strcmp(cmd, "domain")) rc = cli_domain(na, aa);
 	else if (!strcmp(cmd, "docs") || !strcmp(cmd, "help")) {
 		if (!na) { usage(stdout); return 0; }

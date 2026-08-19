@@ -13,6 +13,8 @@
 # memory: 256M
 # ports: 5432
 # service: postgresql
+# param: backup | default | Backup | 备份 | default,dump,files
+# action: backup | backup | ▶ Back up now | ▶ 立即备份
 . /usr/lib/app-setup/common.sh
 
 PKGS="postgresql postgresql-client"
@@ -155,6 +157,7 @@ do_install() {
 	# there is anything to append to — and before the first start, so the
 	# sizes are what it comes up with.
 	pg_tune
+	dump_tool_check pg_dumpall "app-setup dump postgresql writes a .sql you can read"
 
 	svc_enable "$(svc)"
 	if svc_running "$(svc)"; then
@@ -229,13 +232,95 @@ do_uninstall() {
 	warn "Remove it yourself if you mean it:  rm -rf /var/lib/postgresql /var/lib/pgsql"
 }
 
+# -------------------------------------------------------------- dump/load --
+# pg_dumpall, not pg_dump: roles and their passwords live outside any one
+# database, and a dump without them restores the data perfectly and leaves
+# every application unable to log in to it.
+pg_dump_all() { su postgres -c "pg_dumpall"; }
+
+do_dump() {
+	local _f
+	_f="$(dump_target postgresql sql "${1-}")"
+	step "dumping every database, role and tablespace"
+	pg_dump_all > "$_f" || die "pg_dumpall failed — is the cluster running?"
+	[ -s "$_f" ] || die "the dump came out empty; that is not a backup"
+	chmod 600 "$_f"
+	ok "$_f  ($(du -h "$_f" 2>/dev/null | awk '{print $1}'))"
+	info "put it back with:  app-setup load postgresql"
+}
+
+do_load() {
+	local _f
+	_f="$(dump_source postgresql sql "${1-}")"
+	step "loading $_f"
+	# psql has to read it as the postgres user, and /root is not somewhere
+	# that user can get to on most of these images.
+	cp "$_f" /tmp/app-setup-load.sql
+	chown postgres /tmp/app-setup-load.sql 2>/dev/null || true
+	su postgres -c "psql -q -f /tmp/app-setup-load.sql" ||
+		warn "psql reported errors — read them before assuming this worked"
+	rm -f /tmp/app-setup-load.sql
+	ok "loaded"
+}
+
+# ------------------------------------------------------------------ backup --
+do_backup() {
+	local _d
+	bk_begin postgresql
+	bk_quiesce
+	if [ "$(bk_method)" = files ]; then
+		_d="$(pg_data)"
+		[ -n "$_d" ] || die "cannot find the data directory"
+		bk_add "$_d"
+	else
+		step "dumping every database, role and tablespace"
+		pg_dump_all > "$(bk_path all.sql)" || die "pg_dumpall failed — is the cluster running?"
+		[ -s "$(bk_path all.sql)" ] || die "the dump came out empty; refusing to call that a backup"
+	fi
+	bk_finish
+}
+
+do_restore() {
+	local _d _pgd
+	bk_open postgresql "${1-}"
+	_d="$BK_UNPACKED"
+	if [ -f "$_d/all.sql" ]; then
+		svc_running "$(svc)" || { step "starting $(svc)"; svc_start "$(svc)"; }
+		# pg_dumpall's output is CREATE-then-populate and expects to run as a
+		# superuser against a live cluster. It does not drop what is already
+		# there, so an existing database of the same name collides loudly
+		# rather than being silently half-overwritten.
+		step "loading all.sql"
+		cp "$_d/all.sql" /tmp/app-setup-restore.sql
+		chown postgres /tmp/app-setup-restore.sql 2>/dev/null || true
+		su postgres -c "psql -q -f /tmp/app-setup-restore.sql" ||
+			warn "psql reported errors — read them before assuming this worked"
+		rm -f /tmp/app-setup-restore.sql
+		ok "cluster restored"
+	elif [ -d "$_d/files" ]; then
+		_pgd="$(pg_data)"
+		[ -n "$_pgd" ] || die "cannot find the data directory to restore into"
+		step "stopping $(svc) to put the data directory back"
+		svc_stop "$(svc)"
+		rm -rf "$_pgd"
+		bk_restore_files "$_d"
+		chown -R postgres:postgres "$_pgd" 2>/dev/null || true
+		chmod 700 "$_pgd" 2>/dev/null || true
+		svc_start "$(svc)" || die "PostgreSQL will not start on the restored data directory"
+		ok "data directory restored"
+	else
+		die "that archive has neither a dump nor a data directory in it"
+	fi
+	bk_close
+}
+
 do_help() { cat <<'EOF'
 PostgreSQL
 
   Getting a prompt
     su postgres -c psql            as root on this machine, no password
     psql -U postgres -h 127.0.0.1  over TCP, which does want the password
-                                   from /root/.app-setup/postgresql.txt
+                                   from /etc/app-setup/secrets/postgresql.txt
 
   Make a database for an application
     su postgres -c "createuser --pwprompt myapp"

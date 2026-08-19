@@ -212,8 +212,10 @@ That is the site existing — before any domain name or certificate is involved.
 this does not answer, no amount of domain work will help, so fix it here.
 
 Two more things it does for you: passwords it generates are written into
-`/root/.app-setup/` instead of scrolling past, and removing something never
-deletes your data — it moves what you would miss into `/root/` first and says so.
+`/etc/app-setup/secrets/` instead of scrolling past — next to the recipes and
+to anything you changed in Settings, so `/etc/app-setup` is the only path worth
+remembering — and removing something never deletes your data: it moves what you
+would miss into `/root/` first and says so.
 
 The same thing works without the menu, which is what you want in a script:
 

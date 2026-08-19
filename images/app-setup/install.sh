@@ -1,14 +1,21 @@
 #!/bin/sh
 #
 # install.sh — put app-setup on this machine the way the images put it in a
-# container. Same binary, same three paths, same login hint:
+# container. Same binary, same paths, same login hint:
 #
 #   /bin/app-setup              the picker
 #   /usr/lib/app-setup/         the helpers every recipe sources
 #   /etc/app-setup/*.sh         one file per package
+#   /etc/app-setup/local/*.sh   your own, and they override ours by id
+#   /etc/app-setup/params/      what the Settings form saved, one file per id
+#   /etc/app-setup/secrets/     generated passwords, 0700 and each file 0600
 #   /var/log/app-setup/         every action's output
-#   /var/lib/app-setup/         state, settings, the refresh stamp
+#   /var/lib/app-setup/         bookkeeping — the package-index refresh stamp
 #   /etc/profile.d/app-setup.sh the one line on an interactive login
+#
+# One directory holds everything worth opening, and it is /etc. params/ and
+# secrets/ were under /var/lib and /root before and local/ was under
+# /usr/local/etc, none of which anybody guessed.
 #
 # It is the install block of help/images/*/Dockerfile, run against `/` instead
 # of against an image, so that what you are testing here is what ships.
@@ -44,10 +51,19 @@ done
 case "${mode-}" in
 uninstall)
 	rm -f /bin/app-setup /etc/profile.d/app-setup.sh
-	rm -rf /usr/lib/app-setup /etc/app-setup
+	rm -rf /usr/lib/app-setup
+	rm -f /etc/app-setup/*.sh
+	# local/, params/ and secrets/ stay. Software this installed is still
+	# installed and still running on the port that was set and the password
+	# that was generated, and the recipes in local/ are the holder's own work;
+	# taking any of the three away with the picker would be the one uninstall
+	# that destroys something.
+	rmdir /etc/app-setup 2>/dev/null || true
 	echo "removed the binary, the helpers, the recipes and the login hint."
-	echo "left alone: /var/log/app-setup and /var/lib/app-setup — rm -rf them"
-	echo "yourself if you want the logs and saved settings gone too."
+	echo "left alone: /etc/app-setup/local, params and secrets — your own"
+	echo "recipes, your settings and the generated passwords — plus"
+	echo "/var/log/app-setup and /var/lib/app-setup. rm -rf them yourself if"
+	echo "you want them gone too."
 	exit 0
 	;;
 check)
@@ -96,8 +112,14 @@ echo "compiling with $cc …"
 # Same order, same modes, same doctor check as the Dockerfile.
 install -m 0755 "$tmp/app-setup" /bin/app-setup
 
-rm -rf /usr/lib/app-setup /etc/app-setup
-mkdir -p /usr/lib/app-setup /etc/app-setup /var/log/app-setup /var/lib/app-setup
+# Only the recipes are replaced. params/ and secrets/ are in the same directory
+# now, and a reinstall that took a holder's saved port and generated passwords
+# with it would be a worse bug than the one this layout fixes.
+rm -rf /usr/lib/app-setup
+rm -f /etc/app-setup/*.sh
+mkdir -p /usr/lib/app-setup /etc/app-setup/local /etc/app-setup/params \
+         /etc/app-setup/secrets /var/log/app-setup /var/lib/app-setup
+chmod 0700 /etc/app-setup/secrets
 for f in "$here"/lib/*.sh;     do install -m 0644 "$f" /usr/lib/app-setup/; done
 for f in "$here"/recipes/*.sh; do install -m 0755 "$f" /etc/app-setup/; done
 if [ "$demo" = 1 ]; then

@@ -14,6 +14,8 @@
 # ports: 80
 # requires: nginx, php
 # service: nginx
+# param: backup | default | Backup | 备份 | default,dump,files
+# action: backup | backup | ▶ Back up now | ▶ 立即备份
 . /usr/lib/app-setup/common.sh
 
 TY_ROOT=/var/www/typecho
@@ -247,6 +249,75 @@ do_status() {
 	exit 3
 }
 
+# -------------------------------------------------------------- dump/load --
+# Only meaningful on the MariaDB half. On SQLite the database is a file inside
+# the document root, so there is nothing to dump that `backup` is not already
+# taking — and saying so is better than writing an empty .sql.
+ty_on_mysql() { have mysql && mysql_root -e "USE \`$TY_DB\`" >/dev/null 2>&1; }
+
+do_dump() {
+	local _f
+	ty_on_mysql || die "this Typecho is on SQLite — its database is a file in $TY_ROOT, so use: app-setup backup typecho"
+	_f="$(dump_target typecho sql "${1-}")"
+	step "dumping the $TY_DB database"
+	mysql_dump_db "$TY_DB" "$_f"
+	chmod 600 "$_f"
+	ok "$_f  ($(du -h "$_f" 2>/dev/null | awk '{print $1}'))"
+	info "put it back with:  app-setup load typecho"
+}
+
+do_load() {
+	local _f
+	ty_on_mysql || die "this Typecho is on SQLite — restore it with: app-setup restore typecho"
+	_f="$(dump_source typecho sql "${1-}")"
+	step "loading $_f"
+	warn "this replaces the $TY_DB database"
+	mysql_load_file "$_f"
+	ok "loaded"
+}
+
+# ------------------------------------------------------------------ backup --
+# A site is a database and a directory, and half of either one is worthless —
+# so both go into the same archive and come back together.
+do_backup() {
+	bk_begin typecho
+	is_installed || die "typecho is not installed here"
+	bk_quiesce
+	# Typecho is whichever of the two it was installed onto. On SQLite the
+	# database is a file inside the document root, so copying the root copies
+	# it — there is nothing else to dump and nothing that can go missing.
+	if ty_on_mysql; then
+		bk_mysql_db "$TY_DB"
+	else
+		info "no $TY_DB database here — SQLite, and its file travels inside $TY_ROOT"
+	fi
+	step "copying ${TY_ROOT}"
+	bk_add "$TY_ROOT"
+	bk_finish
+}
+
+do_restore() {
+	local _d
+	bk_open typecho "${1-}"
+	_d="$BK_UNPACKED"
+	if [ -f "$_d/db.sql" ]; then
+		bk_mysql_load "$_d"
+	else
+		info "no database dump in this archive — SQLite, restored with the files"
+	fi
+	if [ -d "$_d/files${TY_ROOT}" ]; then
+		step "putting the site files back"
+		# The old tree is moved aside rather than deleted: if this archive
+		# turns out to be the wrong one, what was here is still recoverable.
+		[ -d "$TY_ROOT" ] && mv "$TY_ROOT" "$TY_ROOT.before-restore.$(date -u +%Y%m%d%H%M%S)"
+		bk_restore_files "$_d"
+		chown -R "$(web_user)" "$TY_ROOT" 2>/dev/null || true
+	fi
+	bk_close
+	ok "typecho restored"
+	info "the previous files, if any, are beside ${TY_ROOT} with a .before-restore stamp"
+}
+
 do_help() { cat <<'EOF'
 Typecho
 
@@ -273,7 +344,7 @@ Typecho
 
     If MariaDB was already installed when this ran, a database, a user and
     a password were made for it and printed at the end. They are also in
-    /root/.app-setup/typecho.txt.
+    /etc/app-setup/secrets/typecho.txt.
 
   Then delete install.php
     rm /var/www/typecho/install.php

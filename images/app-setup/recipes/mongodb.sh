@@ -13,10 +13,16 @@
 # memory: 1G
 # ports: 27017
 # service: mongod
+# param: backup | default | Backup | 备份 | default,dump,files
+# action: backup | backup | ▶ Back up now | ▶ 立即备份
 . /usr/lib/app-setup/common.sh
 
 MONGO_VER=8.0
-PKGS="mongodb-org"
+# mongodb-org is a metapackage and pulls mongodb-org-tools, which is where
+# mongodump and mongorestore live — named here anyway, because the whole
+# backup story depends on them and a metapackage quietly changing what it
+# depends on is not something to find out about on the night it matters.
+PKGS="mongodb-org mongodb-database-tools"
 SERVICE="mongod"
 CHECK_BIN="mongod"
 
@@ -174,6 +180,7 @@ EOF
 
 	ok "MongoDB is running on 127.0.0.1:27017 with no authentication."
 	warn "Turn authentication on before anything else can reach it — the docs button says how."
+	dump_tool_check mongodump "app-setup dump mongodb writes one archive file"
 }
 
 do_uninstall() {
@@ -183,6 +190,79 @@ do_uninstall() {
 	rm -f /etc/apt/sources.list.d/mongodb-org.list /etc/yum.repos.d/mongodb-org.repo
 	rm -f /usr/share/keyrings/mongodb-server-*.gpg
 	warn "/var/lib/mongo was NOT deleted — your data is still there."
+}
+
+# -------------------------------------------------------- dump/load/backup --
+# `--archive` rather than `--out`: one file instead of a directory of BSON, so
+# a dump is something you can scp, and the backup and the dump are the same
+# call with a different destination.
+mongo_dump_to() {   # mongo_dump_to <file>
+	have mongodump || die "mongodump is not installed — it ships in mongodb-database-tools"
+	mongodump --quiet --archive="$1" ||
+		die "mongodump failed — if authentication is on it needs credentials this recipe does not store"
+	[ -s "$1" ] || die "mongodump wrote nothing; that is not a backup"
+}
+
+mongo_load_from() { # mongo_load_from <file>
+	have mongorestore || die "mongorestore is not installed — it ships in mongodb-database-tools"
+	svc_running "$(svc)" || { step "starting $(svc)"; svc_start "$(svc)"; }
+	mongorestore --quiet --drop --archive="$1" || die "mongorestore failed"
+}
+
+do_dump() {
+	local _f
+	_f="$(dump_target mongodb archive "${1-}")"
+	step "dumping every database"
+	mongo_dump_to "$_f"
+	chmod 600 "$_f"
+	ok "$_f  ($(du -h "$_f" 2>/dev/null | awk '{print $1}'))"
+	info "put it back with:  app-setup load mongodb"
+}
+
+do_load() {
+	local _f
+	_f="$(dump_source mongodb archive "${1-}")"
+	step "loading $_f"
+	warn "collections of the same name are dropped first"
+	mongo_load_from "$_f"
+	ok "loaded"
+}
+
+# ------------------------------------------------------------------ backup --
+do_backup() {
+	bk_begin mongodb
+	bk_quiesce
+	if [ "$(bk_method)" = files ]; then
+		bk_add /var/lib/mongo
+	else
+		step "dumping every database"
+		mongo_dump_to "$(bk_path dump.archive)"
+	fi
+	bk_add /etc/mongod.conf
+	bk_finish
+}
+
+do_restore() {
+	local _d
+	bk_open mongodb "${1-}"
+	_d="$BK_UNPACKED"
+	if [ -f "$_d/dump.archive" ]; then
+		step "restoring — existing collections of the same name are dropped"
+		mongo_load_from "$_d/dump.archive"
+		ok "databases restored"
+	elif [ -d "$_d/files/var/lib/mongo" ]; then
+		step "stopping $(svc) to put the data directory back"
+		svc_stop "$(svc)"
+		rm -rf /var/lib/mongo
+		bk_restore_files "$_d"
+		chown -R mongod:mongod /var/lib/mongo 2>/dev/null ||
+			chown -R mongodb:mongodb /var/lib/mongo 2>/dev/null || true
+		svc_start "$(svc)" || die "mongod will not start on the restored data directory"
+		ok "data directory restored"
+	else
+		die "that archive has neither a dump nor a data directory in it"
+	fi
+	bk_close
 }
 
 do_help() { cat <<'EOF'

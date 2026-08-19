@@ -128,11 +128,27 @@ app-setup status nginx        # exit 0 running, 1 stopped, 2 not installed
 It installs your distribution's own packages into your distribution's own
 paths. Nothing here is a private build, so the next set of instructions you
 read still applies, and security updates arrive through `apt` or `dnf` the
-usual way. Generated passwords go to `/root/.app-setup/`, mode 600, rather than
-scrolling past in the install log.
+usual way. Generated passwords go to `/etc/app-setup/secrets/`, mode 600,
+rather than scrolling past in the install log — the same directory as the
+recipes themselves and anything you changed in Settings, so there is one place
+to look.
 
 Uninstalling never deletes your data. Removing WordPress drops its database and
 its files but moves your uploads to `/root/` first, and says so.
+
+Install `Backup` once and your databases and sites pack themselves nightly
+into `/data/backups/mysql_20260819033240.tgz` and upload to any S3-compatible
+bucket you point them at. `app-setup restore mysql` puts the newest one back —
+and if the local copy is gone, it fetches it from the bucket first.
+
+Software with no recipe of its own — something you wrote — is covered by the
+`Files and folders` card: list its directories there, add `files` to the backup
+list, and its config and uploads go with the same nightly run as the database.
+
+If you just want a file you can read, `app-setup dump mysql` writes one plain
+`.sql` to `/data/dumps/` and `app-setup load mysql` feeds it back. The tools
+those need — `mysqldump`, `pg_dumpall`, `redis-cli`, `mongodump` — come with
+the database when you install it.
 
 Adding your own software to the menu is writing one shell script and dropping
 it into `/etc/app-setup/` — see
