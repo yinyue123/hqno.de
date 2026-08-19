@@ -1,0 +1,77 @@
+title: Getting in, and staying in
+summary: the login, the password, and the four ways people lock themselves out
+
+== How the login works ==
+
+You do not SSH to this container. You SSH to the MACHINE, on the address and
+port `dashboard ssh` prints, with the username your host gave you — and the
+machine puts you in here. That is why the port is often not 22, and why the
+host key you are asked to trust is the machine's.
+
+    dashboard ssh        the exact line to type
+
+== Changing your password ==
+
+Run `passwd` in here. It changes the password you log in with — both this
+container's own account and the login the machine checks — because the two
+are kept in step deliberately.
+
+    passwd
+
+Nothing else does that. Editing /etc/shadow by hand, or with a tool that
+writes it directly, changes this container's copy and not the one the
+machine checks, and the result is a password that works for `su` in here and
+not for logging in at all.
+
+A KEY IN ~/.ssh/authorized_keys DOES NOTHING for that login. The machine
+authenticates you before this container is involved, and it does not read
+files in here. If you need key authentication, ask your host — they can add
+one for your login. (An sshd you install and expose on a public port is a
+different, separate thing, and reads its own authorized_keys normally.)
+
+Your host can also set a new password from the panel. Nobody can show you
+the old one: it is stored hashed, which is the point.
+
+== The four ways people lock themselves out ==
+
+1. `poweroff` — it works, and it means it. The container stays off, and SSH
+   arrives through the container, so there is no way back in over SSH. Start
+   it again from the panel.
+
+2. A firewall inside the container. Anything that filters the loopback
+   address the machine forwards over will also cut the SSH session that is
+   forwarded the same way. There is nothing to gain here: nothing outside
+   reaches this container except what your host has published.
+
+3. Filling the disk. At 100% a login can fail to write what a login writes.
+   Watch `dashboard disk` before it gets close, and see the Limits page for
+   what to clear.
+
+4. Traffic, and expiry. Both stop the container, and a stopped container has
+   no SSH. Traffic lifts itself when the window rolls; expiry needs your
+   host. Both are on the login screen, which is the point of it being there.
+
+== Running something that keeps running ==
+
+Use the init system this image ships with rather than a background process
+you started in a shell — when your SSH session ends, whatever you started
+without a service manager can go with it.
+
+    app-setup enable nginx    come back at boot
+    systemctl status myapp    on a systemd image
+    rc-service myapp status   on an Alpine (OpenRC) image
+
+`app-setup install` sets this up for the software it installs. For your own
+program, write a unit for it; a `screen` or `tmux` session survives a logout
+but not a restart.
+
+== Two things worth knowing about this box ==
+
+It is a container, not a virtual machine. The kernel is the machine's, so
+anything wanting a kernel module, its own kernel version, or /dev access
+beyond the ordinary will not work here — and that is the same on every
+provider selling containers, whatever the panel calls it.
+
+You are root in here and only in here. Nothing you do reaches the machine,
+the other containers on it, or its network. The walls are what make the rest
+of it yours.

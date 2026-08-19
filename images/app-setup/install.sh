@@ -11,6 +11,7 @@
 #   /etc/app-setup/secrets/     generated passwords, 0700 and each file 0600
 #   /var/log/app-setup/         every action's output
 #   /var/lib/app-setup/         bookkeeping — the package-index refresh stamp
+#   /etc/helppage/*.txt         the pages `helppage` shows
 #   /etc/profile.d/app-setup.sh the usage banner on an interactive login
 #
 # One directory holds everything worth opening, and it is /etc. params/ and
@@ -53,12 +54,17 @@ uninstall)
 	rm -f /bin/app-setup /etc/profile.d/app-setup.sh
 	rm -rf /usr/lib/app-setup
 	rm -f /etc/app-setup/*.sh
+	rm -f /usr/local/bin/helppage /usr/local/bin/dashboard
 	# local/, params/ and secrets/ stay. Software this installed is still
 	# installed and still running on the port that was set and the password
 	# that was generated, and the recipes in local/ are the holder's own work;
 	# taking any of the three away with the picker would be the one uninstall
 	# that destroys something.
 	rmdir /etc/app-setup 2>/dev/null || true
+	# The same rule for the guide: our own pages by name, and the directory
+	# only if nobody else has left one in it.
+	rm -f /etc/helppage/[0-9]*.txt
+	rmdir /etc/helppage 2>/dev/null || true
 	echo "removed the binary, the helpers, the recipes and the login hint."
 	echo "left alone: /etc/app-setup/local, params and secrets — your own"
 	echo "recipes, your settings and the generated passwords — plus"
@@ -122,6 +128,16 @@ mkdir -p /usr/lib/app-setup /etc/app-setup/local /etc/app-setup/params \
 chmod 0700 /etc/app-setup/secrets
 for f in "$here"/lib/*.sh;     do install -m 0644 "$f" /usr/lib/app-setup/; done
 for f in "$here"/recipes/*.sh; do install -m 0755 "$f" /etc/app-setup/; done
+
+# The guide, and the two names that open it. `helppage` reads /etc/helppage the
+# same way app-setup reads /etc/app-setup, so this is the same shape of install:
+# copy the pages in, and put the word on PATH.
+if [ -d "$here/../helppage" ]; then
+	rm -rf /etc/helppage; mkdir -p /etc/helppage /usr/local/bin
+	for f in "$here"/../helppage/*.txt; do install -m 0644 "$f" /etc/helppage/; done
+	ln -sf /bin/app-setup /usr/local/bin/helppage
+	ln -sf /bin/app-setup /usr/local/bin/dashboard
+fi
 if [ "$demo" = 1 ]; then
 	for f in "$here"/demo/*.sh; do install -m 0755 "$f" /etc/app-setup/; done
 fi
@@ -138,10 +154,12 @@ printf '%s\n' \
   '    case "${LANG-}${LC_ALL-}" in' \
   '      zh*|*zh_CN*)' \
   '        printf "\033[2m装软件：\033[0m\033[1mapp-setup\033[0m\033[2m — LNMP、WordPress、数据库、开发环境\033[0m\n"' \
-  '        printf "\033[2m看状态：\033[0m\033[1mdashboard\033[0m\033[2m — 配额、流量、端口、域名、到期\033[0m\n" ;;' \
+  '        printf "\033[2m看状态：\033[0m\033[1mdashboard\033[0m\033[2m — 配额、流量、端口、域名、到期\033[0m\n"' \
+  '        printf "\033[2m看文档：\033[0m\033[1mhelppage\033[0m\033[2m — 端口与域名、装软件、限额、重装\033[0m\n" ;;' \
   '      *)' \
   '        printf "\033[2mInstall software: \033[0m\033[1mapp-setup\033[0m\033[2m — web servers, databases, WordPress, dev tools.\033[0m\n"' \
-  '        printf "\033[2mCheck this box:   \033[0m\033[1mdashboard\033[0m\033[2m — allowances, traffic, ports, domains, expiry.\033[0m\n" ;;' \
+  '        printf "\033[2mCheck this box:   \033[0m\033[1mdashboard\033[0m\033[2m — allowances, traffic, ports, domains, expiry.\033[0m\n"' \
+  '        printf "\033[2mRead the guide:   \033[0m\033[1mhelppage\033[0m\033[2m — ports and domains, installing, limits, reinstall.\033[0m\n" ;;' \
   '    esac' \
   '    ;;' \
   'esac' \

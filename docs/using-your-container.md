@@ -249,7 +249,10 @@ quota, and the expiry date:
 ```
 
 For the rest of it — public ports, domains, how to log back in — type
-`dashboard`, which saves opening a browser to find out why something is slow:
+`dashboard`, which saves opening a browser to find out why something is slow.
+And `helppage` is this page and the ones around it, inside the container:
+ports and domains, installing software, what each limit does, and what a
+reinstall keeps.
 
 ```sh
 dashboard              # all of it: the box, cpu, memory, disk, traffic,

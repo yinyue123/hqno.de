@@ -1,0 +1,111 @@
+title: Reinstall and /data
+summary: what a reinstall keeps, what it destroys, and what to do before one
+
+Two buttons on your container's page look similar and are not the same size
+of thing at all.
+
+== Restart is safe ==
+
+It stops the container and starts it again. Your filesystem, your packages,
+your configuration and your data are untouched. It is the right answer for a
+service that has wedged itself, and for anything you would reboot a machine
+for.
+
+From in here, `poweroff` and `halt` also work, and they mean it: the
+container stays off rather than being restarted for you. Start it again from
+the panel — there is no way back in over SSH while it is off, because SSH
+arrives through the container.
+
+== Reinstall destroys everything except /data ==
+
+It wipes `/` and rebuilds it from a fresh image. Every package you
+installed, every service you configured, every file you left outside /data:
+gone, and not recoverable. That is why the dialog makes you type the
+container's name.
+
+WHAT SURVIVES A REINSTALL
+
+    /data                     the whole point of it — see below
+    your SSH login and password
+    the address and port you SSH to
+    your domains and any public ports your host opened
+    your traffic counter and expiry date
+
+WHAT DOES NOT
+
+    everything under /  except /data
+    every package, including the ones app-setup installed
+    users you created, crontabs, systemd units, certificates you kept
+      outside /data, and anything in /root
+    /etc/app-setup/secrets — the database passwords app-setup generated
+      for you. Copy them out first, or you will restore a backup you
+      cannot open
+
+== /data, and the honest limits of it ==
+
+/data is a separate disk mounted at /data, and it is the only path a
+reinstall leaves standing. Databases, uploads, site content, anything you
+would be upset to lose: put it there and point the service at it.
+
+Two things it is NOT:
+
+- It is not a backup. It survives a reinstall, and it does not survive `rm
+  -rf`, a bad migration, a ransomware script, or a disk that fails on the
+  machine. A backup is a copy somewhere else — and there is a card for
+  exactly that: `app-setup install backup` packs your databases and sites
+  nightly into /data/backups and uploads them to a bucket you name.
+- It is not free space. It counts against the same disk figure as `/`, and
+  `dashboard disk` shows both together.
+
+Not every container has one. If `dashboard disk` prints no /data line, this
+container was sold without one — ask your host, it is fixed at create time
+and cannot be added later without rebuilding.
+
+== Before you reinstall ==
+
+1. Run a backup, or copy off anything you want by hand, to somewhere that is
+   not this container:
+
+       app-setup backup mysql          # if the Backup card is installed
+       app-setup dump mysql            # or one plain .sql to /data/dumps
+       tar czf - /etc/nginx /etc/app-setup/secrets /root \
+           | ssh you@elsewhere 'cat > box.tgz'
+
+2. Write down what you installed. `app-setup list` prints it; the reinstalled
+   box will not remember.
+
+3. Check what is actually under /data, rather than what you meant to put
+   there:
+
+       du -xh --max-depth=1 /data
+
+4. Note your service configuration. A config file in /etc is not in /data,
+   and this is the thing people lose.
+
+== Choosing the image ==
+
+The dialog offers what your host has cached on that machine. Those unpack in
+seconds, cost you no traffic, and are the ordinary case.
+
+Your own image — a full registry reference like ghcr.io/you/thing:tag — is
+downloaded BY THE MACHINE, so it has to be reachable from there and not from
+your laptop, and three things follow:
+
+- it is yours alone, and the host keeps no copy of it;
+- because no copy is kept, it is downloaded again on EVERY reinstall;
+- that download counts against your traffic quota, every time.
+
+If the machine already happens to hold that exact image, it uses its own
+copy: nothing is downloaded and nothing is charged.
+
+== After a reinstall ==
+
+Your domains still point here and your ports are still open, but nothing is
+listening on them yet — the software that was answering is gone. Install it
+again (`app-setup install ...`), point it back at /data, and check:
+
+    app-setup status nginx
+    dashboard ports
+
+If a service was set to come back at boot before, that setting went with the
+old filesystem. `app-setup enable` it again.

@@ -65,7 +65,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define APP_VERSION   "2.11.0"
+#define APP_VERSION   "2.12.0"
 #define MAX_PKGS      512
 #define MAX_CATS      32
 #define MAX_PARAMS    12
@@ -94,6 +94,16 @@ static const char *lang_other(void) { return g_zh ? "English" : "中文"; }
 
 static const L T_TITLE     = {"app-setup", "app-setup"};
 static const L T_SUBTITLE  = {"software manager", "软件管家"};
+/* The same binary answers to `helppage`, and the blue bar has to say which
+ * program you are looking at. Two pointers rather than a copy of draw_root:
+ * every screen in here draws that bar, and a second one would drift. */
+static const L T_GTITLE    = {"helppage", "helppage"};
+static const L T_GSUBTITLE = {"guide to your container", "容器使用指南"};
+static const L T_CONTENTS  = {"Contents", "目录"};
+static const L T_NOGUIDE   = {"No pages found. They live in /etc/helppage/*.txt",
+                              "没有找到任何文档。它们在 /etc/helppage/*.txt"};
+static const L T_GUIDEKEYS = {"↑↓ jk scroll   ←→ page   ^F/^B   L 中文   q quit",
+                              "↑↓ jk 滚动   ←→ 翻页   ^F/^B   L English   q 退出"};
 static const L T_INSTALLP  = {"Installed",    "已安装"};
 static const L T_INSTALL   = {"Install",      "安装"};
 static const L T_UPDATE    = {"Update",       "更新"};
@@ -1940,6 +1950,11 @@ static void help_line_l(const L *l)
 static int g_showtop = 0;      /* draw the top-right buttons at all */
 static int g_topsel  = -1;     /* which one has the cursor: 0 language, 1 back */
 
+/* Which program's name goes on the blue bar. app-setup's own by default;
+ * `helppage` points these at its own pair before it draws anything. */
+static const L *g_rootname = &T_TITLE;
+static const L *g_rootsub  = &T_SUBTITLE;
+
 static void draw_root(void)
 {
 	grid_clear(P_ROOT);
@@ -1974,7 +1989,7 @@ static void draw_root(void)
 	}
 
 	char left[256];
-	snprintf(left, sizeof left, "%s %s  %s", S(T_TITLE), APP_VERSION, S(T_SUBTITLE));
+	snprintf(left, sizeof left, "%s %s  %s", S(*g_rootname), APP_VERSION, S(*g_rootsub));
 	gput(0, 1, left, P_ROOTTITLE, rightedge - 2);
 
 	char right[128];
@@ -4768,6 +4783,9 @@ static void usage(FILE *f)
 	  "  app-setup dashboard [section ...]  what this box is, is allowed and is\n"
 	  "                               using. No section draws all of them:\n"
 	  "                               box cpu mem disk net ports domains ssh\n"
+	  "  app-setup helppage [page]    the guide, full-screen: ports and domains,\n"
+	  "                               installing software, limits, reinstall.\n"
+	  "                               `helppage --list` names the pages\n"
 	  "  app-setup screenshot [--width N] [--height N] [--category C|installed|all]\n"
 	  "                       [--screen home|app|params|progress] [--id ID]\n"
 	  "                       [--select N] [--focus grid|chips|back] [--probe]\n"
@@ -5410,6 +5428,710 @@ static int cli_dashboard(int argc, char **argv)
 	return rc;
 }
 
+/* -------------------------------------------------------------- helppage --
+ *
+ * `helppage` — the guide somebody reads before they break something, in the
+ * same window furniture as the picker, driven the same four ways.
+ *
+ * It knows nothing about what is in the guide. Pages are plain .txt files in
+ * /etc/helppage, one per topic per language, and the program scans that
+ * directory the way app-setup scans /etc/app-setup: a host who wants a page
+ * of their own — their own support address, their own backup policy — drops
+ * a file in and it is a chapter, indistinguishable from the ones we ship.
+ * There is no table in the C to update and no rebuild.
+ *
+ *     NN-id.LANG.txt        10-ports.en.txt, 10-ports.zh.txt
+ *
+ * NN orders the contents, id ties the two languages together, and LANG picks
+ * which one is shown. The top of each file is `key: value` lines — title and
+ * summary — stopping at the first line that is not one, so a file that opens
+ * with prose keeps its prose.
+ *
+ * In the body: `== A heading ==` is a heading, a line indented four spaces is
+ * something to type and is never wrapped, and everything else is a paragraph
+ * wrapped to the pane. That is the whole markup, on purpose: it has to read
+ * as well through `cat` as it does in here, because on a container with no
+ * terminal `cat` is what somebody has.
+ */
+#define HELP_DIR_DEFAULT "/etc/helppage:/usr/local/etc/helppage"
+#define HELP_MAXTOPIC    24
+#define HELP_MAXBYTES    (96 * 1024)
+
+typedef struct {
+	int  order;
+	char id[40];
+	char title[2][96];      /* [0] English, [1] 中文 */
+	char summary[2][200];
+	char path[2][600];
+} Topic;
+
+static Topic g_topics[HELP_MAXTOPIC];
+static int   g_ntopics = 0;
+
+static const char *help_title(const Topic *t)
+{
+	const char *s = t->title[g_zh ? 1 : 0];
+	if (!*s) s = t->title[g_zh ? 0 : 1];
+	return *s ? s : t->id;
+}
+
+/* Which file to show: this language if there is one, the other if there is
+ * not. A page nobody has translated yet is better read in English than not
+ * read at all. */
+static const char *help_path(const Topic *t)
+{
+	const char *p = t->path[g_zh ? 1 : 0];
+	return *p ? p : t->path[g_zh ? 0 : 1];
+}
+
+static int topic_cmp(const void *a, const void *b)
+{
+	const Topic *x = a, *y = b;
+	if (x->order != y->order) return x->order - y->order;
+	return strcmp(x->id, y->id);
+}
+
+static Topic *topic_find(const char *id)
+{
+	for (int i = 0; i < g_ntopics; i++)
+		if (!strcmp(g_topics[i].id, id)) return &g_topics[i];
+	return NULL;
+}
+
+/* One `key: value` header line, if that is what this is. Returns 0 for
+ * anything else, which ends the header block. */
+static int help_meta(Topic *t, int lang, const char *line)
+{
+	const char *colon = strchr(line, ':');
+	if (!colon || colon == line) return 0;
+	for (const char *p = line; p < colon; p++)
+		if (!islower((unsigned char)*p) && *p != '_') return 0;
+	if (colon[1] != ' ' && colon[1] != '\0') return 0;
+
+	char key[32];
+	size_t klen = (size_t)(colon - line);
+	if (klen >= sizeof key) return 0;
+	memcpy(key, line, klen);
+	key[klen] = '\0';
+	const char *val = colon + 1;
+	while (*val == ' ') val++;
+
+	if (!strcmp(key, "title"))        copy_str(t->title[lang], sizeof t->title[lang], val);
+	else if (!strcmp(key, "summary")) copy_str(t->summary[lang], sizeof t->summary[lang], val);
+	return 1;
+}
+
+/* `10-ports.en.txt` → order 10, id "ports", lang en. A file with no NN- goes
+ * to the end rather than to the front, so somebody's own page does not land
+ * above the one about ports without them asking for it. */
+static void help_scan_file(const char *dir, const char *name)
+{
+	size_t len = strlen(name);
+	if (len < 8 || strcmp(name + len - 4, ".txt") != 0) return;
+
+	char base[128];
+	if (len - 4 >= sizeof base) return;
+	memcpy(base, name, len - 4);
+	base[len - 4] = '\0';
+
+	char *dot = strrchr(base, '.');
+	if (!dot) return;
+	int lang;
+	if (!strcmp(dot + 1, "en"))      lang = 0;
+	else if (!strcmp(dot + 1, "zh")) lang = 1;
+	else return;
+	*dot = '\0';
+
+	int order = 500;
+	char *id = base;
+	if (isdigit((unsigned char)base[0])) {
+		char *dash = strchr(base, '-');
+		if (dash) { order = atoi(base); id = dash + 1; }
+	}
+	if (!*id) return;
+
+	Topic *t = topic_find(id);
+	if (!t) {
+		if (g_ntopics >= HELP_MAXTOPIC) return;
+		t = &g_topics[g_ntopics++];
+		memset(t, 0, sizeof *t);
+		copy_str(t->id, sizeof t->id, id);
+		t->order = order;
+	}
+	if (order < t->order) t->order = order;
+	snprintf(t->path[lang], sizeof t->path[lang], "%s/%s", dir, name);
+
+	FILE *f = fopen(t->path[lang], "r");
+	if (!f) return;
+	char line[512];
+	while (fgets(line, sizeof line, f)) {
+		line[strcspn(line, "\r\n")] = '\0';
+		if (!help_meta(t, lang, line)) break;
+	}
+	fclose(f);
+}
+
+static void help_scan(void)
+{
+	g_ntopics = 0;
+	const char *env = getenv("HELPPAGE_PATH");
+	char path[1024];
+	copy_str(path, sizeof path, env && *env ? env : HELP_DIR_DEFAULT);
+
+	for (char *dir = strtok(path, ":"); dir; dir = strtok(NULL, ":")) {
+		DIR *d = opendir(dir);
+		if (!d) continue;
+		struct dirent *e;
+		while ((e = readdir(d))) {
+			if (e->d_name[0] == '.') continue;
+			help_scan_file(dir, e->d_name);
+		}
+		closedir(d);
+	}
+	qsort(g_topics, (size_t)g_ntopics, sizeof g_topics[0], topic_cmp);
+}
+
+/* ---- the body, wrapped once per (topic, language, width) ---------------- */
+
+static char         **g_hl = NULL;      /* wrapped display lines */
+static unsigned char *g_ha = NULL;      /* the attribute for each */
+static int g_nhl = 0, g_hlcap = 0;
+static int g_hl_topic = -1, g_hl_lang = -1, g_hl_cols = -1;
+
+static void help_free(void)
+{
+	for (int i = 0; i < g_nhl; i++) free(g_hl[i]);
+	free(g_hl); free(g_ha);
+	g_hl = NULL; g_ha = NULL; g_nhl = g_hlcap = 0;
+	g_hl_topic = g_hl_lang = g_hl_cols = -1;
+}
+
+static void help_push(const char *text, int attr)
+{
+	if (g_nhl == g_hlcap) {
+		int cap = g_hlcap ? g_hlcap * 2 : 256;
+		char **lines = realloc(g_hl, (size_t)cap * sizeof *lines);
+		unsigned char *attrs = realloc(g_ha, (size_t)cap);
+		if (!lines || !attrs) { free(lines); free(attrs); return; }
+		g_hl = lines; g_ha = attrs; g_hlcap = cap;
+	}
+	size_t n = strlen(text);
+	char *copy = xmalloc(n + 1);
+	memcpy(copy, text, n + 1);
+	g_hl[g_nhl] = copy;
+	g_ha[g_nhl] = (unsigned char)attr;
+	g_nhl++;
+}
+
+/* A blank row, unless the last one already is. The files have a blank line
+ * around every heading and the parser adds its own, and two blank rows in a
+ * row read as something missing rather than as spacing. */
+static void help_blank(void)
+{
+	if (g_nhl && !*g_hl[g_nhl - 1]) return;
+	help_push("", P_WIN);
+}
+
+/* A paragraph, reflowed to the pane rather than re-wrapped line by line.
+ *
+ * The files are hard-wrapped at about 76 columns so that `cat` and an editor
+ * both show them properly, and a pane is almost never 76 columns wide. Taking
+ * each source line as its own paragraph produced exactly what you would
+ * expect and nobody wants: every line broken into a long one and a stub. So
+ * the lines of a paragraph are joined back into one string and wrapped once,
+ * at whatever width the pane turned out to be.
+ *
+ * `lead` is a bullet's or a numbered item's marker, and the continuation rows
+ * are indented by its width so they line up under its first word instead of
+ * under the dash.
+ */
+static void help_para(const char *text, const char *lead, int cols, int attr)
+{
+	static char wrap[128][512];
+	char indent[16];
+	size_t leadw = strlen(lead);
+	if (leadw >= sizeof indent) leadw = sizeof indent - 1;
+	memset(indent, ' ', leadw);
+	indent[leadw] = '\0';
+
+	int inner = cols - (int)leadw;
+	if (inner < 8) inner = 8;
+	int n = u8wrap(text, inner, wrap, 128);
+	if (n < 1) { help_push("", attr); return; }
+	for (int i = 0; i < n; i++) {
+		char out[640];
+		/* The precision is what tells the compiler this cannot overrun: a
+		 * wrapped row is one row of `wrap`, and nothing longer. */
+		snprintf(out, sizeof out, "%s%.*s", i == 0 ? lead : indent,
+		         (int)sizeof wrap[0] - 1, wrap[i]);
+		help_push(out, attr);
+	}
+}
+
+/* An indented line: something to type, or a two-column table of commands and
+ * what they do. It keeps its own indentation and is never reflowed with the
+ * prose around it — but when it is wider than the pane it is *wrapped*, at
+ * its own indent plus two, rather than cut off with an ellipsis. Cutting one
+ * of these loses the half that says what the command is for, in a window
+ * whose whole job is explaining that.
+ */
+static void help_literal(const char *line, int cols)
+{
+	static char wrap[64][512];
+	if (u8width(line) <= cols) { help_push(line, P_RUN); return; }
+
+	int ind = 0;
+	while (line[ind] == ' ') ind++;
+	if (ind > 24) ind = 24;
+	char pad[32];
+	memset(pad, ' ', (size_t)ind + 2);
+	pad[ind + 2] = '\0';
+
+	int inner = cols - ind - 2;
+	if (inner < 12) inner = 12;
+	int n = u8wrap(line + ind, inner, wrap, 64);
+	for (int i = 0; i < n; i++) {
+		char out[640];
+		snprintf(out, sizeof out, "%.*s%.*s", i == 0 ? ind : ind + 2, pad,
+		         (int)sizeof wrap[0] - 1, wrap[i]);
+		help_push(out, P_RUN);
+	}
+}
+
+/* How a source line opens: "- " for a bullet, "1. " for a numbered item, and
+ * the width of that marker is the hanging indent its continuations get. */
+static int help_marker(const char *line, char *out, size_t cap)
+{
+	if (!strncmp(line, "- ", 2)) { copy_str(out, cap, "- "); return 2; }
+	if (isdigit((unsigned char)line[0])) {
+		const char *p = line;
+		while (isdigit((unsigned char)*p)) p++;
+		if (p[0] == '.' && p[1] == ' ') {
+			size_t n = (size_t)(p - line) + 2;
+			if (n < cap) { memcpy(out, line, n); out[n] = '\0'; return (int)n; }
+		}
+	}
+	out[0] = '\0';
+	return 0;
+}
+
+static void help_build(int topic, int cols)
+{
+	int lang = g_zh ? 1 : 0;
+	if (topic == g_hl_topic && lang == g_hl_lang && cols == g_hl_cols) return;
+	help_free();
+	g_hl_topic = topic; g_hl_lang = lang; g_hl_cols = cols;
+	if (topic < 0 || topic >= g_ntopics) return;
+
+	FILE *f = fopen(help_path(&g_topics[topic]), "r");
+	if (!f) { help_push(S(T_NOGUIDE), P_WARN); return; }
+
+	char line[1024];
+	int inheader = 1, bytes = 0;
+	char para[4096] = "", lead[16] = "";
+
+	/* One paragraph's worth of source lines have accumulated; wrap them as
+	 * one thing and start the next. */
+	#define HELP_FLUSH() do { \
+		if (*para) { help_para(para, lead, cols, P_WIN); para[0] = '\0'; lead[0] = '\0'; } \
+	} while (0)
+
+	while (fgets(line, sizeof line, f)) {
+		bytes += (int)strlen(line);
+		if (bytes > HELP_MAXBYTES) break;
+		line[strcspn(line, "\r\n")] = '\0';
+
+		if (inheader) {
+			Topic scratch;
+			memset(&scratch, 0, sizeof scratch);
+			if (help_meta(&scratch, lang, line)) continue;
+			inheader = 0;
+			if (!*line) continue;          /* the blank line under the header */
+		}
+
+		size_t n = strlen(line);
+		if (n > 4 && !strncmp(line, "== ", 3) && !strcmp(line + n - 3, " ==")) {
+			HELP_FLUSH();
+			char head[256];
+			copy_str(head, sizeof head, line + 3);
+			head[strlen(head) - 3] = '\0';
+			trim(head);
+			help_blank();
+			help_push(head, P_TITLE);
+			help_push("", P_WIN);
+			continue;
+		}
+		if (!strncmp(line, "    ", 4)) {   /* something to type, or a table */
+			HELP_FLUSH();
+			help_literal(line, cols);
+			continue;
+		}
+		if (!*line) { HELP_FLUSH(); help_blank(); continue; }
+
+		/* A marker starts a paragraph of its own; one to three leading
+		 * spaces are a continuation of the one being built, which is how a
+		 * bullet's second line is written in the file. */
+		char mark[16];
+		int mw = help_marker(line, mark, sizeof mark);
+		const char *rest = line;
+		if (mw) {
+			HELP_FLUSH();
+			copy_str(lead, sizeof lead, mark);
+			rest = line + mw;
+		} else {
+			while (*rest == ' ') rest++;
+		}
+		if (*para) {
+			size_t have = strlen(para);
+			/* Joining two source lines usually wants a space between them —
+			 * they were one sentence before the file was hard-wrapped. Not
+			 * in Chinese: there are no spaces between characters there, and
+			 * one inserted at every line break of the file put a gap in the
+			 * middle of a word on every third line. Either side being
+			 * multibyte is enough to know this is that case. */
+			int cjk = (unsigned char)para[have - 1] >= 0x80 ||
+			          (unsigned char)rest[0] >= 0x80;
+			snprintf(para + have, sizeof para - have, "%s%s", cjk ? "" : " ", rest);
+		} else {
+			copy_str(para, sizeof para, rest);
+		}
+	}
+	HELP_FLUSH();
+	#undef HELP_FLUSH
+	fclose(f);
+	/* Two blank rows at the end, so the last line of a page can sit at the
+	 * top of the pane instead of being pinned to the bottom of it. */
+	help_push("", P_WIN);
+	help_push("", P_WIN);
+}
+
+/* ---- one frame ---------------------------------------------------------- */
+
+/* Draws the whole screen and reports back the two numbers the key handler
+ * needs — how tall the body pane turned out and how many lines are in it —
+ * so paging is the pane's own height rather than a guess. scroll is clamped
+ * here, which is why it is passed by address: the geometry is what decides
+ * how far down it is possible to be. */
+static void help_draw(int topic, int *scroll, int *body_h, int *total)
+{
+	term_measure();
+	grid_size(g_w, g_h);
+	g_showtop = 1;
+	draw_root();
+	hit_clear();
+
+	int top = g_h >= 18 ? 3 : 2;
+	int h = g_h - top - 1;
+	if (h < 5) h = 5;
+
+	int widest = u8width(S(T_CONTENTS));
+	for (int i = 0; i < g_ntopics; i++) {
+		int w = u8width(help_title(&g_topics[i])) + 2;
+		if (w > widest) widest = w;
+	}
+	int cw = widest + 4;
+	if (cw > 30) cw = 30;
+	if (cw < 18) cw = 18;
+	/* The contents pane costs its own width plus a border, and what it costs
+	 * is the width of the tables of commands in the pages. On an 80-column
+	 * terminal — still the most common one — the body is better off with the
+	 * whole screen and the reader with one pane. The list is a keypress away
+	 * either way: left and right turn the pages without it. */
+	int show_contents = (g_w >= cw + 56);
+
+	int bcol = show_contents ? 1 + cw + 1 : 1;
+	int bw = g_w - bcol - 1;
+	if (bw < 20) bw = 20;
+
+	if (show_contents) {
+		win_box(top, 1, cw, h, S(T_CONTENTS));
+		for (int i = 0; i < g_ntopics && i < h - 2; i++) {
+			int row = top + 1 + i;
+			int cur = (i == topic);
+			char label[128];
+			snprintf(label, sizeof label, "%s %s", cur ? AR_R : " ", help_title(&g_topics[i]));
+			gput(row, 1 + 1, label, cur ? P_SEL : P_WIN, cw - 2);
+			if (cur) cursor_sweep(row, 1 + 1, cw - 2, P_SEL, P_CURSORHOT);
+			hit_add(H_CHIP, i, row, 1, 1, cw);
+		}
+	}
+
+	const char *title = topic >= 0 && topic < g_ntopics ? help_title(&g_topics[topic]) : S(T_GTITLE);
+	win_box(top, bcol, bw, h, title);
+	/* One column narrower than the pane allows, so a line that wraps to the
+	 * full width still has air between its last letter and the scroll bar. */
+	int inner = bw - 5;
+	int body = h - 2;
+	help_build(topic, inner);
+
+	if (*scroll > g_nhl - body) *scroll = g_nhl - body;
+	if (*scroll < 0) *scroll = 0;
+
+	for (int i = 0; i < body && *scroll + i < g_nhl; i++)
+		gput(top + 1 + i, bcol + 2, g_hl[*scroll + i], g_ha[*scroll + i], inner);
+	hit_add(H_BODY, 0, top + 1, bcol + 1, body, bw - 2);
+	scrollbar(top + 1, bcol + bw - 2, body, *scroll, body, g_nhl, P_SBTHUMBW, P_SBTRACKW);
+
+	if (g_nhl > body) {
+		char sb[32];
+		snprintf(sb, sizeof sb, " %d%% ", (*scroll + body >= g_nhl) ? 100
+		                                  : (*scroll * 100) / (g_nhl - body));
+		int sw = u8width(sb);
+		gput(top + h - 1, bcol + bw - 3 - sw, sb, P_TITLE, sw);
+	}
+	help_line_l(&T_GUIDEKEYS);
+
+	if (body_h) *body_h = body;
+	if (total) *total = g_nhl;
+}
+
+static void screen_help(void)
+{
+	struct sigaction sa;
+	memset(&sa, 0, sizeof sa);
+	sa.sa_handler = on_winch;
+	sa.sa_flags = 0;                   /* no SA_RESTART: read() must return */
+	sigaction(SIGWINCH, &sa, NULL);
+	sa.sa_handler = on_fatal;
+	sigaction(SIGTERM, &sa, NULL);
+	sigaction(SIGHUP, &sa, NULL);
+	signal(SIGPIPE, SIG_IGN);
+
+	term_raw();
+	atexit(term_cooked);
+
+	static int scroll[HELP_MAXTOPIC];
+	int topic = 0;
+	for (;;) {
+		int body = 1, total = 1;
+		help_draw(topic, &scroll[topic], &body, &total);
+		grid_flush();
+
+		int k = read_key();
+		if (k == K_NONE || k == K_RESIZE || k == K_TIMEOUT) continue;
+		int *s = &scroll[topic];
+
+		if (k == 'q' || k == 'Q' || k == K_ESC) { term_cooked(); return; }
+		if (k == 'L') { g_zh = !g_zh; continue; }
+
+		if (k == K_CLICK) {
+			int idx = 0;
+			switch (hit_test(g_my, g_mx, &idx)) {
+			case H_BACK: term_cooked(); return;
+			case H_LANG: g_zh = !g_zh; break;
+			case H_CHIP: if (idx >= 0 && idx < g_ntopics) topic = idx; break;
+			default: break;
+			}
+			continue;
+		}
+
+		switch (k) {
+		/* A wheel notch is three lines, which is what every terminal
+		 * program does and what a hand expects from one flick. */
+		case K_WHEELUP: *s -= 3; break;
+		case K_WHEELDN: *s += 3; break;
+		case K_UP:   case 'k': (*s)--; break;
+		case K_DOWN: case 'j': (*s)++; break;
+		/* ^F and ^B, because this is a document and that is what pages a
+		 * document everywhere else. Space and PgDn do it too. */
+		case 6: case K_PGDN: case ' ': case K_ENTER: *s += body - 1; break;
+		case 2: case K_PGUP: case K_BACK:            *s -= body - 1; break;
+		case K_HOME: case 'g': *s = 0; break;
+		case K_END:  case 'G': *s = total; break;
+		/* Left and right are the chapters. Reading forward past the end of
+		 * one is what turning a page means, so the next one starts at its
+		 * own top rather than wherever it was left. */
+		case K_RIGHT: case K_TAB: case 'n':
+			if (topic + 1 < g_ntopics) { topic++; scroll[topic] = 0; }
+			break;
+		case K_LEFT: case K_BTAB: case 'p':
+			if (topic > 0) { topic--; scroll[topic] = 0; }
+			break;
+		default: break;
+		}
+	}
+}
+
+/* One frame as plain text, the same way `app-setup screenshot` does it and
+ * for the same reason: this is how the layout is checked at 130, 88 and 46
+ * columns without a terminal to hold it in. */
+static int help_screenshot(int argc, char **argv)
+{
+	int w = 100, h = 30, scroll = 0, topic = 0;
+	for (int i = 0; i < argc; i++) {
+		if (!strcmp(argv[i], "--width") && i + 1 < argc) w = atoi(argv[++i]);
+		else if (!strcmp(argv[i], "--height") && i + 1 < argc) h = atoi(argv[++i]);
+		else if (!strcmp(argv[i], "--scroll") && i + 1 < argc) scroll = atoi(argv[++i]);
+		else if (!strcmp(argv[i], "--topic") && i + 1 < argc) {
+			const char *id = argv[++i];
+			for (int t = 0; t < g_ntopics; t++)
+				if (!strcmp(g_topics[t].id, id)) topic = t;
+		}
+	}
+	g_w = w > 24 ? w : 24;
+	g_h = h > 10 ? h : 10;
+	g_anim = 0;
+	g_color = 0;
+
+	int body = 0, total = 0;
+	help_draw(topic, &scroll, &body, &total);
+	grid_dump(stdout);
+	printf("\n[topic=%s cols=%d lines=%d scroll=%d body=%d %dx%d]\n",
+	       g_ntopics ? g_topics[topic].id : "-", g_hl_cols, total, scroll, body, g_w, g_h);
+	return 0;
+}
+
+static void helppage_usage(FILE *out)
+{
+	fprintf(out,
+		"Usage: helppage [page]\n"
+		"\n"
+		"The guide to this container, in a full-screen reader: what ports\n"
+		"and domains are for, how to install software, what your limits\n"
+		"mean, what a reinstall keeps, and how to get back in.\n"
+		"\n"
+		"  ↑↓ or j/k     scroll        ←→        previous / next page\n"
+		"  ^F / ^B       page          Home/End  top / bottom\n"
+		"  wheel, click  the mouse works        L  switch language\n"
+		"  q or Esc      quit\n"
+		"\n"
+		"  helppage            open at the first page\n"
+		"  helppage ports      open at one, by name\n"
+		"  helppage --list     the pages, as a table\n"
+		"  helppage --text     one page as plain text, for a pipe\n"
+		"\n"
+		"Pages are .txt files in /etc/helppage (HELPPAGE_PATH overrides it),\n"
+		"named NN-id.en.txt / NN-id.zh.txt. Dropping one in adds a chapter.\n");
+}
+
+static int helppage_list(void)
+{
+	printf("%-14s %-34s %s\n", "PAGE", "TITLE", "SUMMARY");
+	for (int i = 0; i < g_ntopics; i++) {
+		Topic *t = &g_topics[i];
+		const char *sum = t->summary[g_zh ? 1 : 0];
+		if (!*sum) sum = t->summary[g_zh ? 0 : 1];
+		printf("%-14s %-34s %s\n", t->id, help_title(t), sum);
+	}
+	return g_ntopics ? 0 : 1;
+}
+
+/* The page, unwrapped, for a pipe or a terminal that cannot hold a TUI —
+ * `helppage --text ports | less`. The files are meant to read this way. */
+static int helppage_text(const char *id)
+{
+	Topic *t = id ? topic_find(id) : (g_ntopics ? &g_topics[0] : NULL);
+	if (!t) { fprintf(stderr, "helppage: no such page: %s\n", id ? id : ""); return 1; }
+	FILE *f = fopen(help_path(t), "r");
+	if (!f) { fprintf(stderr, "helppage: cannot read %s\n", help_path(t)); return 1; }
+	char line[1024];
+	int inheader = 1;
+	while (fgets(line, sizeof line, f)) {
+		if (inheader) {
+			Topic scratch;
+			memset(&scratch, 0, sizeof scratch);
+			char probe[1024];
+			copy_str(probe, sizeof probe, line);
+			probe[strcspn(probe, "\r\n")] = '\0';
+			if (help_meta(&scratch, 0, probe)) continue;
+			inheader = 0;
+		}
+		fputs(line, stdout);
+	}
+	fclose(f);
+	return 0;
+}
+
+static int cli_helppage(int argc, char **argv)
+{
+	/* The bare-word form reaches here before main() has looked at the
+	 * environment, so the language is picked up here rather than there. */
+	const char *lang = getenv("APP_SETUP_LANG");
+	if (lang && (strstr(lang, "zh") || strstr(lang, "ZH"))) g_zh = 1;
+	const char *enc = getenv("LC_ALL");
+	if (!enc) enc = getenv("LANG");
+	g_utf8 = !enc || strstr(enc, "UTF-8") || strstr(enc, "utf8") ||
+	         strstr(enc, "UTF8") || strstr(enc, "utf-8");
+	if (!g_utf8) g_zh = 0;
+	if (getenv("NO_COLOR")) g_color = 0;
+
+	const char *open_id = NULL;
+	int want_list = 0, want_text = 0, want_shot = 0;
+	for (int i = 0; i < argc; i++) {
+		const char *a = argv[i];
+		if (!strcmp(a, "--lang") && i + 1 < argc) g_zh = !strncmp(argv[++i], "zh", 2);
+		else if (!strcmp(a, "--no-mouse")) g_mouse = 0;
+		else if (!strcmp(a, "--no-blink")) g_anim = 0;
+		else if (!strcmp(a, "--no-color")) g_color = 0;
+		else if (!strcmp(a, "--ascii")) { g_utf8 = 0; g_zh = 0; }
+		else if (!strcmp(a, "--list")) want_list = 1;
+		else if (!strcmp(a, "--text")) want_text = 1;
+		else if (!strcmp(a, "--screenshot")) want_shot = 1;
+		else if (!strcmp(a, "--version")) { printf("helppage %s\n", APP_VERSION); return 0; }
+		else if (!strcmp(a, "help") || !strcmp(a, "-h") || !strcmp(a, "--help")) {
+			helppage_usage(stdout);
+			return 0;
+		}
+		else if (a[0] == '-') continue;          /* a flag for the screenshot */
+		else if (!open_id) open_id = a;
+	}
+	pick_glyphs();
+	help_scan();
+	/* Every path below that draws anything draws the blue bar, screenshot
+	 * included, so the name on it is set before any of them run. */
+	g_rootname = &T_GTITLE;
+	g_rootsub  = &T_GSUBTITLE;
+
+	if (g_ntopics == 0) {
+		fprintf(stderr, "helppage: no pages found in %s\n",
+		        getenv("HELPPAGE_PATH") ? getenv("HELPPAGE_PATH") : HELP_DIR_DEFAULT);
+		return 1;
+	}
+	if (want_list) return helppage_list();
+	if (want_text) return helppage_text(open_id);
+
+	/* Both remaining paths draw the blue bar, and the bar carries what this
+	 * machine is. main() probes before it dispatches, but the bare word
+	 * `helppage` never reaches that — found on a real container, where the
+	 * facts line read " · · · 0 CPU · RAM 0B". Nothing else here needs it,
+	 * so it is probed at the one moment it is about to be shown. */
+	probe_system();
+	if (want_shot) return help_screenshot(argc, argv);
+
+	if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
+		/* No terminal to draw in, and somebody still asked for the guide:
+		 * give them the page rather than an error about ttys. */
+		return helppage_text(open_id);
+	}
+
+	g_rootname = &T_GTITLE;
+	g_rootsub  = &T_GSUBTITLE;
+	if (open_id) {
+		Topic *t = topic_find(open_id);
+		if (!t) {
+			fprintf(stderr, "helppage: no such page: %s\n\n", open_id);
+			helppage_list();
+			return 1;
+		}
+	}
+	/* screen_help starts on the first page; opening by name is a jump to
+	 * that one before the first frame is drawn. */
+	if (open_id) {
+		Topic *t = topic_find(open_id);
+		Topic tmp = *t;                     /* move it to the front, once */
+		for (int i = 0; i < g_ntopics; i++) {
+			if (&g_topics[i] == t) {
+				memmove(&g_topics[1], &g_topics[0], (size_t)i * sizeof(Topic));
+				g_topics[0] = tmp;
+				break;
+			}
+		}
+	}
+	screen_help();
+	help_free();
+	return 0;
+}
+
 /* cli_run's hook, after a successful `install`: the same DOMAIN ADD path
  * `app-setup domain add` uses, just walked by hand instead of typed out —
  * skippable at either question, and the whole thing is skipped already
@@ -5628,6 +6350,8 @@ int main(int argc, char **argv)
 	// name of the program that happens to provide it.
 	if (argc > 0 && !strcmp(prog_basename(argv[0]), "dashboard"))
 		return cli_dashboard(argc - 1, argv + 1);
+	if (argc > 0 && !strcmp(prog_basename(argv[0]), "helppage"))
+		return cli_helppage(argc - 1, argv + 1);
 
 	/* English unless somebody says otherwise, and only APP_SETUP_LANG or
 	 * --lang says otherwise. LANG is not consulted: it describes the locale
@@ -5705,6 +6429,7 @@ int main(int argc, char **argv)
 	else if (!strcmp(cmd, "load"))    rc = na ? cli_run("load", na, aa) : (usage(stderr), 2);
 	else if (!strcmp(cmd, "domain")) rc = cli_domain(na, aa);
 	else if (!strcmp(cmd, "dashboard")) rc = cli_dashboard(na, aa);
+	else if (!strcmp(cmd, "helppage") || !strcmp(cmd, "guide")) rc = cli_helppage(na, aa);
 	else if (!strcmp(cmd, "docs") || !strcmp(cmd, "help")) {
 		if (!na) { usage(stdout); return 0; }
 		Pkg *p = find_pkg(aa[0]);

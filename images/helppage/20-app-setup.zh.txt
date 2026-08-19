@@ -1,0 +1,89 @@
+title: 安装软件
+summary: app-setup 的菜单用法、脚本用法，以及怎么把机器保持干净
+
+`app-setup` 装的是你这个发行版自己的包，落到这个发行版自己的路径里。它不做私有编
+译，所以你读到的第五篇 nginx 教程在这儿照样适用，安全更新也照旧从 apt 或 dnf 来。
+
+== 菜单 ==
+
+不带参数直接敲：
+
+    app-setup
+
+顶部是分类，下面每个软件一张卡片。方向键移动，回车打开光标下那个，`L` 切换语言，
+`q` 退出，鼠标也能用。每张卡片都写着这个东西要多少磁盘和内存 —— 当这个容器装不下
+它时那一行会变红，而这个数字，通常没人会在安装跑到第四分钟挂掉之前告诉你。
+
+单个软件的页面上有这些按钮：安装、卸载、启动、停止、是否开机自启、上次运行的日志、
+有设置项的还有设置表单，以及「怎么用」—— 里面列出这个包写过的每一个文件。
+
+== 脚本里用 ==
+
+菜单能做的每件事都有对应命令，写脚本或者 `ssh 主机 app-setup ...` 时要的就是它们：
+
+    app-setup list              全部，带状态
+    app-setup list db           只看一类
+    app-setup info nginx        单个软件的详情
+    app-setup install lnmp      nginx + MariaDB + PHP
+    app-setup install wordpress   再装上 WordPress
+    app-setup remove nginx
+    app-setup start|stop|restart nginx
+    app-setup enable|disable nginx   开机自启
+    app-setup set nginx port=8080    它的设置
+    app-setup docs wordpress    recipe 自己的说明
+    app-setup status nginx      0 运行 1 已停 2 未装
+    app-setup dump mysql        导出一份 .sql 到 /data/dumps
+    app-setup load mysql        把那份文件灌回去
+    app-setup restore mysql     用最新的备份还原
+
+`status` 是专门给脚本用的：它用退出码回答，所以 `app-setup status nginx && echo up`
+的含义和你想的一致。
+
+== 最佳实践 ==
+
+装套件，别装零件。`app-setup install lnmp` 给你的是已经互相接好的 nginx、MariaDB
+和 PHP-FPM，socket 和进程池都配好了。三个分开装，你得到的是三个服务和一份要自己写
+的配置文件。
+
+一次只做一件事，并且看日志。每次运行都会追加到 /var/log/app-setup/<id>.log。出错
+时那个文件里写着原因，而且失败那一行通常是包管理器自己说的。
+
+自动生成的密码在 /etc/app-setup/secrets/ —— 目录 0700，每个文件 0600。数据库 root
+之类的密码写在那里，而不是在安装输出里一闪而过。觉得密码丢了之前先去那儿看看；另
+外，重装之前把它们拷到别处：/etc 不是 /data。
+
+别跟包管理器对着干。这些就是普通发行版包：`apt upgrade` 或 `dnf upgrade` 才是它们
+拿到安全修复的方式，而这件事是你的责任，不是面板的。这里没有任何东西会背着你锁版本。
+
+数据放 /data。重装唯一会保留的路径就是它 —— 见「重装」那一页。数据库、上传文件、
+任何丢了会让你难受的东西：放那儿，并把服务指过去。
+
+第一天就把「备份」装上，别等到需要它那天。它每晚把数据库和站点打包成带日期的
+.tgz 放到 /data/backups，并上传到你指定的任何 S3 兼容存储桶；`app-setup restore
+mysql` 用最新的一份还原 —— 本地那份也没了的话，它会先从桶里取回来。你自己写的、
+没有 recipe 的软件由「文件和目录」这张卡覆盖：把目录列进去，把 files 加进备份列表，
+它就跟着同一次夜间任务走。
+
+别把机器堆胖。一个顺手装了三个「看看是什么」的容器，是一个磁盘数字再也读不懂的容
+器。`app-setup remove` 不是惩罚；卸载从不删你的数据（卸 WordPress 会先把上传目录挪
+到 /root/，并且会告诉你）。
+
+确认它会自己回来。装了但没设开机自启的服务，下次重启就消失了。`app-setup enable
+nginx` 设一次，重启后用 `app-setup status nginx` 验一下。
+
+== 加你自己的 ==
+
+这个菜单是一个目录，不是编进程序里的一张表。在 /etc/app-setup/local/ 里放一个开头
+带注释头的 shell 脚本，它就会变成一张卡片，和随镜像发布的那些没有任何区别 ——
+local/ 是你自己的地盘，升级 app-setup 不会动它。对任何现成的
+recipe 敲 `app-setup docs` 就能看到写法；完整的编写约定在官网「添加你自己的软件」。
+
+== 装不上的时候 ==
+
+    app-setup doctor
+
+会打印 app-setup 眼里这台机器的样子：发行版、init 系统、包管理器、剩余内存和磁盘，
+以及有没有读不了的 recipe。安装失败而日志里看不出原因时，先跑它。
+
+最常见的两个原因是：磁盘不够（开始之前卡片已经用红字说了），以及包管理器连不上软件
+源（在走代理的容器里，通常是从来没给它配过代理）。

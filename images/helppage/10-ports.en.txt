@@ -1,0 +1,101 @@
+title: Ports and domains
+summary: the two ways in, which one you want, and who can add each
+
+There are exactly two ways for someone on the internet to reach something
+running in this container. Picking the right one takes ten seconds and saves
+an afternoon.
+
+== A domain, or a public port ==
+
+A DOMAIN is a name — shop.example.com — that arrives on the machine's port
+80 and 443 along with every other name on that machine, and gets sorted out
+by the name in the request. It costs the machine nothing, you add it
+yourself, and it is what you want for anything that speaks HTTP: a website, an
+API, a panel, a webhook.
+
+A PUBLIC PORT is a number on the machine's own address. Somebody types
+203.0.113.10:31000 and the connection lands on port 3000 inside here — no
+name, no certificate, no web server in the way. It is what you want for
+anything that is NOT a website: a game server, a database, a VPN, an SSH
+service of your own, a mail server.
+
+    website, API, anything HTTP  ->  a domain
+    everything else              ->  a public port
+
+== Domains: you add them yourself ==
+
+Nobody has to approve a name. From inside this container:
+
+    domain add shop.example.com 3000
+    domain ls
+    domain del shop.example.com
+
+The number is the port your service listens on IN HERE. `domain add` with no
+third argument means the machine handles the certificate for you: it obtains
+it, renews it before it expires, and forwards both http and https to the port
+you named. That is the right answer almost always.
+
+A wildcard works the same way, and covers every name under it:
+
+    domain add *.example.com 3000
+
+If you would rather terminate TLS yourself — you have a certificate the
+machine should not hold, or you are running something that insists on doing
+its own handshake — say so, and give the port your own TLS listener is on:
+
+    domain add example.com 8443 self-hosted
+    domain add example.com 8443 self-hosted 8080
+
+The first passes the encrypted bytes straight through to your 8443 and puts
+nothing on port 80. The second also forwards plain http to your 8080.
+
+== Pointing the name at the machine ==
+
+Adding the name here tells the machine the name is yours. It does not touch
+DNS, which lives at whoever you bought the name from. Add an A record there
+pointing at this machine's address — `dashboard ssh` prints it — and give it
+a few minutes.
+
+Until DNS points here, a managed certificate cannot be issued: the check that
+proves the name is yours arrives over the very name that is not pointing here
+yet. That is the usual reason a new name sits without a padlock.
+
+== Public ports: your host opens them ==
+
+You cannot open one yourself, and that is deliberate rather than an
+oversight. A domain costs nothing — a thousand names share the same two
+ports — but a public port is one number on somebody else's machine, and two
+tenants who both want 31000 is a disagreement only the owner can settle.
+
+Ask your host, and tell them two things: the port your service listens on in
+here, and whether it is TCP or UDP. The number on the outside is theirs to
+pick. It is one button on their side.
+
+Everything they have opened for you is visible from in here:
+
+    dashboard ports
+
+== When a port is open and nothing answers ==
+
+This is the common failure, and it is almost always the same cause: your
+service is listening on 127.0.0.1 instead of on every address. From outside
+this container, 127.0.0.1 is unreachable by definition — it means "this
+machine only", and the machine forwarding the connection is not this one.
+
+Bind to 0.0.0.0 instead, and check what you are actually listening on:
+
+    ss -lntp
+
+Anything shown as 127.0.0.1:3000 is invisible from outside. 0.0.0.0:3000 is
+reachable.
+
+The same applies to a domain: the machine's web server forwards the request
+into this container over the loopback address it gave you, so a service bound
+only to 127.0.0.1 answers nothing there either.
+
+== What each one costs you ==
+
+Both count against your traffic quota, in both directions, and both are
+counted the same way — a byte through a domain and a byte through a public
+port are the same byte. `dashboard net` shows what this window has used and
+what is left.

@@ -1,0 +1,111 @@
+title: Installing software
+summary: app-setup, from the menu and from a script, and how to keep it tidy
+
+`app-setup` installs your distribution's own packages into your
+distribution's own paths. Nothing it does is a private build, so the fifth
+blog post you read about nginx still applies here, and security updates keep
+arriving through apt or dnf the ordinary way.
+
+== The menu ==
+
+Type it with no arguments:
+
+    app-setup
+
+Categories along the top, a card for each package under them. Arrow keys
+move, Enter opens the one under the cursor, `L` switches language, `q`
+quits, and the mouse works. Each card says how much disk and memory the
+thing needs — and turns that line red when this container is too small for
+it, which is the number nobody tells you before an install dies four minutes
+in.
+
+The page for one package has the buttons: Install, Uninstall, Start, Stop,
+whether it comes back at boot, the log of the last run, Settings for
+packages that have any, and "How to use it", which names every file that
+package wrote.
+
+== From a script ==
+
+Everything the menu does has a command, and the commands are what you want
+in a script or over `ssh host app-setup ...`:
+
+    app-setup list              everything, with state
+    app-setup list db           one category
+    app-setup info nginx        one package in detail
+    app-setup install lnmp      nginx + MariaDB + PHP
+    app-setup install wordpress   ...and WordPress on it
+    app-setup remove nginx
+    app-setup start|stop|restart nginx
+    app-setup enable|disable nginx   start at boot
+    app-setup set nginx port=8080    its settings
+    app-setup docs wordpress    the recipe's own notes
+    app-setup status nginx      0 up, 1 down, 2 absent
+    app-setup dump mysql        one plain .sql to /data/dumps
+    app-setup load mysql        feed that file back in
+    app-setup restore mysql     the newest backup, unpacked
+
+`status` is the one built for scripts: it answers with its exit code, so
+`app-setup status nginx && echo up` says what you think it says.
+
+== Best practice ==
+
+INSTALL THE SUITE, NOT THE PARTS. `app-setup install lnmp` gives you nginx,
+MariaDB and PHP-FPM already wired to each other, with the sockets and the
+pool configured. Installing the three separately gives you three services
+and a config file to write.
+
+ONE THING AT A TIME, AND LOOK AT THE LOG. Every run appends to
+/var/log/app-setup/<id>.log. When something fails, that file says why, and
+the failure line is usually the package manager's own.
+
+GENERATED PASSWORDS ARE IN /etc/app-setup/secrets/ — the directory 0700, each
+file 0600. Database roots and the like are written there rather than scrolling
+past in the install output. Look there before you assume a password is lost,
+and copy them somewhere else before a reinstall: /etc is not /data.
+
+DO NOT FIGHT THE PACKAGE MANAGER. These are ordinary distro packages: `apt
+upgrade` or `dnf upgrade` is how they get security fixes, and doing that is
+your job, not the panel's. Nothing here pins a version behind your back.
+
+PUT DATA UNDER /data. It is the only path a reinstall keeps — see the
+Reinstall page. Databases, uploads, anything you would be upset to lose:
+put it there and point the service at it.
+
+INSTALL Backup ON THE FIRST DAY, not on the day you need it. It packs your
+databases and sites into a dated .tgz under /data/backups nightly and uploads
+them to any S3-compatible bucket you point it at, and `app-setup restore
+mysql` puts the newest one back — fetching it from the bucket if the local
+copy is gone too. Software of your own with no recipe is covered by the
+`Files and folders` card: list its directories, add `files` to the backup
+list, and it goes with the same nightly run.
+
+KEEP THE BOX SMALL. A container that also installed three things you were
+curious about is a container whose disk figure you cannot read. `app-setup
+remove` is not a punishment; uninstalling never deletes your data (removing
+WordPress moves your uploads to /root/ first, and says so).
+
+CHECK IT COMES BACK. A service you installed but never enabled is a service
+that vanishes at the next restart. `app-setup enable nginx` once, and
+`app-setup status nginx` after a restart to prove it.
+
+== Adding your own ==
+
+The menu is a directory, not a table compiled into the program. One shell
+script in /etc/app-setup/local/ with a comment header at the top of it becomes
+a card, indistinguishable from the ones that shipped — local/ is yours, and
+nothing that upgrades app-setup touches it. `app-setup docs` on any
+existing recipe shows the shape; the authoring contract is on the website
+under "adding your own software".
+
+== When it will not install ==
+
+    app-setup doctor
+
+prints what this machine looks like to app-setup: the distribution, the init
+system, the package manager, how much memory and disk are free, and whether
+any recipe is unreadable. It is the first thing to run when an install fails
+for a reason that is not in the log.
+
+The two ordinary causes are: not enough disk (the card said so in red before
+you started), and a package manager that cannot reach its mirrors (which on
+a container behind a proxy is a proxy that was never configured for it).

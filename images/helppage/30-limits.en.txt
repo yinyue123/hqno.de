@@ -1,0 +1,92 @@
+title: Your limits
+summary: five numbers, what hitting each one feels like, and where to read them
+
+Every one of these is on the screen you got at login, and all of them again
+in `dashboard`:
+
+    dashboard          all of it
+    dashboard net      just the traffic meter
+    dashboard cpu mem  just those two
+
+The numbers come from two places and neither of them is guesswork: what you
+were sold comes from the panel, what you are using is read off this host a
+moment before it is printed.
+
+== CPU: you are slowed, never killed ==
+
+Hitting the CPU ceiling has no error message. Everything simply runs slower.
+There is nothing to fix and nothing to catch — if a build takes twice as
+long as it did yesterday, this is usually why.
+
+Your core count is closer to a floor than a ceiling. Cores nobody else on
+the machine wants are yours to use, so a container sold two cores can run
+faster than two while its neighbours are idle, and drops back to two when
+they wake up. That is also why a benchmark run twice gives two answers: the
+honest reading is the one taken while the machine is busy.
+
+If your host sold you a BATCH container, the deal is different and simpler:
+you get whatever is left over after everybody else, and nothing you run ever
+delays them. Right for builds, scrapers and overnight jobs; wrong for
+anything a person is waiting on. `dashboard cpu` says so on the allowance
+line when that is what you have.
+
+== Memory: the kernel kills the biggest thing ==
+
+At the memory limit the kernel squeezes you first and then kills the largest
+process in here. There is usually nothing in the service's own log, because
+the service did not fail — it was shot. A process that keeps disappearing
+without an error is this, nearly every time.
+
+    dmesg | tail        may name what was killed
+    dashboard mem       what you have, and what is in use now
+
+Swap is not extra memory. It is somewhere for the parts of your container
+that are sitting still, usually kept compressed in RAM, so cold pages cost a
+fraction of what they claim. A little in swap is healthy. A lot, on
+something that is also slow, means the working set does not fit and more
+swap will not fix it.
+
+== Disk: writes fail ==
+
+At the disk limit writes fail with "no space left on device", and whatever
+was writing at that moment decides for itself how gracefully to handle it —
+databases mostly stop, package managers mostly leave a half-installed mess.
+
+`/` and `/data` count together against the same number. The two usual
+culprits are logs nobody rotated and a package cache nobody cleaned:
+
+    du -xh --max-depth=1 / | sort -h | tail
+    journalctl --vacuum-size=100M
+    apt clean          # or: dnf clean all
+
+== Traffic: this one stops the container ==
+
+The traffic quota is the only limit here that takes the container away from
+you rather than slowing it down.
+
+Both directions count, and everything counts — a domain, a public port, an
+apt update, an image you asked to be reinstalled from. It is measured over a
+window that starts on a day your host picks (the login screen and `dashboard
+net` both name the date the current window opened).
+
+At 80% the panel records a warning. At 100% the container is SUSPENDED,
+which means stopped — not deleted, and nothing on your disk is touched. It
+comes back by itself when the window rolls over, or sooner if your host
+raises the quota. Nobody has to press anything.
+
+== Expiry ==
+
+Every container has an expiry date. When it passes, the container is stopped
+and its SSH login is disabled. NOTHING IS DELETED — expiry is a switch, not
+a broom. Ask your host to renew; moving the date forward brings it straight
+back, same data, same login.
+
+The date is on the login screen every time you come in, and `dashboard box`
+prints how many days are left.
+
+== What is not limited ==
+
+There is no limit here on what you may run, and no inspection of it. What
+there is: your container cannot change the machine's network, cannot see any
+other container, and cannot take the machine down. Those are the walls, and
+they are the reason the rest of it is up to you.

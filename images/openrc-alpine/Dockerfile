@@ -146,6 +146,10 @@ RUN set -eux; \
 COPY --from=app-setup-build /app-setup /bin/app-setup
 COPY app-setup/lib/     /usr/lib/app-setup/
 COPY app-setup/recipes/ /etc/app-setup/
+# The guide `helppage` reads. Plain .txt, one file per page per language,
+# scanned at startup the same way the recipes above are — a host who drops
+# their own page in here gets a chapter with no rebuild of anything.
+COPY helppage/          /etc/helppage/
 #
 # app-setup answers to `passwd` too (docs/passwd.md): the real tool is left
 # exactly where it is and app-setup is put *in front of it on PATH*, so every
@@ -175,7 +179,7 @@ COPY app-setup/recipes/ /etc/app-setup/
 # precedes /sbin in the same PATH and is just as unowned by apk.
 RUN set -eux; \
     chmod 0755 /bin/app-setup /etc/app-setup/*.sh; \
-    chmod 0644 /usr/lib/app-setup/*.sh; \
+    chmod 0644 /usr/lib/app-setup/*.sh /etc/helppage/*.txt; \
     mkdir -p /var/log/app-setup /var/lib/app-setup /usr/local/bin /usr/local/sbin; \
     mkdir -p /etc/app-setup/local /etc/app-setup/params /etc/app-setup/secrets; \
     chmod 0700 /etc/app-setup/secrets; \
@@ -191,6 +195,7 @@ RUN set -eux; \
     # test -x.
     ln -sf /bin/app-setup /usr/local/bin/domain; \
     ln -sf /bin/app-setup /usr/local/bin/dashboard; \
+    ln -sf /bin/app-setup /usr/local/bin/helppage; \
     app-setup doctor >/dev/null
 
 # How anybody finds out it exists. The gateway starts a login shell, and
@@ -209,10 +214,12 @@ RUN mkdir -p /etc/profile.d && printf '%s\n' \
       '    case "${LANG-}${LC_ALL-}" in' \
       '      zh*|*zh_CN*)' \
       '        printf "\033[2m装软件：\033[0m\033[1mapp-setup\033[0m\033[2m — LNMP、WordPress、数据库、开发环境\033[0m\n"' \
-      '        printf "\033[2m看状态：\033[0m\033[1mdashboard\033[0m\033[2m — 配额、流量、端口、域名、到期\033[0m\n" ;;' \
+      '        printf "\033[2m看状态：\033[0m\033[1mdashboard\033[0m\033[2m — 配额、流量、端口、域名、到期\033[0m\n"' \
+      '        printf "\033[2m看文档：\033[0m\033[1mhelppage\033[0m\033[2m — 端口与域名、装软件、限额、重装\033[0m\n" ;;' \
       '      *)' \
       '        printf "\033[2mInstall software: \033[0m\033[1mapp-setup\033[0m\033[2m — web servers, databases, WordPress, dev tools.\033[0m\n"' \
-      '        printf "\033[2mCheck this box:   \033[0m\033[1mdashboard\033[0m\033[2m — allowances, traffic, ports, domains, expiry.\033[0m\n" ;;' \
+      '        printf "\033[2mCheck this box:   \033[0m\033[1mdashboard\033[0m\033[2m — allowances, traffic, ports, domains, expiry.\033[0m\n"' \
+      '        printf "\033[2mRead the guide:   \033[0m\033[1mhelppage\033[0m\033[2m — ports and domains, installing, limits, reinstall.\033[0m\n" ;;' \
       '    esac' \
       '    ;;' \
       'esac' \
