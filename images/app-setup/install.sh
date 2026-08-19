@@ -8,7 +8,7 @@
 #   /etc/app-setup/*.sh         one file per package
 #   /var/log/app-setup/         every action's output
 #   /var/lib/app-setup/         state, settings, the refresh stamp
-#   /etc/profile.d/app-setup.sh the one line on an interactive login
+#   /etc/profile.d/app-setup.sh the usage banner on an interactive login
 #
 # It is the install block of help/images/*/Dockerfile, run against `/` instead
 # of against an image, so that what you are testing here is what ships.
@@ -105,13 +105,21 @@ if [ "$demo" = 1 ]; then
 fi
 
 printf '%s\n' \
-  '# One line, so somebody who has just been handed a container knows what' \
-  '# to type. Delete this file if you would rather it stayed quiet.' \
+  '# What somebody wants on the way in: how much of their box is left, and' \
+  '# the two words that do something about it. Delete this file to stay quiet.' \
   'case $- in' \
   '  *i*)' \
+  '    # The usage block is the daemon'"'"'s answer, and is silent when it cannot' \
+  '    # be reached: a login must never wait on it, or report to somebody' \
+  '    # holding a shell prompt a thing they cannot do anything about.' \
+  '    app-setup dashboard --brief 2>/dev/null' \
   '    case "${LANG-}${LC_ALL-}" in' \
-  '      zh*|*zh_CN*) printf "\033[2m输入 \033[0m\033[1mapp-setup\033[0m\033[2m 安装软件（LNMP、WordPress、数据库、开发环境）\033[0m\n" ;;' \
-  '      *)           printf "\033[2mType \033[0m\033[1mapp-setup\033[0m\033[2m to install software — web servers, databases, WordPress, dev tools.\033[0m\n" ;;' \
+  '      zh*|*zh_CN*)' \
+  '        printf "\033[2m装软件：\033[0m\033[1mapp-setup\033[0m\033[2m — LNMP、WordPress、数据库、开发环境\033[0m\n"' \
+  '        printf "\033[2m看状态：\033[0m\033[1mdashboard\033[0m\033[2m — 配额、流量、端口、域名、到期\033[0m\n" ;;' \
+  '      *)' \
+  '        printf "\033[2mInstall software: \033[0m\033[1mapp-setup\033[0m\033[2m — web servers, databases, WordPress, dev tools.\033[0m\n"' \
+  '        printf "\033[2mCheck this box:   \033[0m\033[1mdashboard\033[0m\033[2m — allowances, traffic, ports, domains, expiry.\033[0m\n" ;;' \
   '    esac' \
   '    ;;' \
   'esac' \

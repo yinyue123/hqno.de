@@ -5114,6 +5114,10 @@ static void dashboard_usage(FILE *out)
 		"  domains    the names this container answers for\n"
 		"  ssh        how to log back in\n"
 		"\n"
+		"  --brief    the six-line version printed on every SSH login\n"
+		"             (/etc/profile.d/app-setup.sh). Silent if this host's\n"
+		"             daemon does not answer, so a login never waits on it.\n"
+		"\n"
 		"Examples:\n"
 		"  dashboard\n"
 		"      The whole screen.\n"
@@ -5155,7 +5159,12 @@ static int dash_word_ok(const char *s)
 	return 1;
 }
 
-static int dashboard_print(const char *payload)
+/* first_label/first_value, when given, are one extra field drawn above
+ * everything else and counted in the same column width — the login banner's
+ * "System" row. It is the one line on that banner this side has to supply:
+ * the daemon knows what the container was sold and what it is using, and has
+ * no idea which distribution is inside it. */
+static int dashboard_print(const char *payload, const char *first_label, const char *first_value)
 {
 	static char buf[8192];
 	snprintf(buf, sizeof buf, "%s", payload);
@@ -5164,7 +5173,7 @@ static int dashboard_print(const char *payload)
 	int n = dash_split(buf, DASH_RS, items, DASH_MAX_ROWS);
 
 	static char *kind[DASH_MAX_ROWS], *label[DASH_MAX_ROWS], *value[DASH_MAX_ROWS];
-	int width = 0;
+	int width = first_label ? (int)strlen(first_label) : 0;
 	for (int i = 0; i < n; i++) {
 		char *f[3] = { (char *)"", (char *)"", (char *)"" };
 		dash_split(items[i], DASH_US, f, 3);
@@ -5176,6 +5185,10 @@ static int dashboard_print(const char *payload)
 	}
 
 	int drawn = 0;
+	if (first_label) {
+		printf("  %-*s  %s\n", width, first_label, first_value ? first_value : "");
+		drawn = 1;
+	}
 	for (int i = 0; i < n; i++) {
 		if (kind[i][0] == 'H') {
 			if (drawn) printf("\n");
@@ -5204,9 +5217,17 @@ static int cli_dashboard(int argc, char **argv)
 		return 0;
 	}
 
+	/* --brief is the login banner (/etc/profile.d/app-setup.sh): six rows,
+	 * no headings, printed above the shell prompt on every interactive
+	 * login. It is quiet on every failure — a container whose daemon is not
+	 * answering must still give somebody a prompt, without an error on it
+	 * they can do nothing about. */
+	int brief = 0;
+	if (argc > 0 && !strcmp(argv[0], "--brief")) { brief = 1; argc--; argv++; }
+
 	char line[512];
 	size_t used = 0;
-	int n = snprintf(line, sizeof line, "DASHBOARD");
+	int n = snprintf(line, sizeof line, "DASHBOARD%s", brief ? " --brief" : "");
 	if (n < 0) return 1;
 	used = (size_t)n;
 	for (int i = 0; i < argc; i++) {
@@ -5230,6 +5251,9 @@ static int cli_dashboard(int argc, char **argv)
 	line[used + 1] = '\0';
 
 	const char *resp = hqnode_sock_call(line);
+	if (brief && (!resp || strncmp(resp, "OK", 2) != 0 || g_sock_truncated)) {
+		return 1;   /* silent: see the comment on `brief` above */
+	}
 	if (!resp) {
 		fprintf(stderr, "app-setup: could not reach the hqnode daemon\n");
 		return 1;
@@ -5251,10 +5275,18 @@ static int cli_dashboard(int argc, char **argv)
 	}
 	const char *rows = resp[2] == ' ' ? resp + 3 : resp + 2;
 	if (!*rows) {
-		fprintf(stderr, "app-setup: the hqnode daemon sent an empty dashboard\n");
+		if (!brief) fprintf(stderr, "app-setup: the hqnode daemon sent an empty dashboard\n");
 		return 1;
 	}
-	return dashboard_print(rows);
+	if (!brief) return dashboard_print(rows, NULL, NULL);
+
+	/* The banner's own first row. read_os_release rather than probe_system:
+	 * the bare-word path reaches here before main() has probed anything, and
+	 * the distribution's name is the only part of that this needs. */
+	if (!g_sys.pretty[0]) read_os_release();
+	int rc = dashboard_print(rows, "System", g_sys.pretty[0] ? g_sys.pretty : "this container");
+	printf("\n");
+	return rc;
 }
 
 /* cli_run's hook, after a successful `install`: the same DOMAIN ADD path
