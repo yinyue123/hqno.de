@@ -159,10 +159,12 @@ RUN set -eux; \
     ln -sf /bin/app-setup /usr/local/sbin/poweroff; \
     test -x /usr/sbin/halt; \
     ln -sf /bin/app-setup /usr/local/sbin/halt; \
-    # domain answers to app-setup too, bare, the same multicall way —
-    # no real system binary behind this name to fall through to, so
-    # unlike poweroff/halt there is nothing to guard with test -x.
+    # domain and dashboard answer to app-setup too, bare, the same
+    # multicall way — no real system binary behind either name to fall
+    # through to, so unlike poweroff/halt there is nothing to guard with
+    # test -x.
     ln -sf /bin/app-setup /usr/local/bin/domain; \
+    ln -sf /bin/app-setup /usr/local/bin/dashboard; \
     app-setup doctor >/dev/null
 
 # How anybody finds out it exists. The gateway starts a login shell, so

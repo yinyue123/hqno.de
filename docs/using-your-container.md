@@ -218,7 +218,15 @@ know whether their hardware clears it.
 ## 5. Limits, and what hitting them feels like
 
 Your host sets five numbers. The container page shows each one against what
-you are using.
+you are using — and so does `dashboard`, typed inside the container, which
+saves opening a browser to find out why something is slow:
+
+```sh
+dashboard              # all of it: the box, cpu, memory, disk, traffic,
+                       # public ports, domains, and how to log back in
+dashboard net          # just the traffic meter — used this window, and left
+dashboard cpu mem      # just those two
+```
 
 | Limit | At the ceiling |
 |---|---|
