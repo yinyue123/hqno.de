@@ -102,8 +102,18 @@ static const L T_GSUBTITLE = {"guide to your container", "容器使用指南"};
 static const L T_CONTENTS  = {"Contents", "目录"};
 static const L T_NOGUIDE   = {"No pages found. They live in /etc/helppage/*.txt",
                               "没有找到任何文档。它们在 /etc/helppage/*.txt"};
-static const L T_GUIDEKEYS = {"↑↓ jk scroll   ←→ page   ^F/^B   L 中文   q quit",
-                              "↑↓ jk 滚动   ←→ 翻页   ^F/^B   L English   q 退出"};
+/* Two lines, because the two panes are driven differently and somebody who has
+ * just walked the cursor into one wants to know what *that* one does. Neither
+ * names `L`: the switch is on the screen now, in the pane, with the cursor
+ * able to land on it — a key for it is a shortcut, not the way in. */
+static const L T_GKEYSNAV  = {"↑↓ move   → to the text   Enter open   q quit",
+                              "↑↓ 移动   → 进入正文   Enter 打开   q 退出"};
+static const L T_GKEYSBODY = {"↑↓ jk scroll   ^F/^B page   ← back to contents   q quit",
+                              "↑↓ jk 滚动   ^F/^B 翻页   ← 回到目录   q 退出"};
+/* One pane, so there is nothing to cross to and the pair that would have done
+ * it turn the chapters instead. */
+static const L T_GKEYSONE  = {"↑↓ jk scroll   ^F/^B page   ←→ chapter   q quit",
+                              "↑↓ jk 滚动   ^F/^B 翻页   ←→ 换章   q 退出"};
 static const L T_INSTALLP  = {"Installed",    "已安装"};
 static const L T_INSTALL   = {"Install",      "安装"};
 static const L T_UPDATE    = {"Update",       "更新"};
@@ -5807,18 +5817,43 @@ static void help_build(int topic, int cols)
 
 /* ---- one frame ---------------------------------------------------------- */
 
-/* Draws the whole screen and reports back the two numbers the key handler
- * needs — how tall the body pane turned out and how many lines are in it —
- * so paging is the pane's own height rather than a guess. scroll is clamped
- * here, which is why it is passed by address: the geometry is what decides
+/* Two places the cursor can be, and left and right are how it crosses between
+ * them: the contents pane on one side, the text on the other. That is the
+ * whole navigation model, and it is the one every two-pane reader has, from a
+ * mail client to a file manager — the arrows move within a pane, and the pair
+ * pointing at the other pane go to it.
+ *
+ * The language switch is the first thing in the contents pane and the first
+ * thing the cursor is on when the program opens. It used to be up on the blue
+ * bar with Back, which is the right place for a control nobody is looking for
+ * and the wrong one for the control a reader who cannot read this page opens
+ * the program already wanting.
+ */
+enum { GZ_NAV = 0, GZ_BODY };
+#define NAV_LANG (-1)
+
+/* The top of the contents pane: the language switch when the terminal can draw
+ * it, and the first chapter when it cannot. Everything that walks the cursor
+ * up the pane stops here. */
+static int nav_top(void) { return g_utf8 ? NAV_LANG : 0; }
+
+/* Draws the whole screen and reports back what the key handler cannot work out
+ * for itself — how tall the body pane turned out, how many lines are in it,
+ * and whether the contents pane is showing at all. scroll and cur are clamped
+ * here, which is why they are passed by address: the geometry is what decides
  * how far down it is possible to be. */
-static void help_draw(int topic, int *scroll, int *body_h, int *total)
+static void help_draw(int topic, int zone, int nav, int *scroll, int *cur,
+                      int *body_h, int *total, int *has_nav)
 {
 	term_measure();
 	grid_size(g_w, g_h);
+	/* Before draw_root, not after. The bar registers Back and its own
+	 * language button as it draws them, and clearing afterwards threw both
+	 * away — which is why the language up there could be seen and not
+	 * clicked. Every other screen in this file clears first. */
+	hit_clear();
 	g_showtop = 1;
 	draw_root();
-	hit_clear();
 
 	int top = g_h >= 18 ? 3 : 2;
 	int h = g_h - top - 1;
@@ -5829,15 +5864,21 @@ static void help_draw(int topic, int *scroll, int *body_h, int *total)
 		int w = u8width(help_title(&g_topics[i])) + 2;
 		if (w > widest) widest = w;
 	}
+	/* The switch is in this pane now, so the pane is at least as wide as it
+	 * is. A control cut in half is worse than a wider pane. */
+	if (widest < lang_width()) widest = lang_width();
 	int cw = widest + 4;
 	if (cw > 30) cw = 30;
 	if (cw < 18) cw = 18;
 	/* The contents pane costs its own width plus a border, and what it costs
 	 * is the width of the tables of commands in the pages. On an 80-column
 	 * terminal — still the most common one — the body is better off with the
-	 * whole screen and the reader with one pane. The list is a keypress away
-	 * either way: left and right turn the pages without it. */
+	 * whole screen and the reader with one pane. What the pane holds is still
+	 * reachable without it: n and p turn the chapters, L switches the
+	 * language, and the bar's own button does too. */
 	int show_contents = (g_w >= cw + 56);
+	if (has_nav) *has_nav = show_contents;
+	if (!show_contents) zone = GZ_BODY;
 
 	int bcol = show_contents ? 1 + cw + 1 : 1;
 	int bw = g_w - bcol - 1;
@@ -5845,13 +5886,38 @@ static void help_draw(int topic, int *scroll, int *body_h, int *total)
 
 	if (show_contents) {
 		win_box(top, 1, cw, h, S(T_CONTENTS));
-		for (int i = 0; i < g_ntopics && i < h - 2; i++) {
-			int row = top + 1 + i;
-			int cur = (i == topic);
+
+		/* No switch on a terminal that cannot draw the language it would
+		 * switch to. The bar's own button has always been held to this, and a
+		 * control labelled in mojibake is worse than no control — so on such
+		 * a terminal the pane is the chapters and nothing else. */
+		int offer_lang = g_utf8;
+		if (offer_lang) {
+			draw_lang(top + 1, 1 + (cw - lang_width()) / 2,
+			          zone == GZ_NAV && nav == NAV_LANG);
+			/* A rule under it, joined to the box on both sides. The switch is
+			 * not a chapter, and walking the cursor past it should feel like
+			 * leaving one thing for a list of others. */
+			gput(top + 2, 1, BX_LT, P_BORDER, 1);
+			gfill(top + 2, 2, cw - 2, BX_H, P_BORDER);
+			gput(top + 2, cw, BX_RT, P_BORDER, 1);
+		}
+
+		int first = top + (offer_lang ? 3 : 1);
+		int rows  = h - (offer_lang ? 4 : 2);
+		for (int i = 0; i < g_ntopics && i < rows; i++) {
+			int row = first + i;
+			int open = (i == topic);
+			int foc  = (zone == GZ_NAV && nav == i);
 			char label[128];
-			snprintf(label, sizeof label, "%s %s", cur ? AR_R : " ", help_title(&g_topics[i]));
-			gput(row, 1 + 1, label, cur ? P_SEL : P_WIN, cw - 2);
-			if (cur) cursor_sweep(row, 1 + 1, cw - 2, P_SEL, P_CURSORHOT);
+			snprintf(label, sizeof label, "%s %s", open ? AR_R : " ",
+			         help_title(&g_topics[i]));
+			/* Which chapter is open and where the cursor is are two different
+			 * facts, and while the cursor is in the text they are on two
+			 * different sides of the screen. The open one keeps the arrow and
+			 * the selection colour; only the focused one gets the cursor. */
+			gput(row, 2, label, foc ? P_CURSOR : (open ? P_SEL : P_WIN), cw - 2);
+			if (foc) cursor_sweep(row, 2, cw - 2, P_CURSOR, P_CURSORHOT);
 			hit_add(H_CHIP, i, row, 1, 1, cw);
 		}
 	}
@@ -5864,22 +5930,51 @@ static void help_draw(int topic, int *scroll, int *body_h, int *total)
 	int body = h - 2;
 	help_build(topic, inner);
 
+	/* The cursor is a line of the document, and the viewport is whatever has
+	 * to be true for it to be on the screen — but only while the text has the
+	 * focus. With the cursor in the contents the viewport is its own: the
+	 * wheel and the page keys move it, and the line cursor is dragged along
+	 * behind so it is where the eye left it when the focus comes back. */
+	if (*cur > g_nhl - 1) *cur = g_nhl - 1;
+	if (*cur < 0) *cur = 0;
+	if (zone == GZ_BODY) {
+		if (*scroll > *cur) *scroll = *cur;
+		if (*scroll < *cur - body + 1) *scroll = *cur - body + 1;
+	}
 	if (*scroll > g_nhl - body) *scroll = g_nhl - body;
 	if (*scroll < 0) *scroll = 0;
+	if (*cur < *scroll) *cur = *scroll;
+	if (*cur > *scroll + body - 1) *cur = *scroll + body - 1;
+	if (*cur > g_nhl - 1) *cur = g_nhl - 1;
+	if (*cur < 0) *cur = 0;
 
-	for (int i = 0; i < body && *scroll + i < g_nhl; i++)
-		gput(top + 1 + i, bcol + 2, g_hl[*scroll + i], g_ha[*scroll + i], inner);
-	hit_add(H_BODY, 0, top + 1, bcol + 1, body, bw - 2);
-	scrollbar(top + 1, bcol + bw - 2, body, *scroll, body, g_nhl, P_SBTHUMBW, P_SBTRACKW);
+	for (int i = 0; i < body && *scroll + i < g_nhl; i++) {
+		int line = *scroll + i;
+		gput(top + 1 + i, bcol + 2, g_hl[line], g_ha[line], inner);
+		/* One hit target per row rather than one for the pane, so a click
+		 * lands the cursor on the line under the pointer. */
+		hit_add(H_BODY, line, top + 1 + i, bcol + 1, 1, bw - 2);
+		/* The cursor is a mark in the gutter, not the line repainted: these
+		 * pages colour their headings and the commands in them, and a cursor
+		 * that ate those colours would cost more than it told you. */
+		if (zone == GZ_BODY && line == *cur) {
+			gput(top + 1 + i, bcol + 1, AR_R, P_CURSOR, 1);
+			cursor_sweep(top + 1 + i, bcol + 1, 1, P_CURSOR, P_CURSORHOT);
+		}
+	}
+	scrollbar(top + 1, bcol + bw - 2, body, *scroll, body, g_nhl,
+	          zone == GZ_BODY ? P_CURSOR : P_SBTHUMBW, P_SBTRACKW);
 
 	if (g_nhl > body) {
 		char sb[32];
 		snprintf(sb, sizeof sb, " %d%% ", (*scroll + body >= g_nhl) ? 100
 		                                  : (*scroll * 100) / (g_nhl - body));
 		int sw = u8width(sb);
-		gput(top + h - 1, bcol + bw - 3 - sw, sb, P_TITLE, sw);
+		gput(top + h - 1, bcol + bw - 3 - sw, sb,
+		     zone == GZ_BODY ? P_CURSOR : P_TITLE, sw);
 	}
-	help_line_l(&T_GUIDEKEYS);
+	help_line_l(!show_contents ? &T_GKEYSONE
+	            : zone == GZ_BODY ? &T_GKEYSBODY : &T_GKEYSNAV);
 
 	if (body_h) *body_h = body;
 	if (total) *total = g_nhl;
@@ -5900,53 +5995,144 @@ static void screen_help(void)
 	term_raw();
 	atexit(term_cooked);
 
-	static int scroll[HELP_MAXTOPIC];
-	int topic = 0;
+	/* Per chapter, so walking the contents and coming back to one lands where
+	 * it was left rather than at its top. */
+	static int scroll[HELP_MAXTOPIC], curline[HELP_MAXTOPIC];
+	int topic = 0, zone = GZ_NAV, nav = nav_top();
+
 	for (;;) {
-		int body = 1, total = 1;
-		help_draw(topic, &scroll[topic], &body, &total);
+		int body = 1, total = 1, has_nav = 1;
+		help_draw(topic, zone, nav, &scroll[topic], &curline[topic],
+		          &body, &total, &has_nav);
 		grid_flush();
 
 		int k = read_key();
 		if (k == K_NONE || k == K_RESIZE || k == K_TIMEOUT) continue;
-		int *s = &scroll[topic];
+
+		/* A terminal too narrow for the contents pane has one pane, and the
+		 * cursor cannot be in the one that is not on the screen. */
+		if (!has_nav) zone = GZ_BODY;
 
 		if (k == 'q' || k == 'Q' || k == K_ESC) { term_cooked(); return; }
-		if (k == 'L') { g_zh = !g_zh; continue; }
+		/* The shortcut, held to the same rule as the switch itself: a
+		 * terminal that cannot draw 中文 must not be put into it. */
+		if (k == 'L') { if (g_utf8) g_zh = !g_zh; continue; }
+		/* The chapters, from either pane and without moving the cursor out of
+		 * the text. Turning forward past the end of one is what turning a page
+		 * means, so the next starts at its own top. */
+		if (k == 'n' && topic + 1 < g_ntopics) {
+			topic++; scroll[topic] = 0; curline[topic] = 0;
+			if (zone == GZ_NAV) nav = topic;
+			continue;
+		}
+		if (k == 'p' && topic > 0) {
+			topic--; scroll[topic] = 0; curline[topic] = 0;
+			if (zone == GZ_NAV) nav = topic;
+			continue;
+		}
 
 		if (k == K_CLICK) {
 			int idx = 0;
 			switch (hit_test(g_my, g_mx, &idx)) {
 			case H_BACK: term_cooked(); return;
-			case H_LANG: g_zh = !g_zh; break;
-			case H_CHIP: if (idx >= 0 && idx < g_ntopics) topic = idx; break;
+			/* Either switch — the pane's or the bar's — and the cursor comes
+			 * to the pane's, so the keyboard carries on from where the hand
+			 * was rather than from wherever it had been left. */
+			case H_LANG:
+				if (!g_utf8) break;
+				g_zh = !g_zh;
+				if (has_nav) { zone = GZ_NAV; nav = NAV_LANG; }
+				break;
+			case H_CHIP:
+				if (idx >= 0 && idx < g_ntopics) { topic = idx; zone = GZ_NAV; nav = idx; }
+				break;
+			/* A click in the text is where the reading is: the cursor goes to
+			 * the line under the pointer, and the focus goes with it. */
+			case H_BODY:
+				zone = GZ_BODY;
+				curline[topic] = idx;
+				break;
+			default: break;
+			}
+			continue;
+		}
+
+		/* The wheel acts on the pane it is over, whichever one has the cursor.
+		 * Pointing at something and turning the wheel is one gesture and it
+		 * should not need a click in front of it. A notch is three lines,
+		 * which is what every terminal program does and what a hand expects
+		 * from one flick. */
+		if (k == K_WHEELUP || k == K_WHEELDN) {
+			int down = (k == K_WHEELDN);
+			int idx = 0;
+			if (has_nav && hit_test(g_my, g_mx, &idx) == H_CHIP) {
+				zone = GZ_NAV;
+				nav += down ? 1 : -1;
+				if (nav < nav_top()) nav = nav_top();
+				if (nav > g_ntopics - 1) nav = g_ntopics - 1;
+				if (nav >= 0) topic = nav;
+			} else {
+				zone = GZ_BODY;
+				scroll[topic]  += down ? 3 : -3;
+				curline[topic] += down ? 3 : -3;
+			}
+			continue;
+		}
+
+		if (zone == GZ_NAV) {
+			switch (k) {
+			/* Down walks the pane — the switch, then the chapters, and off
+			 * the end of the last one into the text. That is the order the
+			 * screen is read in by somebody who has just arrived. */
+			case K_DOWN: case 'j':
+				if (nav + 1 < g_ntopics) { nav++; topic = nav; }
+				else zone = GZ_BODY;
+				break;
+			case K_UP: case 'k':
+				if (nav > nav_top()) { nav--; if (nav >= 0) topic = nav; }
+				break;
+			case K_RIGHT: case K_TAB: zone = GZ_BODY; break;
+			case K_HOME: nav = nav_top(); break;
+			case K_END:
+				if (g_ntopics) { nav = g_ntopics - 1; topic = nav; }
+				break;
+			case K_ENTER: case ' ':
+				if (nav == NAV_LANG) g_zh = !g_zh;
+				else zone = GZ_BODY;
+				break;
 			default: break;
 			}
 			continue;
 		}
 
 		switch (k) {
-		/* A wheel notch is three lines, which is what every terminal
-		 * program does and what a hand expects from one flick. */
-		case K_WHEELUP: *s -= 3; break;
-		case K_WHEELDN: *s += 3; break;
-		case K_UP:   case 'k': (*s)--; break;
-		case K_DOWN: case 'j': (*s)++; break;
+		case K_UP:   case 'k':
+			if (curline[topic] > 0) curline[topic]--;
+			/* Off the top of the text and back to the list, which is the only
+			 * thing Up from the first line can mean. */
+			else if (has_nav) { zone = GZ_NAV; nav = topic; }
+			break;
+		case K_DOWN: case 'j': curline[topic]++; break;
+		/* Left and right are the two panes. Without a contents pane to be in
+		 * there is nothing to cross to, and they turn the chapters instead —
+		 * on a narrow terminal that is the only way to. */
+		case K_LEFT: case K_BTAB:
+			if (has_nav) { zone = GZ_NAV; nav = topic; }
+			else if (topic > 0) { topic--; scroll[topic] = 0; curline[topic] = 0; }
+			break;
+		case K_RIGHT: case K_TAB:
+			if (!has_nav && topic + 1 < g_ntopics) {
+				topic++; scroll[topic] = 0; curline[topic] = 0;
+			}
+			break;
 		/* ^F and ^B, because this is a document and that is what pages a
 		 * document everywhere else. Space and PgDn do it too. */
-		case 6: case K_PGDN: case ' ': case K_ENTER: *s += body - 1; break;
-		case 2: case K_PGUP: case K_BACK:            *s -= body - 1; break;
-		case K_HOME: case 'g': *s = 0; break;
-		case K_END:  case 'G': *s = total; break;
-		/* Left and right are the chapters. Reading forward past the end of
-		 * one is what turning a page means, so the next one starts at its
-		 * own top rather than wherever it was left. */
-		case K_RIGHT: case K_TAB: case 'n':
-			if (topic + 1 < g_ntopics) { topic++; scroll[topic] = 0; }
-			break;
-		case K_LEFT: case K_BTAB: case 'p':
-			if (topic > 0) { topic--; scroll[topic] = 0; }
-			break;
+		case 6: case K_PGDN: case ' ': case K_ENTER:
+			scroll[topic] += body - 1; curline[topic] += body - 1; break;
+		case 2: case K_PGUP: case K_BACK:
+			scroll[topic] -= body - 1; curline[topic] -= body - 1; break;
+		case K_HOME: case 'g': scroll[topic] = 0;     curline[topic] = 0;     break;
+		case K_END:  case 'G': scroll[topic] = total; curline[topic] = total; break;
 		default: break;
 		}
 	}
@@ -5957,27 +6143,48 @@ static void screen_help(void)
  * columns without a terminal to hold it in. */
 static int help_screenshot(int argc, char **argv)
 {
-	int w = 100, h = 30, scroll = 0, topic = 0;
+	int w = 100, h = 30, scroll = 0, topic = 0, cur = -1;
+	int zone = GZ_NAV, nav = NAV_LANG;
 	for (int i = 0; i < argc; i++) {
 		if (!strcmp(argv[i], "--width") && i + 1 < argc) w = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--height") && i + 1 < argc) h = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--scroll") && i + 1 < argc) scroll = atoi(argv[++i]);
+		else if (!strcmp(argv[i], "--cursor") && i + 1 < argc) cur = atoi(argv[++i]);
+		/* Which pane has the cursor, so the three states this screen has are
+		 * three frames a rig can take rather than three things to describe. */
+		else if (!strcmp(argv[i], "--focus") && i + 1 < argc) {
+			const char *f = argv[++i];
+			if (!strcmp(f, "lang"))       { zone = GZ_NAV;  nav = NAV_LANG; }
+			else if (!strcmp(f, "nav"))   { zone = GZ_NAV;  nav = 0; }
+			else                            zone = GZ_BODY;
+		}
 		else if (!strcmp(argv[i], "--topic") && i + 1 < argc) {
 			const char *id = argv[++i];
 			for (int t = 0; t < g_ntopics; t++)
 				if (!strcmp(g_topics[t].id, id)) topic = t;
 		}
 	}
+	/* --topic is allowed to come after --focus, so the list cursor is put on
+	 * the chapter that is open once both have been read. */
+	if (zone == GZ_NAV && nav != NAV_LANG) nav = topic;
+	if (nav < nav_top()) nav = nav_top();
+	/* No --cursor given: the top of what is on the screen, which is where it
+	 * would be if somebody had just walked into the text. */
+	if (cur < 0) cur = scroll;
+
 	g_w = w > 24 ? w : 24;
 	g_h = h > 10 ? h : 10;
 	g_anim = 0;
 	g_color = 0;
 
-	int body = 0, total = 0;
-	help_draw(topic, &scroll, &body, &total);
+	int body = 0, total = 0, has_nav = 0;
+	help_draw(topic, zone, nav, &scroll, &cur, &body, &total, &has_nav);
 	grid_dump(stdout);
-	printf("\n[topic=%s cols=%d lines=%d scroll=%d body=%d %dx%d]\n",
-	       g_ntopics ? g_topics[topic].id : "-", g_hl_cols, total, scroll, body, g_w, g_h);
+	printf("\n[topic=%s cols=%d lines=%d scroll=%d cur=%d body=%d "
+	       "focus=%s contents=%s %dx%d]\n",
+	       g_ntopics ? g_topics[topic].id : "-", g_hl_cols, total, scroll, cur, body,
+	       zone == GZ_BODY ? "body" : (nav == NAV_LANG ? "lang" : "nav"),
+	       has_nav ? "on" : "off", g_w, g_h);
 	return 0;
 }
 
@@ -5990,8 +6197,9 @@ static void helppage_usage(FILE *out)
 		"and domains are for, how to install software, what your limits\n"
 		"mean, what a reinstall keeps, and how to get back in.\n"
 		"\n"
-		"  ↑↓ or j/k     scroll        ←→        previous / next page\n"
+		"  ↑↓ or j/k     move, scroll  ←→        contents pane / the text\n"
 		"  ^F / ^B       page          Home/End  top / bottom\n"
+		"  n / p         next / previous chapter, from either side\n"
 		"  wheel, click  the mouse works        L  switch language\n"
 		"  q or Esc      quit\n"
 		"\n"
