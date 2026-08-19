@@ -191,10 +191,18 @@ COPY helppage/          /etc/helppage/
 #
 # poweroff/halt answer to app-setup too now (docs/passwd.md §11), so a tenant
 # leaving their own container off actually stays a tenant decision instead of
-# restart_policy=always silently undoing it. /usr/sbin/poweroff -> systemctl
-# here, confirmed live — under sbin, not bin, so the shim goes in
-# /usr/local/sbin, which precedes /usr/sbin in the same PATH and is just as
-# unowned by dpkg.
+# restart_policy=always silently undoing it. poweroff is systemd-sysv's link
+# to systemctl — under sbin, not bin, so the shim goes in /usr/local/sbin,
+# which precedes both sbin directories in the same PATH and is just as unowned
+# by the package manager.
+#
+# *Which* sbin is not fixed, and hard-coding /usr/sbin broke the build on every
+# base image that is not usr-merged: debian:11-slim, ubuntu:18.04 and
+# ubuntu:16.04 keep /sbin as a real directory and put poweroff there, so the
+# guard failed under `set -e` and took the image with it. Debian 12 and Ubuntu
+# 20.04 onwards symlink /sbin -> usr/sbin and were fine, which is why this
+# looked confirmed. The guard only asks whether there is a real binary behind
+# the name at all, so it accepts either.
 RUN set -eux; \
     chmod 0755 /bin/app-setup /etc/app-setup/*.sh; \
     chmod 0644 /usr/lib/app-setup/*.sh /etc/helppage/*.txt; \
@@ -203,9 +211,9 @@ RUN set -eux; \
     chmod 0700 /etc/app-setup/secrets; \
     test -x /usr/bin/passwd; \
     ln -sf /bin/app-setup /usr/local/bin/passwd; \
-    test -x /usr/sbin/poweroff; \
+    { test -x /usr/sbin/poweroff || test -x /sbin/poweroff; }; \
     ln -sf /bin/app-setup /usr/local/sbin/poweroff; \
-    test -x /usr/sbin/halt; \
+    { test -x /usr/sbin/halt || test -x /sbin/halt; }; \
     ln -sf /bin/app-setup /usr/local/sbin/halt; \
     # domain and dashboard answer to app-setup too, bare, the same
     # multicall way — no real system binary behind either name to fall
