@@ -159,7 +159,29 @@ Five fields, separated by `|`, and everything after the name is optional:
 | default | what applies until somebody changes it |
 | label | shown in the form |
 | 中文标签 | the same in Chinese. Left out, the English is shown to everybody |
-| type | `bool` a checkbox, `number` digits only, a comma list a chooser, absent a text box |
+| type | `bool` a checkbox, `number` digits only, a comma list a chooser, `@name` a list this machine fills in, absent a text box |
+
+**`@name` is the one type you do not write the values for.** A comma list is
+fixed at the moment you write the recipe; `@backup` is answered with the
+packages *on this machine* that can be backed up, which is not something you
+can know from where you are sitting:
+
+```sh
+# param: targets | | What to back up | 备份哪些 | @backup
+```
+
+The field opens a tick-list rather than a text box — space ticks, Enter
+commits — and the value it saves is the same comma-separated string you would
+have typed, so `param targets` reads it back unchanged. What is installed is
+listed first and every entry says whether it is there. `@backup` is the only
+source today; a name this binary does not know degrades to a text box rather
+than to an empty list, so a recipe written for a newer app-setup is still
+usable on an older one.
+
+Being in that list is not a header field you set. It is whether your recipe
+defines `do_backup` — the same function `app-setup backup <id>` calls. Write
+one and you are in it, with nothing else to declare and nothing to keep in
+sync.
 
 Read one back with `param`, always giving the default again:
 

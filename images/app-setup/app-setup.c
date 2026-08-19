@@ -207,6 +207,15 @@ static const L T_NITEMS    = {"%d",           "%d 项"};
 static const L T_HELPFORM  = {"↑↓ field   Space toggle   ←→ choose   Enter save & apply   Esc cancel",
                              "↑↓ 换行   空格 切换   ←→ 选值   回车 保存并应用   Esc 取消"};
 static const L T_HELPPAGE  = {"↑↓ scroll   Enter / Esc back", "↑↓ 滚动   回车/Esc 返回"};
+static const L T_HELPPICK  = {"↑↓ move   Space tick   Enter done   Esc cancel",
+                              "↑↓ 移动   空格 勾选   回车 完成   Esc 取消"};
+static const L T_PICKEMPTY = {"nothing chosen — Enter to pick", "还没选 —— 回车来选"};
+/* The honest answer when the list would be empty, and it names the reason
+ * rather than the symptom: an empty popup tells somebody the program is
+ * broken, and what is actually true is that there is nothing here to save. */
+static const L T_PICKNONE  = {"Nothing installed here can be backed up yet. Install a "
+                              "database or Files and folders first, then come back.",
+                              "这台机器上还没有能备份的东西。先装一个数据库，或者装「文件和目录」，再回来。"};
 static const L T_HELPRUN   = {"Working — Esc twice to force a stop", "执行中 —— 按两次 Esc 可强行中止"};
 static const L T_HELPDONE  = {"Enter to go back", "回车返回"};
 
@@ -229,16 +238,24 @@ enum { ST_UNKNOWN = 0, ST_RUNNING, ST_STOPPED, ST_ABSENT, ST_BROKEN, ST_INSTALLE
  * type is inferred: `bool` gets a checkbox, a comma list gets a left/right
  * chooser, everything else is a text field. Anything more than that wants a
  * config file, not a form. */
-enum { PT_TEXT = 0, PT_BOOL, PT_ENUM, PT_NUMBER };
+/* PT_LIST is the one type whose choices this file works out rather than reads:
+ * a `# param: … | @backup` field is answered with the packages on *this*
+ * machine that can be backed up, which is not something a recipe author in
+ * another country can write down. See list_options. */
+enum { PT_TEXT = 0, PT_BOOL, PT_ENUM, PT_NUMBER, PT_LIST };
 
 typedef struct {
 	char name[32];
 	char label[64], label_zh[96];
 	char dflt[128];
-	char value[128];
+	char value[256];
 	int  type;
 	char choices[8][32];
 	int  nchoices;
+	/* PT_LIST only: what to fill the popup with, from the `@name` the recipe
+	 * wrote. One source today; the mechanism is here because a hard-coded
+	 * list of ids in a recipe is exactly the thing that goes stale. */
+	char source[16];
 
 	/* Which `# group:` this field belongs to (index into Pkg.groups), or -1
 	 * for ungrouped — every field declared before the first `# group:` line,
@@ -294,6 +311,13 @@ typedef struct {
 	 * the header's first `# group:` line, meaningless once load_recipe
 	 * returns — nothing reads it after parsing finishes. */
 	int  cur_group;
+
+	/* Whether this recipe defines do_backup, read out of the file rather than
+	 * declared in its header. The header would be a second place to keep in
+	 * sync and a thing an author can forget; the function either exists or it
+	 * does not, and that is the contract app-setup-sources.md already states.
+	 * It is what fills the Backup card's list of what can be backed up. */
+	int  can_backup;
 
 	Btn  buttons[MAX_BUTTONS];
 	int  nbuttons;
@@ -894,6 +918,14 @@ static void add_param(Pkg *p, const char *spec)
 	const char *ty = nf > 4 ? f[4] : "";
 	if (!strcmp(ty, "bool"))        pm->type = PT_BOOL;
 	else if (!strcmp(ty, "number")) pm->type = PT_NUMBER;
+	/* `@name` — the choices are this machine's answer, not the recipe's. An
+	 * unknown name is left as a text field rather than as an empty chooser:
+	 * a recipe written against a newer app-setup should degrade to something
+	 * a person can still type into. */
+	else if (ty[0] == '@' && ty[1]) {
+		pm->type = PT_LIST;
+		copy_str(pm->source, sizeof pm->source, ty + 1);
+	}
 	else if (strchr(ty, ',')) {
 		pm->type = PT_ENUM;
 		char tmp[256];
@@ -1093,6 +1125,19 @@ static int load_recipe(const char *path, Pkg *p)
 		set_field(p, key, val);
 		if (!strcmp(key, "category") && p->ncats)
 			copy_str(cat_for, sizeof cat_for, p->cats[0]);
+	}
+	/* The header stops at the first line of code; this does not. What a
+	 * recipe can do is in its functions, and the one thing a card elsewhere
+	 * needs to know — can this be backed up — is `do_backup`. Reading on for
+	 * it costs one pass over a file already open and already in the page
+	 * cache, and it cannot fall out of step with the recipe the way a header
+	 * field would. Bounded, because a recipe is a recipe and not a tarball. */
+	if (marked) {
+		int bytes = 0;
+		do {
+			if (!strncmp(line, "do_backup(", 10)) { p->can_backup = 1; break; }
+			bytes += (int)strlen(line);
+		} while (bytes < 512 * 1024 && fgets(line, sizeof line, f));
 	}
 	fclose(f);
 
@@ -2792,6 +2837,175 @@ static int screen_enum_popup(Param *pm)
 	}
 }
 
+
+/* ---- a field whose choices this machine works out ------------------------ */
+
+#define LIST_MAX 32
+
+/* The options for a `@…` field. `owner` is the package the field belongs to
+ * and is left out of its own list: backup.sh defines do_backup because it is
+ * the thing that runs everybody else's, and offering to back up the backup
+ * card is nonsense.
+ *
+ * Installed first. What somebody wants to back up is nearly always something
+ * they have, and a list that opens on ten things they do not is a list they
+ * have to read past to reach the one they came for. The ones they do not have
+ * are still offered, and still say so, because setting a machine up before
+ * filling it is a normal order to do things in.
+ */
+static int list_options(const Pkg *owner, const char *source, const Pkg *opts[], int max)
+{
+	int n = 0;
+	if (strcmp(source, "backup") != 0) return 0;
+	for (int pass = 0; pass < 2; pass++)
+		for (int i = 0; i < g_npkg && n < max; i++) {
+			const Pkg *q = &g_pkg[i];
+			if (!q->can_backup || q == owner) continue;
+			int have = (q->status != ST_ABSENT && q->status != ST_UNKNOWN);
+			if (have != (pass == 0)) continue;
+			opts[n++] = q;
+		}
+	return n;
+}
+
+/* A PT_LIST value is the string the recipe already takes on its command line:
+ * `mysql,wordpress`. These two are what keep that string and the ticks in the
+ * popup saying the same thing. */
+static int list_has(const char *csv, const char *id)
+{
+	size_t n = strlen(id);
+	for (const char *p = csv; *p; ) {
+		while (*p == ' ' || *p == ',') p++;
+		if (!*p) break;
+		const char *e = p;
+		while (*e && *e != ',') e++;
+		size_t len = (size_t)(e - p);
+		while (len && p[len - 1] == ' ') len--;
+		if (len == n && !strncmp(p, id, n)) return 1;
+		p = e;
+	}
+	return 0;
+}
+
+static void list_toggle(char *csv, size_t cap, const char *id)
+{
+	if (!list_has(csv, id)) {
+		size_t n = strlen(csv);
+		if (n) snprintf(csv + n, cap - n, ",%s", id);
+		else   copy_str(csv, cap, id);
+		return;
+	}
+	/* Rebuilt rather than spliced: the string is short, and every attempt to
+	 * cut one item out of a comma list in place gets the commas wrong at one
+	 * end or the other. */
+	char out[256] = "";
+	size_t n = strlen(id);
+	for (const char *p = csv; *p; ) {
+		while (*p == ' ' || *p == ',') p++;
+		if (!*p) break;
+		const char *e = p;
+		while (*e && *e != ',') e++;
+		size_t len = (size_t)(e - p);
+		while (len && p[len - 1] == ' ') len--;
+		if (len && !(len == n && !strncmp(p, id, n))) {
+			size_t have = strlen(out);
+			snprintf(out + have, sizeof out - have, "%s%.*s",
+			         have ? "," : "", (int)len, p);
+		}
+		p = e;
+	}
+	copy_str(csv, cap, out);
+}
+
+/* The same shape as screen_enum_popup and a different thing: this one is a
+ * set, not a choice. Space ticks, Enter commits the lot, Esc puts back what
+ * was there. Built from list_options every time it opens, so a database
+ * installed five minutes ago is in the list with nothing edited anywhere. */
+/* One frame of it, so `app-setup screenshot --screen pick` can take this
+ * window the same way it takes every other one. */
+static void list_popup_draw(const Param *pm, const Pkg *opts[], int n, int sel)
+{
+	{
+		int idw = 4, stw = 0;
+		for (int i = 0; i < n; i++) {
+			int w = u8width(opts[i]->id);
+			if (w > idw) idw = w;
+			w = u8width(S(*status_label(opts[i])));
+			if (w > stw) stw = w;
+		}
+		int w = 4 + 4 + idw + 3 + stw + 2;
+		if (w > g_w - 4) w = g_w - 4;
+		if (w < 24) w = 24;
+		int h = n + 2;
+		if (h > g_h - 4) h = g_h - 4;
+		if (h < 3) h = 3;
+		int row = (g_h - h) / 2, col = (g_w - w) / 2;
+		if (row < 1) row = 1;
+		if (col < 0) col = 0;
+		win_box(row, col, w, h, param_label(pm));
+
+		for (int i = 0; i < n && i < h - 2; i++) {
+			int y = row + 1 + i;
+			int a = (i == sel) ? P_ENTRYACT : P_WIN;
+			gfill(y, col + 1, w - 2, " ", a);
+			char box[128];
+			snprintf(box, sizeof box, "[%s] %s",
+			         list_has(pm->value, opts[i]->id) ? MK_OK : " ", opts[i]->id);
+			gput(y, col + 2, box, a, w - 4);
+			/* The state word, in the colour the cards already use for it, and
+			 * only when there is room for it to be read rather than clipped. */
+			const char *st = S(*status_label(opts[i]));
+			int sw = u8width(st);
+			int sx = col + w - 2 - sw;
+			if (sx > col + 3 + u8width(box))
+				gput(y, sx, st, i == sel ? a : status_attr(opts[i]), sw);
+			hit_add(H_BODY, i, y, col + 1, 1, w - 2);
+		}
+		help_line_l(&T_HELPPICK);
+	}
+}
+
+static int screen_list_popup(const Pkg *owner, Param *pm)
+{
+	const Pkg *opts[LIST_MAX];
+	int n = list_options(owner, pm->source, opts, LIST_MAX);
+	if (n == 0) { message(param_label(pm), S(T_PICKNONE)); return 0; }
+
+	char start[sizeof pm->value];
+	copy_str(start, sizeof start, pm->value);
+	int sel = 0;
+
+	for (;;) {
+		term_measure();
+		grid_size(g_w, g_h);
+		hit_clear();
+		draw_root();
+		list_popup_draw(pm, opts, n, sel);
+		grid_flush();
+
+		int k = read_key();
+		if (k == K_NONE || k == K_RESIZE || k == K_TIMEOUT) continue;
+		/* A click is the tick. Moving the cursor there first would be a second
+		 * gesture for something already pointed at, which is the same call the
+		 * cards on the home screen make. */
+		if (k == K_CLICK) {
+			int idx = 0;
+			if (hit_test(g_my, g_mx, &idx) == H_BODY && idx >= 0 && idx < n) {
+				sel = idx;
+				list_toggle(pm->value, sizeof pm->value, opts[sel]->id);
+			}
+			continue;
+		}
+		if (k == K_WHEELUP) { if (sel > 0) sel--; continue; }
+		if (k == K_WHEELDN) { if (sel < n - 1) sel++; continue; }
+		if (k == K_UP)   { sel = (sel - 1 + n) % n; continue; }
+		if (k == K_DOWN) { sel = (sel + 1) % n; continue; }
+		if (k == ' ')    { list_toggle(pm->value, sizeof pm->value, opts[sel]->id); continue; }
+		if (k == K_ESC)  { copy_str(pm->value, sizeof pm->value, start); return 0; }
+		if (k == K_ENTER) return strcmp(start, pm->value) != 0;
+	}
+}
+
 static int screen_params(Pkg *p)
 {
 	if (!p->nparams) { message(pkg_name(p), S(T_NOPARAM)); return 0; }
@@ -2907,6 +3121,15 @@ static int screen_params(Pkg *p)
 				char box[32];
 				snprintf(box, sizeof box, "[%s] %s", on ? MK_OK : " ", on ? S(T_ON) : S(T_OFF));
 				gput(y, fx, box, a, fieldw);
+			} else if (pm->type == PT_LIST) {
+				/* What is ticked, and a `›` saying there is a window behind
+				 * this rather than a box to type in. */
+				gfill(y, fx, fieldw, " ", a);
+				char cut[256];
+				u8ellipsis(cut, sizeof cut, *pm->value ? pm->value : S(T_PICKEMPTY),
+				           fieldw - 3);
+				gput(y, fx, cut, a, fieldw - 3);
+				gput(y, fx + fieldw - 2, CH_MORE, a, 1);
 			} else if (pm->type == PT_ENUM) {
 				char ch[128];
 				snprintf(ch, sizeof ch, "%s %s %s", AR_L, pm->value, AR_R);
@@ -2953,6 +3176,7 @@ static int screen_params(Pkg *p)
 					 * select and then press space on; a long chooser opens
 					 * the same popup a click gets on ENTER for one */
 					if (cpm->type == PT_BOOL) k = ' ';
+					else if (cpm->type == PT_LIST) k = K_ENTER;
 					else if (cpm->type == PT_ENUM && cpm->nchoices >= ENUM_POPUP_MIN) k = K_ENTER;
 					else continue;
 				} else if (idx < nrows) {
@@ -3017,6 +3241,10 @@ static int screen_params(Pkg *p)
 				memcpy(groups_before, p->groups, sizeof groups_before);
 				continue;
 			}
+			if (pm && pm->type == PT_LIST) {
+				screen_list_popup(p, pm);
+				continue;
+			}
 			if (pm && pm->type == PT_ENUM && pm->nchoices >= ENUM_POPUP_MIN) {
 				screen_enum_popup(pm);
 				continue;
@@ -3031,7 +3259,9 @@ static int screen_params(Pkg *p)
 			}
 			continue;
 		}
-		if (pm->type == PT_BOOL) {
+		if (pm->type == PT_LIST) {
+			if (k == ' ' || k == K_LEFT || k == K_RIGHT) screen_list_popup(p, pm);
+		} else if (pm->type == PT_BOOL) {
 			if (k == ' ' || k == K_LEFT || k == K_RIGHT) {
 				int on = !strcmp(pm->value, "on") || !strcmp(pm->value, "1") ||
 				         !strcmp(pm->value, "yes") || !strcmp(pm->value, "true");
@@ -4675,6 +4905,19 @@ static int cli_screenshot(int n, char **rest)
 		char title[256];
 		verb_title(title, sizeof title, "install", p);
 		progress_draw(&r, title, -1, 0, NULL, NULL);
+	} else if (!strcmp(screen, "pick") && p) {
+		/* The chooser behind a `@…` field, over the plain root the way it is
+		 * actually drawn. --select is which row has the cursor. */
+		grid_size(g_w, g_h);
+		draw_root();
+		Param *pm = NULL;
+		for (int i = 0; i < p->nparams; i++)
+			if (p->params[i].type == PT_LIST) { pm = &p->params[i]; break; }
+		if (!pm) { fprintf(stderr, "screenshot: %s has no @-list field\n", p->id); return 1; }
+		const Pkg *opts[LIST_MAX];
+		int n = list_options(p, pm->source, opts, LIST_MAX);
+		if (!n) { fprintf(stderr, "screenshot: nothing to offer for @%s\n", pm->source); return 1; }
+		list_popup_draw(pm, opts, n, sel > 0 && sel <= n ? sel - 1 : 0);
 	} else if (!strcmp(screen, "params") && p) {
 		render_home();
 		/* Same VisRow list screen_params itself walks (build_param_rows) —
@@ -4739,6 +4982,12 @@ static int cli_screenshot(int n, char **rest)
 				char box[32];
 				snprintf(box, sizeof box, "[%s] %s", on ? MK_OK : " ", on ? S(T_ON) : S(T_OFF));
 				gput(y, fx, box, a0, fieldw);
+			} else if (pm->type == PT_LIST) {
+				char cut[256];
+				u8ellipsis(cut, sizeof cut, *pm->value ? pm->value : S(T_PICKEMPTY),
+				           fieldw - 3);
+				gput(y, fx, cut, a0, fieldw - 3);
+				gput(y, fx + fieldw - 2, CH_MORE, a0, 1);
 			} else if (pm->type == PT_ENUM) {
 				char ch[128];
 				snprintf(ch, sizeof ch, "%s %s %s", AR_L, pm->value, AR_R);

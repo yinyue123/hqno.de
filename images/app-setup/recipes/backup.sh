@@ -13,7 +13,7 @@
 # memory: 32M
 # requires: somewhere to upload to — any S3-compatible bucket
 # requires.zh: 一个能上传的地方 —— 任何 S3 兼容的存储桶
-# param: targets    | mysql        | What to back up | 备份哪些 |
+# param: targets    |              | What to back up | 备份哪些 | @backup
 # action: targets   | backup       | ▶ Back up now   | ▶ 立即备份
 # param: method     | dump         | How             | 方式     | dump,files
 # param: keep       | 7            | Keep last       | 保留份数 | number
@@ -102,8 +102,15 @@ write_cron() {
 	# Output goes to app-setup's own log rather than to cron's mail, which
 	# nothing in a container reads. The `--no-color` matters: a log full of
 	# escape sequences is a log nobody opens twice.
+	# Nothing ticked is not a schedule. A timer that fires nightly onto an
+	# empty list writes a log line saying so and nothing else, forever, and
+	# looks from the outside exactly like a backup that is running.
+	if [ -z "$(param targets)" ]; then
+		cron_clear "$CRON_NAME" >/dev/null 2>&1 || true
+		return 0
+	fi
 	if cron_set "$CRON_NAME" "$_when" \
-	     "app-setup --no-color backup $(param targets mysql | tr ',' ' ') >/dev/null 2>&1"; then
+	     "app-setup --no-color backup $(param targets | tr ',' ' ') >/dev/null 2>&1"; then
 		return 0
 	fi
 	warn "no cron on this machine — the ▶ button still works, the timer will not"
@@ -150,6 +157,11 @@ do_install() {
 	# changing the mode, so setting it once here keeps it for every later save.
 	chmod 600 "$APP_SETUP_CONF/params/backup.conf" 2>/dev/null || true
 
+	if [ -z "$(param targets)" ]; then
+		warn "nothing is ticked under 'What to back up' — open Settings and pick"
+		warn "what to save. The list is what this machine has that can be saved."
+	fi
+
 	step "checking the destination"
 	if [ -z "$(param remote)" ] || [ "$(param tool rclone)" = none ]; then
 		warn "no bucket set yet — archives will only be written to $BK_DIR."
@@ -161,7 +173,7 @@ do_install() {
 	save_note backup <<EOF
 backups     $BK_DIR/<name>_YYYYMMDDHHMMSS.tgz
 schedule    $(param schedule daily)$([ -n "$(cron_line)" ] && printf ' (%s), in %s' "$(cron_line)" "$(cron_where)")
-targets     $(param targets mysql)
+targets     $(param targets)
 method      $(param method dump)
 keep        $(param keep 7) locally
 uploads to  $(param remote)$([ -n "$(param endpoint)" ] && printf ' via %s' "$(param endpoint)")
@@ -197,8 +209,8 @@ bk_check_remote() {
 # MariaDB is broken tonight the WordPress files should still leave the machine.
 do_backup() {
 	local _bad _id _n _targets
-	_targets="$(param targets mysql | tr ',' ' ')"
-	[ -n "$_targets" ] || die "nothing selected — put some ids in Settings, e.g. mysql,wordpress"
+	_targets="$(param targets | tr ',' ' ')"
+	[ -n "$_targets" ] || die "nothing selected — open Settings and tick what to back up in 'What to back up'"
 	# Re-assert the schedule from the settings as they are now. The Settings
 	# form's Save & Apply runs `install`, which writes it — but `app-setup set
 	# backup targets=…` from a script does not, and a cron line still naming
