@@ -113,6 +113,7 @@ export default defineConfig({
             text: 'Advanced',
             items: [
               { text: 'Using your container', link: '/using-your-container' },
+              { text: 'Public ports', link: '/ports' },
               { text: 'Building your own image', link: '/building-your-own-image' },
               { text: 'Adding your own software', link: '/app-setup-sources' },
             ],
@@ -164,6 +165,7 @@ export default defineConfig({
             text: '进阶',
             items: [
               { text: '使用你的容器（英文）', link: '/using-your-container' },
+              { text: '公网端口', link: '/zh/ports' },
               { text: '自己做镜像（英文）', link: '/building-your-own-image' },
               { text: '添加你自己的软件（英文）', link: '/app-setup-sources' },
             ],

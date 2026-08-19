@@ -234,7 +234,29 @@ know whether their hardware clears it.
 ## 5. Limits, and what hitting them feels like
 
 Your host sets five numbers. The container page shows each one against what
-you are using.
+you are using, and **so does every SSH login** — the first thing printed when
+you log in is your system, uptime, CPU, memory, disk, traffic against the
+quota, and the expiry date:
+
+```
+  System   Debian GNU/Linux 13 (trixie)
+  Uptime   6d 4h
+  CPU      4% of 2 cores
+  Memory   734.0M of 2.0G (36%)
+  Disk     11.0G of 40.0G (28%)
+  Traffic  318.0G of 1.0T (29%) · 706.0G left
+  Expires  2026-09-30 (in 41 days)
+```
+
+For the rest of it — public ports, domains, how to log back in — type
+`dashboard`, which saves opening a browser to find out why something is slow:
+
+```sh
+dashboard              # all of it: the box, cpu, memory, disk, traffic,
+                       # public ports, domains, and how to log back in
+dashboard net          # just the traffic meter — used this window, and left
+dashboard cpu mem      # just those two
+```
 
 | Limit | At the ceiling |
 |---|---|

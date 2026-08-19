@@ -65,7 +65,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define APP_VERSION   "2.10.0"
+#define APP_VERSION   "2.11.0"
 #define MAX_PKGS      512
 #define MAX_CATS      32
 #define MAX_PARAMS    12
@@ -4765,6 +4765,9 @@ static void usage(FILE *f)
 	  "  app-setup domain add|del|ls|help   point a domain at this container\n"
 	  "                               without the panel's web UI — `domain help`\n"
 	  "                               for the full syntax\n"
+	  "  app-setup dashboard [section ...]  what this box is, is allowed and is\n"
+	  "                               using. No section draws all of them:\n"
+	  "                               box cpu mem disk net ports domains ssh\n"
 	  "  app-setup screenshot [--width N] [--height N] [--category C|installed|all]\n"
 	  "                       [--screen home|app|params|progress] [--id ID]\n"
 	  "                       [--select N] [--focus grid|chips|back] [--probe]\n"
@@ -4897,6 +4900,15 @@ static int read_password_line(char *buf, size_t cap)
 	return got_input;
 }
 
+/* Set when the last reply did not fit in the buffer below. It used to be
+ * neither reported nor possible to notice: the overflow was dropped a byte at
+ * a time and the caller was handed a truncated line that still looked like a
+ * whole one. That was harmless while the only answers were "OK" and a short
+ * domain list, and stops being harmless the moment a reply is a document
+ * (`dashboard`) — half of one parses into a screen missing rows nobody knows
+ * are missing. Cheaper to say so than to grow the buffer and hope. */
+static int g_sock_truncated = 0;
+
 /* Connects to the local socket, writes one already-newline-terminated line,
  * reads one line back. NULL means the socket could not be reached at all —
  * nothing has happened yet — which every caller has to tell apart from
@@ -4904,7 +4916,7 @@ static int read_password_line(char *buf, size_t cap)
  * returned pointer is a static buffer valid until the next call. */
 static const char *hqnode_sock_call(const char *line)
 {
-	static char resp[512];
+	static char resp[8192];
 	int fd = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (fd < 0) return NULL;
 
@@ -4924,12 +4936,14 @@ static const char *hqnode_sock_call(const char *line)
 	}
 
 	size_t got = 0;
+	g_sock_truncated = 0;
 	for (;;) {
 		char c;
 		ssize_t r = read(fd, &c, 1);
 		if (r <= 0) break;
 		if (c == '\n') break;
 		if (got + 1 < sizeof resp) resp[got++] = c;
+		else g_sock_truncated = 1;
 	}
 	close(fd);
 	if (got == 0) return NULL;
@@ -5036,11 +5050,12 @@ static void domain_usage(FILE *out)
  * command ever gets back is exactly {"domains":[{"domain":"a"},…],"max":N}
  * (server/internal/api/domains.go's domainResult) and nothing else, so
  * pulling every "domain":"…" substring out by hand is exact for the one
- * shape this ever has to read. hqnode_sock_call's whole reply is a static
- * 512-byte line, so a domain list can never hold more entries than that
- * fits — this cap is just generous headroom, not a real limit anyone hits.
+ * shape this ever has to read. The cap is the real one: the reply buffer is
+ * large enough now (8KB, for `dashboard`) that it is this array rather than
+ * the line length that runs out first, so it is set well past any allowance
+ * an admin would hand one container (MaxDomains defaults to 10).
  */
-#define DOMAIN_LIST_CAP 32
+#define DOMAIN_LIST_CAP 128
 
 static int domain_parse_list(const char *json, char rows[][254], int cap)
 {
@@ -5178,6 +5193,221 @@ static int cli_domain(int argc, char **argv)
 	fprintf(stderr, "app-setup: domain: unknown command: %s\n\n", verb);
 	domain_usage(stderr);
 	return 2;
+}
+
+/* ------------------------------------------------------------- dashboard --
+ * `app-setup dashboard [section ...]` — what this box is, what it is allowed,
+ * and what it is using, on the same socket `domain` rides
+ * (docs/dashboard-cli.md). With no arguments it draws everything, which is
+ * the whole point of typing one word; a section name filters, and the daemon
+ * refuses one it does not know rather than quietly drawing the lot.
+ *
+ * This end knows the *layout* and nothing about the content. The daemon sends
+ * rows that are already worded — kind, label, value — and all that happens
+ * here is one column being lined up under another. That is not laziness about
+ * where to put the strings: the agent upgrades itself online while this binary
+ * is baked into twenty published images, so a field added on the far side has
+ * to appear here without a rebuild, and it does. It is also what keeps a JSON
+ * parser out of a program that has no business having one.
+ */
+#define DASH_MAX_ROWS 128
+#define DASH_RS       '\x1e'    /* between rows   */
+#define DASH_US       '\x1f'    /* between fields */
+
+static void dashboard_usage(FILE *out)
+{
+	fprintf(out,
+		"Usage: app-setup dashboard [section ...]\n"
+		"\n"
+		"Everything this host and the panel know about the container you\n"
+		"are sitting in: what it was sold, what it is using, where it\n"
+		"answers, and when it expires.\n"
+		"\n"
+		"With no section, all of them are drawn. Naming one or more draws\n"
+		"only those, always in the order below rather than the order typed:\n"
+		"\n"
+		"  box        name, image, state, uptime, expiry\n"
+		"  cpu        cores allowed, and how busy they are\n"
+		"  mem        memory and swap allowed, and how much is in use\n"
+		"  disk       disk allowed, in use, and /data if there is one\n"
+		"  net        traffic allowance, what this window has used, what is left\n"
+		"  ports      public ports an admin opened onto this container\n"
+		"  domains    the names this container answers for\n"
+		"  ssh        how to log back in\n"
+		"\n"
+		"  --brief    the six-line version printed on every SSH login\n"
+		"             (/etc/profile.d/app-setup.sh). Silent if this host's\n"
+		"             daemon does not answer, so a login never waits on it.\n"
+		"\n"
+		"Examples:\n"
+		"  dashboard\n"
+		"      The whole screen.\n"
+		"\n"
+		"  dashboard net\n"
+		"      Just the traffic meter — how much of this window's allowance\n"
+		"      is gone, and how much is left.\n"
+		"\n"
+		"  dashboard cpu mem disk\n"
+		"      The three resource sections, nothing else.\n");
+}
+
+/* Splits s on sep, in place, into at most cap pieces. Unlike strtok this
+ * keeps empty pieces, which carry meaning here: a row with an empty label is
+ * a continuation line under the row above it. */
+static int dash_split(char *s, char sep, char **out, int cap)
+{
+	int n = 0;
+	if (cap <= 0) return 0;
+	out[n++] = s;
+	for (char *p = s; *p; p++) {
+		if (*p != sep) continue;
+		*p = '\0';
+		if (n >= cap) break;
+		out[n++] = p + 1;
+	}
+	return n;
+}
+
+/* A section name is one word of ASCII. Anything else is refused here rather
+ * than sent: the socket's framing is one line, so a newline in an argument
+ * would end the request early and the daemon would answer a different
+ * question than the one that was asked. */
+static int dash_word_ok(const char *s)
+{
+	if (!*s) return 0;
+	for (const unsigned char *p = (const unsigned char *)s; *p; p++)
+		if (!isalnum(*p) && *p != '-' && *p != '_') return 0;
+	return 1;
+}
+
+/* first_label/first_value, when given, are one extra field drawn above
+ * everything else and counted in the same column width — the login banner's
+ * "System" row. It is the one line on that banner this side has to supply:
+ * the daemon knows what the container was sold and what it is using, and has
+ * no idea which distribution is inside it. */
+static int dashboard_print(const char *payload, const char *first_label, const char *first_value)
+{
+	static char buf[8192];
+	snprintf(buf, sizeof buf, "%s", payload);
+
+	static char *items[DASH_MAX_ROWS];
+	int n = dash_split(buf, DASH_RS, items, DASH_MAX_ROWS);
+
+	static char *kind[DASH_MAX_ROWS], *label[DASH_MAX_ROWS], *value[DASH_MAX_ROWS];
+	int width = first_label ? (int)strlen(first_label) : 0;
+	for (int i = 0; i < n; i++) {
+		char *f[3] = { (char *)"", (char *)"", (char *)"" };
+		dash_split(items[i], DASH_US, f, 3);
+		kind[i] = f[0]; label[i] = f[1]; value[i] = f[2];
+		if (kind[i][0] == 'F') {
+			int len = (int)strlen(label[i]);
+			if (len > width) width = len;
+		}
+	}
+
+	int drawn = 0;
+	if (first_label) {
+		printf("  %-*s  %s\n", width, first_label, first_value ? first_value : "");
+		drawn = 1;
+	}
+	for (int i = 0; i < n; i++) {
+		if (kind[i][0] == 'H') {
+			if (drawn) printf("\n");
+			printf("%s", label[i]);
+			if (value[i][0]) printf("  %s", value[i]);
+			printf("\n");
+		} else if (!label[i][0]) {
+			/* A continuation line — one of a list, under the heading it
+			 * belongs to. It sits at the label column rather than the value
+			 * one, because there is no label beside it for it to line up
+			 * with, and a lone value indented under nothing reads as lost. */
+			printf("  %s\n", value[i]);
+		} else {
+			printf("  %-*s  %s\n", width, label[i], value[i]);
+		}
+		drawn = 1;
+	}
+	return 0;
+}
+
+static int cli_dashboard(int argc, char **argv)
+{
+	if (argc > 0 && (!strcmp(argv[0], "help") || !strcmp(argv[0], "-h") ||
+	                 !strcmp(argv[0], "--help"))) {
+		dashboard_usage(stdout);
+		return 0;
+	}
+
+	/* --brief is the login banner (/etc/profile.d/app-setup.sh): six rows,
+	 * no headings, printed above the shell prompt on every interactive
+	 * login. It is quiet on every failure — a container whose daemon is not
+	 * answering must still give somebody a prompt, without an error on it
+	 * they can do nothing about. */
+	int brief = 0;
+	if (argc > 0 && !strcmp(argv[0], "--brief")) { brief = 1; argc--; argv++; }
+
+	char line[512];
+	size_t used = 0;
+	int n = snprintf(line, sizeof line, "DASHBOARD%s", brief ? " --brief" : "");
+	if (n < 0) return 1;
+	used = (size_t)n;
+	for (int i = 0; i < argc; i++) {
+		if (!dash_word_ok(argv[i])) {
+			fprintf(stderr, "app-setup: not a section name: %s\n\n", argv[i]);
+			dashboard_usage(stderr);
+			return 2;
+		}
+		n = snprintf(line + used, sizeof line - used, " %s", argv[i]);
+		if (n < 0 || (size_t)n >= sizeof line - used) {
+			fprintf(stderr, "app-setup: too many sections at once\n");
+			return 2;
+		}
+		used += (size_t)n;
+	}
+	if (used + 2 > sizeof line) {
+		fprintf(stderr, "app-setup: too many sections at once\n");
+		return 2;
+	}
+	line[used] = '\n';
+	line[used + 1] = '\0';
+
+	const char *resp = hqnode_sock_call(line);
+	if (brief && (!resp || strncmp(resp, "OK", 2) != 0 || g_sock_truncated)) {
+		return 1;   /* silent: see the comment on `brief` above */
+	}
+	if (!resp) {
+		fprintf(stderr, "app-setup: could not reach the hqnode daemon\n");
+		return 1;
+	}
+	if (!strncmp(resp, "ERR ", 4)) {
+		fprintf(stderr, "app-setup: %s\n", resp + 4);
+		return 1;
+	}
+	if (strncmp(resp, "OK", 2) != 0) {
+		fprintf(stderr, "app-setup: unexpected answer from the hqnode daemon\n");
+		return 1;
+	}
+	if (g_sock_truncated) {
+		/* Better than drawing most of a dashboard: a screen quietly missing
+		 * its last two sections is one somebody makes a decision on. */
+		fprintf(stderr, "app-setup: the answer was too long to read whole; "
+		                "try one section at a time, e.g. `dashboard net`\n");
+		return 1;
+	}
+	const char *rows = resp[2] == ' ' ? resp + 3 : resp + 2;
+	if (!*rows) {
+		if (!brief) fprintf(stderr, "app-setup: the hqnode daemon sent an empty dashboard\n");
+		return 1;
+	}
+	if (!brief) return dashboard_print(rows, NULL, NULL);
+
+	/* The banner's own first row. read_os_release rather than probe_system:
+	 * the bare-word path reaches here before main() has probed anything, and
+	 * the distribution's name is the only part of that this needs. */
+	if (!g_sys.pretty[0]) read_os_release();
+	int rc = dashboard_print(rows, "System", g_sys.pretty[0] ? g_sys.pretty : "this container");
+	printf("\n");
+	return rc;
 }
 
 /* cli_run's hook, after a successful `install`: the same DOMAIN ADD path
@@ -5393,6 +5623,11 @@ int main(int argc, char **argv)
 	// with it.
 	if (argc > 0 && !strcmp(prog_basename(argv[0]), "domain"))
 		return cli_domain(argc - 1, argv + 1);
+	// And `dashboard` the same way, for the same reason: somebody who has
+	// just been handed a box types the word for the thing they want, not the
+	// name of the program that happens to provide it.
+	if (argc > 0 && !strcmp(prog_basename(argv[0]), "dashboard"))
+		return cli_dashboard(argc - 1, argv + 1);
 
 	/* English unless somebody says otherwise, and only APP_SETUP_LANG or
 	 * --lang says otherwise. LANG is not consulted: it describes the locale
@@ -5469,6 +5704,7 @@ int main(int argc, char **argv)
 	else if (!strcmp(cmd, "dump"))    rc = na ? cli_run("dump", na, aa) : (usage(stderr), 2);
 	else if (!strcmp(cmd, "load"))    rc = na ? cli_run("load", na, aa) : (usage(stderr), 2);
 	else if (!strcmp(cmd, "domain")) rc = cli_domain(na, aa);
+	else if (!strcmp(cmd, "dashboard")) rc = cli_dashboard(na, aa);
 	else if (!strcmp(cmd, "docs") || !strcmp(cmd, "help")) {
 		if (!na) { usage(stdout); return 0; }
 		Pkg *p = find_pkg(aa[0]);
