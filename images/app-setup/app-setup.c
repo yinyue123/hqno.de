@@ -226,10 +226,15 @@ static struct { char id[24]; L label; int owned; } g_cats[MAX_CATS] = {
 	{"stack",  {"Suites",     "套件安装"},     0},
 	{"web",    {"Web servers","Web 服务器"},   0},
 	{"db",     {"Databases",  "数据库"},       0},
+	/* Beside Databases and not at the end, because the two chips are read as
+	 * a pair: the tab you install a database from, and the tab you protect it
+	 * from. A recipe naming `backup` would be appended here anyway — this only
+	 * decides where it sits. */
+	{"backup", {"Backup",     "备份"},         0},
 	{"dev",    {"Dev tools",  "开发插件"},     0},
 	{"system", {"System",     "常用系统软件"}, 0},
 };
-static int g_ncat = 5;
+static int g_ncat = 6;
 
 /* ------------------------------------------------------------------ model */
 enum { ST_UNKNOWN = 0, ST_RUNNING, ST_STOPPED, ST_ABSENT, ST_BROKEN, ST_INSTALLED };
@@ -1343,11 +1348,11 @@ enum {
 	 * and the same background bold for the wordmark printed on it. Indexed by
 	 * cover_of(); six is one more than the built-in categories, so a source
 	 * that invents its own still gets a colour. */
-	P_COV0, P_COV1, P_COV2, P_COV3, P_COV4, P_COV5,
-	P_LOGO0, P_LOGO1, P_LOGO2, P_LOGO3, P_LOGO4, P_LOGO5,
+	P_COV0, P_COV1, P_COV2, P_COV3, P_COV4, P_COV5, P_COV6,
+	P_LOGO0, P_LOGO1, P_LOGO2, P_LOGO3, P_LOGO4, P_LOGO5, P_LOGO6,
 	P_COUNT
 };
-#define N_COVERS 6
+#define N_COVERS 7
 
 static const char *SGR[P_COUNT] = {
 	"0;37;44",       /* ROOT      white on blue                       */
@@ -1394,15 +1399,17 @@ static const char *SGR[P_COUNT] = {
 	"0;37;45",       /* COV0      suites      on magenta              */
 	"0;30;46",       /* COV1      web servers on cyan                 */
 	"0;30;42",       /* COV2      databases   on green                */
-	"0;30;43",       /* COV3      dev tools   on yellow               */
-	"0;37;44",       /* COV4      system      on blue                 */
-	"0;37;41",       /* COV5      anything else on red                */
-	"0;1;37;45",     /* LOGO0..5  the wordmark, bold, same background */
+	"0;30;43",       /* COV3      backup      on yellow               */
+	"0;37;44",       /* COV4      dev tools   on blue                 */
+	"0;37;41",       /* COV5      system      on red                  */
+	"0;37;100",      /* COV6      anything else on grey               */
+	"0;1;37;45",     /* LOGO0..6  the wordmark, bold, same background */
 	"0;1;37;46",
 	"0;1;37;42",
 	"0;1;30;43",
 	"0;1;37;44",
 	"0;1;37;41",
+	"0;1;37;100",
 };
 
 typedef struct { char ch[5]; unsigned char attr; unsigned char cont; } Cell;
@@ -1497,6 +1504,30 @@ static int gput(int row, int col, const char *s, int attr, int maxw)
 		if (used + cw > maxw) break;
 		if (col + used >= 0 && col + used < g_gw) {
 			Cell *cell = &g_grid[row * g_gw + col + used];
+
+			/* A wide character occupies two cells: a lead holding the glyph
+			 * and a continuation holding nothing. Anything drawn on top of
+			 * one half has to repair the other, and both directions were
+			 * wrong here — invisible until something with a dialog over it
+			 * was rendered in Chinese, which is to say until a recipe put
+			 * CJK at exactly the column an overlay started.
+			 *
+			 * Landing on a continuation: the lead to the left keeps its
+			 * two-column glyph and no longer has a continuation, so the row
+			 * emits one column too many and every rule to its right sits a
+			 * column off. */
+			if (cell->cont && col + used - 1 >= 0) {
+				Cell *lead = &g_grid[row * g_gw + col + used - 1];
+				lead->ch[0] = ' '; lead->ch[1] = '\0'; lead->cont = 0;
+			}
+			/* Landing on a lead with a narrow glyph: its continuation is
+			 * orphaned, and the flush skips continuations — so that column
+			 * is dropped and the row comes out one short. */
+			if (cw == 1 && col + used + 1 < g_gw) {
+				Cell *k = &g_grid[row * g_gw + col + used + 1];
+				if (k->cont) { k->ch[0] = ' '; k->ch[1] = '\0'; k->cont = 0; }
+			}
+
 			size_t len = (size_t)(nx - s);
 			if (len > 4) len = 4;
 			memcpy(cell->ch, s, len);
@@ -4799,6 +4830,42 @@ static int cli_status(int argc, char **argv)
 	return rc;
 }
 
+/* Is /data a disk of its own, or just a directory on the root filesystem?
+ *
+ * A reinstall replaces the container's root filesystem and keeps /data — but
+ * only a container that was given a data disk *has* one, and without it /data
+ * is an ordinary directory that dies with everything else while looking
+ * exactly the same from in here. That is the question the recipes ask before
+ * deciding where to put a database, so `doctor` answers it too: it is the one
+ * fact about this machine that decides whether anything installed survives.
+ *
+ * Field 5 of a mountinfo line is the mount point. Reading it rather than
+ * stat()ing because a bind mount of the same filesystem shares st_dev with /,
+ * and a bind is exactly what /data is. */
+static const char *data_disk_line(void)
+{
+	FILE *f = fopen("/proc/self/mountinfo", "r");
+	if (!f) return "unknown — no /proc/self/mountinfo to read";
+	char line[4096];
+	int found = 0;
+	while (!found && fgets(line, sizeof line, f)) {
+		char *p = line;
+		for (int i = 0; i < 4 && p; i++) p = strchr(p + 1, ' ');
+		if (!p) continue;
+		p++;
+		char *end = strchr(p, ' ');
+		if (!end) continue;
+		*end = '\0';
+		if (!strcmp(p, "/data")) found = 1;
+	}
+	fclose(f);
+	if (found) return "yes — /data survives a reinstall, and is where databases go";
+	struct stat st;
+	if (stat("/data", &st) == 0)
+		return "NO — /data is a plain directory here; a reinstall takes it";
+	return "no — this container has no /data; a reinstall takes everything";
+}
+
 static int cli_doctor(void)
 {
 	char mem[16], memf[16], disk[16];
@@ -4812,6 +4879,7 @@ static int cli_doctor(void)
 	printf("cpu         %ld\n", g_sys.ncpu);
 	printf("memory      %s total, %s available\n", mem, memf);
 	printf("disk free   %s on /\n", disk);
+	printf("data disk   %s\n", data_disk_line());
 	printf("root        %s\n", geteuid() == 0 ? "yes" : (have_cmd("sudo") ? "no, sudo present" : "no, and no sudo"));
 	printf("sources     %s\n", getenv("APP_SETUP_PATH") ? getenv("APP_SETUP_PATH") : DEFAULT_PATH);
 	printf("settings    %s/params\n", conf_dir());

@@ -176,6 +176,86 @@ in_container() {
 		grep -qE '(docker|lxc|containerd|libpod)' /proc/1/cgroup 2>/dev/null
 }
 
+# ------------------------------------------------------------- data disk --
+#
+# A reinstall replaces this container's whole root filesystem and keeps /data.
+# So everything a holder would be upset to lose — a database's tables, a
+# document root full of uploads — belongs on /data, and the distro default
+# (/var/lib/mysql and friends) is the one place it must not be.
+#
+# The check has to be for a *mount*, not for a directory. A data disk exists
+# only when somebody asked for one; a container without one either has no /data
+# at all or has an ordinary directory of that name sitting on the root
+# filesystem, which looks identical from in here and dies with everything else.
+# That is the false positive worth these lines, because it is the one that
+# looks safe.
+DATA_DIR="${DATA_DIR:-/data}"
+
+data_disk() {
+	[ -d "$DATA_DIR" ] || return 1
+	if [ -r /proc/self/mountinfo ]; then
+		# field 5 is the mount point
+		awk -v p="$DATA_DIR" '$5 == p { f = 1 } END { exit !f }' /proc/self/mountinfo
+		return
+	fi
+	# No /proc to read: a separate mount is a different device from /.
+	[ "$(stat -c %d "$DATA_DIR" 2>/dev/null)" != "$(stat -c %d / 2>/dev/null)" ]
+}
+
+# Where a recipe's data should live: the data disk when there is one, the
+# distro's own path when there is not. Recipes call this once and use the
+# answer everywhere, so backup, restore and the help text cannot disagree with
+# the config about where the files actually are.
+data_path() {      # data_path <name> <distro default>
+	if data_disk; then printf '%s/%s' "$DATA_DIR" "$1"; else printf '%s' "$2"; fi
+}
+
+# Said once per recipe, at install, when there is nowhere durable to put this.
+# The second sentence is the useful one: the cheapest moment to fix it is now,
+# while the database is still empty.
+data_warn() {      # data_warn <path> <what>
+	data_disk && return 0
+	warn "this container has no data disk, so $1 is on the root filesystem —"
+	warn "a reinstall replaces it and every $2 in it."
+	warn "Set up a backup, or ask for a data disk and reinstall now, while"
+	warn "there is nothing to lose."
+	return 0
+}
+
+# Free kilobytes on whichever filesystem holds a path. The data disk is a
+# second disk image with a size of its own, and it is routinely *smaller* than
+# the root — so "will this fit" has to be asked about /data, not about /.
+data_free_kb() {   # data_free_kb <path>
+	df -Pk "$1" 2>/dev/null | awk 'NR == 2 { print $4 }'
+}
+
+# Move an existing directory onto the data disk and leave a symlink behind, so
+# nothing that hard-codes the old path has to be found first. Refuses rather
+# than half-moves: a data directory that is partly in two places is worse than
+# one that never moved.
+data_relocate() {  # data_relocate <old dir> <new dir>
+	local _need _room
+	[ -d "$1" ] || return 1
+	[ -L "$1" ] && { info "$1 is already a link to $(readlink "$1")"; return 0; }
+	data_disk || { err "no data disk on this container — nothing to move to"; return 1; }
+	_need="$(du -sk "$1" 2>/dev/null | awk '{print $1}')"
+	_room="$(data_free_kb "$DATA_DIR")"
+	if [ -n "$_need" ] && [ -n "$_room" ] && [ "$_need" -gt "$_room" ]; then
+		err "$1 is $((_need / 1024))M and $DATA_DIR has $((_room / 1024))M free — not moving it"
+		return 1
+	fi
+	mkdir -p "$(dirname "$2")" || return 1
+	step "moving $1 to $2"
+	if [ -e "$2" ] && [ -n "$(ls -A "$2" 2>/dev/null)" ]; then
+		err "$2 already exists and is not empty — move or remove it first"
+		return 1
+	fi
+	rm -rf "$2"
+	mv "$1" "$2" || { err "could not move $1 — it has not been touched"; return 1; }
+	ln -s "$2" "$1" || { err "moved, but could not link $1 -> $2"; return 1; }
+	ok "$1 -> $2"
+}
+
 # Most specific wins: a name pinned to this exact distro, then to its package
 # manager, then to the family, then the plain one.
 #
@@ -823,6 +903,33 @@ require_ports() {
 # they are on. The recipes point the server at this instead.
 WEBROOT=/var/www/html
 
+# ...and on a container with a data disk the bytes live on it, while the path
+# stays exactly what every tutorial says. A symlink rather than a moved
+# WEBROOT: change the variable and `cd /var/www/html` stops working, every
+# nginx snippet somebody pasted stops matching, and the reason /var/www/html
+# was chosen in the first place is gone. This way nothing above knows.
+#
+# Uploads are the half of a site nobody can download again, so this matters
+# more than the database it sits beside.
+web_root_on_data() {
+	local _target
+	data_disk || { data_warn "$WEBROOT" "file"; return 0; }
+	_target="$DATA_DIR/www"
+	[ -L "$WEBROOT" ] && [ "$(readlink "$WEBROOT")" = "$_target" ] && return 0
+	if [ -d "$WEBROOT" ] && [ ! -L "$WEBROOT" ]; then
+		if [ -n "$(ls -A "$WEBROOT" 2>/dev/null)" ]; then
+			# Somebody's site is in there. Moving it is a decision, not a
+			# side effect of installing a web server over the top.
+			warn "$WEBROOT has files in it and is not on the data disk."
+			warn "A reinstall would take them. Move them with:  app-setup movedata nginx"
+			return 0
+		fi
+		rmdir "$WEBROOT" 2>/dev/null || return 0
+	fi
+	mkdir -p "$_target" || return 0
+	ln -sfn "$_target" "$WEBROOT" && ok "$WEBROOT -> $_target (on the disk that survives a reinstall)"
+}
+
 nginx_conf_dir() {
 	# Alpine moved to http.d; everyone else is still conf.d.
 	if [ -d /etc/nginx/http.d ]; then printf '/etc/nginx/http.d'
@@ -1138,25 +1245,45 @@ param_export() {   # param_export <id>
 	done < "$_f"
 }
 
-recipe() {         # recipe <id> <verb>
-	local _d _found _verb _want
-	_want="$1"; _verb="$2"; _found=""
-	for _d in $(printf '%s' "${APP_SETUP_PATH:-/etc/app-setup:/etc/app-setup/local}" | tr ':' ' '); do
-		[ -f "$_d/$_want.sh" ] && _found="$_d/$_want.sh"
+# APP_PARAM_* is a flat namespace and param_export only ever *adds* to it, so a
+# caller's settings leak into a callee that does not happen to declare the same
+# name. Nothing collided while the composed recipes' parameter names were
+# disjoint by luck; a backup job with `host`, `port`, `user` and `password`
+# calling a store with the same four names collides on every one of them, and
+# the failure is an archive rsync'd to port 3306. Same class of defect as the
+# `_p` clobber in docs/app-setup.md §5: POSIX shell has no scope, and the
+# symptom shows up three calls away from the cause.
+param_reset() {
+	local _v
+	for _v in $(env | sed -n 's/^\(APP_PARAM_[A-Za-z0-9_]*\)=.*/\1/p'); do
+		unset "$_v"
 	done
-	[ -n "$_found" ] || die "this needs the '$_want' source, which is not on this machine"
-	step "$_verb: $_want"
-	( param_export "$_want"; sh "$_found" "$_verb" )
 }
 
-recipe_status() {  # 0 running, 1 stopped, 2 absent — same codes as the verb
+# The search-path walk that recipe() and recipe_status() each held a copy of.
+recipe_path() {    # recipe_path <id> -> path, or non-zero
 	local _d _found _want
 	_want="$1"; _found=""
 	for _d in $(printf '%s' "${APP_SETUP_PATH:-/etc/app-setup:/etc/app-setup/local}" | tr ':' ' '); do
 		[ -f "$_d/$_want.sh" ] && _found="$_d/$_want.sh"
 	done
-	[ -n "$_found" ] || return 2
-	( param_export "$_want"; sh "$_found" status ) >/dev/null 2>&1
+	[ -n "$_found" ] || return 1
+	printf '%s' "$_found"
+}
+
+recipe() {         # recipe <id> <verb>
+	local _found _verb _want
+	_want="$1"; _verb="$2"
+	_found="$(recipe_path "$_want")" ||
+		die "this needs the '$_want' source, which is not on this machine"
+	step "$_verb: $_want"
+	( param_reset; param_export "$_want"; sh "$_found" "$_verb" )
+}
+
+recipe_status() {  # 0 running, 1 stopped, 2 absent — same codes as the verb
+	local _found
+	_found="$(recipe_path "$1")" || return 2
+	( param_reset; param_export "$1"; sh "$_found" status ) >/dev/null 2>&1
 }
 
 # Install a part only if it is missing. An application suite laid on top of a
@@ -1630,7 +1757,56 @@ bk_remote_set() {  # sets BK_TOOL, BK_BUCKET, BK_KEY; non-zero if not configured
 	return 0
 }
 
+# ----------------------------------------------------------- the stores --
+#
+# A store is an ordinary recipe that answers five questions about a remote
+# directory: make this folder, put this file in it, get that one back, what is
+# in there, delete that one. It knows a protocol and nothing else — no
+# schedule, no databases — so adding a seventh kind is one file in
+# /etc/app-setup/local/ and no change here.
+#
+# Which store, and which folder inside it, are settings on the `backup` recipe.
+
+# Which recipe is this? common.sh has never needed to know — a recipe passes
+# its own id to bk_begin as a literal — and the folder default does, on the
+# paths where bk_begin never ran (restore, prune). Derived the way the C
+# derives it when a recipe omits `# id:`, so the two cannot disagree.
+BK_ID="${BK_ID:-$(basename "$0" .sh)}"
+
+# The folder this job writes into, under the store's own base. The hostname is
+# what keeps two containers sharing one destination from pruning each other's
+# history — silently, on a timer, and discovered by the second one to need a
+# restore.
+bk_folder() {
+	local _f
+	_f="$(bk_conf folder)"
+	[ -n "$_f" ] || _f="$(hostname 2>/dev/null || echo unknown)/$BK_ID"
+	printf '%s' "$_f"
+}
+
+# Run a verb on the configured store. The folder is resolved *here*, in the
+# caller's environment, because param_reset is about to take every APP_PARAM_*
+# away and `folder` belongs to the backup settings rather than to the store.
+bk_store() {       # bk_store <verb> [args…]
+	local _s _f _folder _verb
+	_s="$(bk_conf store)"
+	[ -n "$_s" ] && [ "$_s" != none ] || return 1
+	_f="$(recipe_path "store-$_s")" || { err "no store-$_s recipe on this machine"; return 1; }
+	_folder="$(bk_folder)"
+	_verb="$1"; shift
+	( param_reset; param_export "store-$_s"; BK_ID="$BK_ID" sh "$_f" "$_verb" "$_folder" "$@" )
+}
+
+bk_store_set() { [ -n "$(bk_conf store)" ] && [ "$(bk_conf store)" != none ]; }
+
 bk_upload() {      # bk_upload <archive>
+	if bk_store_set; then
+		step "uploading $(basename "$1") to $(bk_conf store):$(bk_folder)"
+		bk_store mkdir >/dev/null 2>&1 || true
+		bk_store put "$1" || { err "upload failed — the archive is still in $BK_DIR"; return 1; }
+		ok "uploaded to $(bk_conf store):$(bk_folder)"
+		return 0
+	fi
 	bk_remote_set || {
 		info "no upload target set — the archive is only on this machine."
 		info "one disk holding both the site and its backups is not a backup."
@@ -1657,6 +1833,11 @@ bk_upload() {      # bk_upload <archive>
 # gets pruned, or lost with the disk, so a restore has to be able to reach past
 # it — otherwise the bucket is a place data goes and never comes back from.
 bk_download() {    # bk_download <filename> <dest>
+	if bk_store_set; then
+		step "fetching $1 from $(bk_conf store):$(bk_folder)"
+		bk_store get "$1" "$2"
+		return
+	fi
 	bk_remote_set || return 1
 	step "fetching $1 from $(bk_conf remote)"
 	case "$BK_TOOL" in
@@ -1673,6 +1854,10 @@ bk_download() {    # bk_download <filename> <dest>
 # Names only, newest last, so `| tail -1` is the newest — the same ordering the
 # fixed-width UTC stamp gives the local directory.
 bk_remote_ls() {   # bk_remote_ls [prefix]
+	if bk_store_set; then
+		bk_store ls | grep "^${1:-}.*\.tgz$" | sort
+		return
+	fi
 	bk_remote_set || return 1
 	case "$BK_TOOL" in
 	rclone)
@@ -1871,6 +2056,16 @@ do_backup()    { warn "this software has no backup in its recipe — nothing was
 do_restore()   { warn "this software has no restore in its recipe"; return 0; }
 do_dump()      { warn "this software has no dump in its recipe"; return 0; }
 do_load()      { warn "this software has no load in its recipe"; return 0; }
+do_movedata()  { info "this software keeps nothing that a reinstall would take"; return 0; }
+# A recipe that is not a store answers these rather than dying on an unknown
+# verb, which is what `app-setup ls nginx` would otherwise do.
+do_mkdir()     { err "$BK_ID is not a backup destination"; return 1; }
+do_put()       { err "$BK_ID is not a backup destination"; return 1; }
+do_get()       { err "$BK_ID is not a backup destination"; return 1; }
+do_ls()        { err "$BK_ID is not a backup destination"; return 1; }
+do_rm()        { err "$BK_ID is not a backup destination"; return 1; }
+do_test()      { err "$BK_ID is not a backup destination"; return 1; }
+do_showkey()   { info "$BK_ID uses no key"; return 0; }
 
 # The one function app-setup reads a value out of rather than an exit code.
 #
@@ -1906,6 +2101,24 @@ app_main() {
 		disable)            need_root; do_disable ;;
 		status)             do_status ;;
 		backup)             need_root; do_backup ;;
+		# A store's verbs. Every path is relative to the store's own base and
+		# the folder is always the first argument, so a store never invents a
+		# location of its own.
+		mkdir)              need_root; shift; do_mkdir "$@" ;;
+		put)                need_root; shift; do_put   "$@" ;;
+		get)                need_root; shift; do_get   "$@" ;;
+		ls)                           shift; do_ls    "$@" ;;
+		rm)                 need_root; shift; do_rm    "$@" ;;
+		test)                         shift; do_test  "$@" ;;
+		# A store that needs a key installed on the far end has to be able to
+		# print it. The step between "app-setup made a key" and "the NAS accepts
+		# it" is the one people stop at, and it is not a step we can take for them.
+		showkey)                      do_showkey ;;
+		# Moving a populated data directory is stop, move, relink, start, and
+		# it needs both copies to fit at once. It is never done as a side
+		# effect of an install — a recipe that has data in the wrong place
+		# says so, and this is the verb that acts on it.
+		movedata)           need_root; do_movedata ;;
 		# `shift` so a recipe run by hand can be handed one archive —
 		# `sh /etc/app-setup/mysql.sh restore mysql_20210403123221.tgz`. With
 		# no argument both this and `app-setup restore mysql` take the newest.

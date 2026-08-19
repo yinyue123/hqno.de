@@ -85,6 +85,52 @@ MARK='# --- app-setup sizing ---'
 # for a machine it is not running on — inside a container without lxcfs,
 # "half of RAM" is half of the host's, which is how mongod ends up asking for
 # 8GB on a box that has 512MB. Pinning the number is the whole fix.
+# Where the collections live. /var/lib/mongo is on the root filesystem, which
+# a reinstall replaces while keeping /data — so with a data disk, that is where
+# they go.
+MONGO_DIR_DEFAULT=/var/lib/mongo
+mongo_data_dir() { data_path mongodb "$MONGO_DIR_DEFAULT"; }
+
+# dbPath is a plain `  dbPath: <x>` line under `storage:` in mongod.conf, which
+# is YAML — so it is edited in place rather than appended to. Appending would
+# put a second top-level key in the file and mongod refuses to start on a
+# duplicate, with a message about the YAML and not about us.
+mongo_set_dbpath() {   # mongo_set_dbpath <conf>
+	local _d
+	_d="$(mongo_data_dir)"
+	if [ "$_d" = "$MONGO_DIR_DEFAULT" ]; then
+		data_warn "$MONGO_DIR_DEFAULT" "collection"
+		return 0
+	fi
+	[ -f "$1" ] || { warn "no $1 to point at $_d"; return 0; }
+	if [ -d "$MONGO_DIR_DEFAULT" ] && [ ! -L "$MONGO_DIR_DEFAULT" ] &&
+	   [ -n "$(ls -A "$MONGO_DIR_DEFAULT" 2>/dev/null)" ] && [ ! -d "$_d/journal" ]; then
+		svc_running "$(svc)" && { step "stopping $(svc) to move its data"; svc_stop "$(svc)"; }
+		data_relocate "$MONGO_DIR_DEFAULT" "$_d" || return 0
+	fi
+	mkdir -p "$_d"
+	chown -R mongod:mongod "$_d" 2>/dev/null || chown -R mongodb:mongodb "$_d" 2>/dev/null || true
+	step "keeping the collections on the data disk"
+	if grep -qE '^[[:space:]]*dbPath:' "$1"; then
+		sed -i "s#^\\([[:space:]]*\\)dbPath:.*#\\1dbPath: $_d#" "$1"
+		ok "dbPath: $_d"
+	else
+		warn "no dbPath: line in $1 — left alone rather than guessed at"
+	fi
+}
+
+do_movedata() {
+	local _d _was
+	_d="$(mongo_data_dir)"
+	[ "$_d" = "$MONGO_DIR_DEFAULT" ] &&
+		die "this container has no data disk, so there is nowhere durable to move to."
+	_was=no
+	if svc_running "$(svc)"; then _was=yes; step "stopping $(svc)"; svc_stop "$(svc)"; fi
+	mongo_set_dbpath /etc/mongod.conf
+	if [ "$_was" = yes ]; then step "starting $(svc)"; svc_start "$(svc)" || die "mongod will not start on $_d"; fi
+	ok "the collections are on the data disk now, and survive a reinstall."
+}
+
 mongo_tune() {
 	local _conf _gb
 	_conf=/etc/mongod.conf
@@ -169,10 +215,11 @@ EOF
 		;;
 	esac
 
-	mkdir -p /var/lib/mongo /var/log/mongodb
-	chown -R mongod:mongod /var/lib/mongo /var/log/mongodb 2>/dev/null ||
-		chown -R mongodb:mongodb /var/lib/mongo /var/log/mongodb 2>/dev/null || true
+	mkdir -p "$(mongo_data_dir)" /var/log/mongodb
+	chown -R mongod:mongod "$(mongo_data_dir)" /var/log/mongodb 2>/dev/null ||
+		chown -R mongodb:mongodb "$(mongo_data_dir)" /var/log/mongodb 2>/dev/null || true
 
+	mongo_set_dbpath /etc/mongod.conf
 	mongo_tune
 
 	svc_enable "$(svc)"
@@ -189,7 +236,7 @@ do_uninstall() {
 	pkg_remove mongodb-org mongodb-org-server mongodb-org-mongos mongodb-org-tools mongodb-mongosh
 	rm -f /etc/apt/sources.list.d/mongodb-org.list /etc/yum.repos.d/mongodb-org.repo
 	rm -f /usr/share/keyrings/mongodb-server-*.gpg
-	warn "/var/lib/mongo was NOT deleted — your data is still there."
+	warn "$(mongo_data_dir) was NOT deleted — your data is still there."
 }
 
 # -------------------------------------------------------- dump/load/backup --
@@ -233,7 +280,7 @@ do_backup() {
 	bk_begin mongodb
 	bk_quiesce
 	if [ "$(bk_method)" = files ]; then
-		bk_add /var/lib/mongo
+		bk_add "$(mongo_data_dir)"
 	else
 		step "dumping every database"
 		mongo_dump_to "$(bk_path dump.archive)"
@@ -250,13 +297,13 @@ do_restore() {
 		step "restoring — existing collections of the same name are dropped"
 		mongo_load_from "$_d/dump.archive"
 		ok "databases restored"
-	elif [ -d "$_d/files/var/lib/mongo" ]; then
+	elif [ -d "$_d/files$(mongo_data_dir)" ] || [ -d "$_d/files$MONGO_DIR_DEFAULT" ]; then
 		step "stopping $(svc) to put the data directory back"
 		svc_stop "$(svc)"
-		rm -rf /var/lib/mongo
+		rm -rf "$(mongo_data_dir)" "$MONGO_DIR_DEFAULT"
 		bk_restore_files "$_d"
-		chown -R mongod:mongod /var/lib/mongo 2>/dev/null ||
-			chown -R mongodb:mongodb /var/lib/mongo 2>/dev/null || true
+		chown -R mongod:mongod "$(mongo_data_dir)" 2>/dev/null ||
+			chown -R mongodb:mongodb "$(mongo_data_dir)" 2>/dev/null || true
 		svc_start "$(svc)" || die "mongod will not start on the restored data directory"
 		ok "data directory restored"
 	else
@@ -300,7 +347,9 @@ MongoDB
   Backup
     mongodump --out /data/mongo-backup
     mongorestore /data/mongo-backup
-    /data survives a reinstall of this container. /var/lib/mongo does not.
+    /data survives a reinstall of this container. The root filesystem does
+    not, which is why this recipe keeps the collections on /data/mongodb
+    when the container has a data disk.
 
   Memory
     MongoDB reserves half of available RAM for its cache and does not cope

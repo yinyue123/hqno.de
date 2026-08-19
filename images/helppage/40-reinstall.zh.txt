@@ -50,6 +50,32 @@ summary: 重装保留什么、毁掉什么，以及动手之前该做什么
 也不是每个容器都有。如果 `dashboard disk` 里没有 /data 那一行，说明这个容器卖出来
 就没有 —— 找主机方，它在创建时就固定了，事后加不了，除非重建。
 
+== 从菜单装的数据库已经在上面了 ==
+
+这个容器有数据盘时，`app-setup` 会把数据库的文件放到数据盘上，而不是发行版
+通常的那个路径 —— MariaDB 在 /data/mysql，PostgreSQL 在 /data/postgresql，
+Redis 在 /data/redis，MongoDB 在 /data/mongodb —— 并且把 /var/lib/mysql 这些
+老路径指过去，所以你已经知道的每条路径、每篇教程照样管用。网站根目录同理：
+/var/www/html 是一个指向 /data/www 的链接，站点的上传文件在活得下来的那块盘上。
+
+这样查：
+
+    app-setup doctor | grep "data disk"
+
+三种回答，只有第一种是好消息：
+
+    yes — /data survives a reinstall, and is where databases go
+    NO  — /data is a plain directory here; a reinstall takes it
+    no  — this container has no /data; a reinstall takes everything
+
+要多看一眼的是中间那种。一个叫 /data 但并不是磁盘的普通目录，从容器里面看跟真
+的数据盘一模一样，然后跟着根文件系统一起消失。
+
+如果你的数据库是在这个改动之前装的，它还在发行版原来那个位置。停机拷一次就能
+搬过去：
+
+    app-setup movedata mysql
+
 == 重装之前 ==
 
 1. 跑一次备份，或者手工把你要的东西拷到这个容器以外的地方：

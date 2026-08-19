@@ -142,9 +142,14 @@ do_install() {
 	step "checking there is somewhere to put them"
 	mkdir -p "$BK_DIR" || die "cannot create $BK_DIR"
 	chmod 700 "$BK_DIR"
+	# A path that merely *starts* with /data proves nothing: without a data
+	# disk, /data is an ordinary directory on the root filesystem and a
+	# reinstall takes it along with everything else. Ask whether it is a
+	# mount, which is the only question that distinguishes the two.
 	case "$BK_DIR" in
-		/data/*) : ;;
-		*) warn "$BK_DIR is not under /data, which is the only directory that survives a reinstall" ;;
+		"$DATA_DIR"/*) data_disk ||
+			warn "$DATA_DIR is not a data disk on this container — it is an ordinary directory on the root filesystem, and a reinstall takes it. The copy in your bucket is the only one that would survive." ;;
+		*) warn "$BK_DIR is not under $DATA_DIR, which is the only directory that survives a reinstall" ;;
 	esac
 
 	install_tool

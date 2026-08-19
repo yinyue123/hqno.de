@@ -56,6 +56,49 @@ pg_data() {
 	printf ''
 }
 
+# Move the cluster onto the data disk and leave a symlink at the old path.
+#
+# A symlink rather than a config change, and that is the whole reason this is
+# three lines instead of three distro branches: the cluster lives at
+# /var/lib/postgresql/<v>/main on Debian, /var/lib/pgsql/data on the RPM
+# rebuilds and /var/lib/postgresql/<v>/data on Alpine, and each of those is
+# pointed at by a different mechanism — `data_directory` in postgresql.conf,
+# PGDATA in a systemd unit, data_dir in /etc/conf.d/postgresql. Symlinking the
+# directory satisfies all three at once, and pg_data() keeps finding it because
+# PG_VERSION is still there through the link.
+#
+# Postgres itself is content with a symlinked data directory; what it will not
+# tolerate is the wrong owner or mode on it, and `mv` preserves both.
+pg_set_datadir() {
+	local _d
+	_d="$(pg_data)"
+	[ -n "$_d" ] || return 0
+	if ! data_disk; then
+		data_warn "$_d" "table"
+		return 0
+	fi
+	[ -L "$_d" ] && { info "the cluster is already on the data disk: $_d -> $(readlink "$_d")"; return 0; }
+	svc_running "$(svc)" && { step "stopping $(svc) to move its cluster"; svc_stop "$(svc)"; }
+	data_relocate "$_d" "$DATA_DIR/postgresql" || return 0
+	chown -h postgres:postgres "$_d" 2>/dev/null || true
+}
+
+do_movedata() {
+	local _d _was
+	data_disk || die "this container has no data disk, so there is nowhere durable to move to."
+	_d="$(pg_data)"
+	[ -n "$_d" ] || die "no cluster found to move"
+	[ -L "$_d" ] && { ok "already on the data disk: $_d -> $(readlink "$_d")"; return 0; }
+	_was=no
+	if svc_running "$(svc)"; then _was=yes; fi
+	pg_set_datadir
+	if [ "$_was" = yes ]; then
+		step "starting $(svc)"
+		svc_start "$(svc)" || die "postgres will not start on the moved cluster — it is at $DATA_DIR/postgresql and $_d links to it"
+	fi
+	ok "the cluster is on the data disk now, and survives a reinstall."
+}
+
 MARK='# --- app-setup sizing ---'
 
 # PostgreSQL's defaults are the most conservative of any database here, and
@@ -153,6 +196,13 @@ do_install() {
 		esac
 	fi
 
+	# Onto the data disk before anything is written into it, and before
+	# pg_tune, which reads the config through whatever path pg_data now
+	# returns. On Debian the postinst has already made the cluster by this
+	# point, so this moves an empty one — which costs nothing, and is the
+	# reason it happens at install rather than after six months of tables.
+	pg_set_datadir
+
 	# After the cluster exists — pg_data has to find a postgresql.conf before
 	# there is anything to append to — and before the first start, so the
 	# sizes are what it comes up with.
@@ -229,7 +279,7 @@ do_uninstall() {
 	esac
 	drop_note postgresql
 	warn "the data directory was NOT deleted — your databases are still there."
-	warn "Remove it yourself if you mean it:  rm -rf /var/lib/postgresql /var/lib/pgsql"
+	warn "Remove it yourself if you mean it:  rm -rf /var/lib/postgresql /var/lib/pgsql $DATA_DIR/postgresql"
 }
 
 # -------------------------------------------------------------- dump/load --

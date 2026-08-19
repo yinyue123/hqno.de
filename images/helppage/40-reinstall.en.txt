@@ -61,6 +61,36 @@ Not every container has one. If `dashboard disk` prints no /data line, this
 container was sold without one — ask your host, it is fixed at create time
 and cannot be added later without rebuilding.
 
+== Databases installed from the menu are already on it ==
+
+When this container has a data disk, `app-setup` puts a database's files on
+it rather than at the distribution's usual path — MariaDB at /data/mysql,
+PostgreSQL at /data/postgresql, Redis at /data/redis, MongoDB at
+/data/mongodb — and points /var/lib/mysql and friends at them, so every
+tutorial and every path you already know still works. The document root is
+the same: /var/www/html is a link onto /data/www, so a site's uploads are on
+the disk that survives.
+
+Check with:
+
+    app-setup doctor | grep "data disk"
+
+Three answers, and only the first one is good news:
+
+    yes — /data survives a reinstall, and is where databases go
+    NO  — /data is a plain directory here; a reinstall takes it
+    no  — this container has no /data; a reinstall takes everything
+
+The middle one is the one to look at twice. A directory called /data that is
+not a disk looks exactly like a disk from in here, and dies with the rest of
+the root filesystem.
+
+If you installed a database before this was true, it is still where the
+distribution put it. Move it, once, with the service stopped for the length
+of a copy:
+
+    app-setup movedata mysql
+
 == Before you reinstall ==
 
 1. Run a backup, or copy off anything you want by hand, to somewhere that is

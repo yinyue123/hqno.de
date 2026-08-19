@@ -117,6 +117,12 @@ do_install() {
 	pkg_install $(pmv PKGS)
 	apache_tune
 
+	# Before anything is written into it. On a container with a data disk
+	# /var/www/html becomes a link onto it, so the path every tutorial
+	# names is unchanged and the files survive a reinstall. Uploads are
+	# the half of a site nobody can download again.
+	web_root_on_data
+
 	mkdir -p "$WEBROOT"
 	if [ ! -f "$WEBROOT/index.html" ] && [ ! -f "$WEBROOT/index.php" ]; then
 		cat > "$WEBROOT/index.html" <<EOF
@@ -236,6 +242,21 @@ Apache
     Both want port 80 and the second one to start will fail. Pick one, or
     change the other's listen port.
 EOF
+}
+
+# The web root is /var/www/html on every distro by design, and on a container
+# with a data disk it should be a link onto that disk. This is the deliberate
+# version for a server installed before that was true, or one whose document
+# root already had a site in it when it was installed.
+do_movedata() {
+	data_disk || die "this container has no data disk, so there is nowhere durable to move to."
+	[ -L "$WEBROOT" ] && { ok "already on the data disk: $WEBROOT -> $(readlink "$WEBROOT")"; return 0; }
+	data_relocate "$WEBROOT" "$DATA_DIR/www" || die "nothing was moved"
+	# nginx and apache keep serving through the link without a reload — the
+	# path they were configured with has not changed — but a worker holding an
+	# open file descriptor is still reading the old inode, so tell them.
+	svc_running "$(svc)" && { step "reloading $(svc)"; svc_reload "$(svc)" || svc_restart "$(svc)" || true; }
+	ok "the document root is on the data disk now, and survives a reinstall."
 }
 
 app_main "$@"

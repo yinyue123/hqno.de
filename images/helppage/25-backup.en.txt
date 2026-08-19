@@ -1,0 +1,160 @@
+title: Backing up
+summary: where they go, what is saved, how many are kept, and getting one back
+
+This container's disk is not a backup of this container. A copy that dies
+with the machine it is on has not copied anything, and the disk is the part
+that actually fails. So the shape of this is: pick somewhere that is not this
+box, say what to save, and let it run every night.
+
+Everything here is on the Backup tab of `app-setup`, next to Databases.
+
+== First, somewhere to put them ==
+
+The top row of the tab is destinations — one card per kind. Pick the one you
+have:
+
+    S3        AWS, MinIO, Aliyun OSS, Tencent COS, B2
+    R2        Cloudflare R2
+    WebDAV    Nextcloud, ownCloud, Synology
+    FTP       what a cheap host gives you
+    rsync     a NAS, or a machine you own, over SSH
+    SCP       a storage box with sshd and no rsync
+
+Open one, fill it in, and press `Test connection`. That is not a formality:
+it makes a folder, writes a small file into it, reads it back, compares the
+bytes and deletes it. Credentials that can upload but not list, and accounts
+that can write files but not create a folder, are both normal and both look
+fine until the first backup runs.
+
+For the S3-shaped ones the endpoint is what your provider's dashboard gives
+you:
+
+    R2     https://<account-id>.r2.cloudflarestorage.com
+    B2     https://s3.us-west-000.backblazeb2.com
+    OSS    https://oss-cn-hangzhou.aliyuncs.com
+    COS    https://cos.ap-guangzhou.myqcloud.com
+    MinIO  https://minio.example.com
+
+For rsync and SCP there is no password. Press `Show the public key` and put
+the line it prints into `~/.ssh/authorized_keys` on the far end, then Test.
+
+== Then, what to save ==
+
+The row underneath is the jobs: MySQL/MariaDB, PostgreSQL, Redis, MongoDB,
+and "Files and folders" for anything with no card of its own.
+
+Open one and it already knows about the database on this machine — the port
+it is listening on and the credentials it was installed with are filled in
+for you. Change them only if the database is somewhere else; a job can back
+up a server on another host perfectly well.
+
+The one thing you must choose is Destination. A job with nowhere to send
+its output refuses to install and says so, rather than running every night
+into a directory on the same disk.
+
+Each job writes into its own folder on the destination, named after this
+machine:
+
+    s3://your-bucket/backups/web01/backup-mysql/
+                             ^^^^^^^^^^^^^^^^^^
+                             made for you, on the first backup
+
+Leave that alone unless you know why you are changing it. The machine name is
+what stops two containers sharing one bucket from deleting each other's
+history.
+
+== Three ways to copy a database ==
+
+    dump    It exports itself while it runs. Nothing stops,
+            your site stays up. The default, and usually right.
+    binary  A physical copy by the database's own tool, also
+            without stopping. Use it for the data directory.
+    files   Stop the service, copy the data directory, start
+            it again. The only honest way to copy files from
+            under a running database, and it costs the time.
+
+A nightly `files` backup is a site that goes down every night for no benefit.
+Pick `dump` unless you are moving a machine.
+
+== How many are kept ==
+
+Not "the last 7". Four numbers, and each one keeps the newest backup in that
+period:
+
+    Keep hourly    0    off unless you back up hourly
+    Keep daily     7
+    Keep weekly    4
+    Keep monthly   6
+
+With a nightly backup that is fourteen files covering more than a year: the
+last seven days, then one a week going back a month, then one a month going
+back half a year. Old ones are not deleted on a count, they are thinned — as
+a backup ages it stops being the day's copy, then the week's, then the
+month's, and only then does it go.
+
+Multiply one archive's size by those numbers before you set them. On a small
+container, fourteen copies of a large database will not fit.
+
+One catch worth knowing: `Keep daily 7` counts days, not files. If you back
+up weekly, at most one backup is ever inside seven days, and the
+weekly and monthly rungs do the rest. That is correct, and it surprises
+people.
+
+== Getting one back ==
+
+Three buttons on every job:
+
+    ▤ List backups   what exists, here and there, with dates
+    ✓ Verify         download one and check it opens. Never
+                     touches the database — safe on a live site
+    ⟲ Restore        put it back. Asks first, and says what
+                     it is about to replace
+
+Restore takes the newest unless you put a name in Settings → Which one. It
+looks on this machine first and downloads from the destination if it is not
+here — so a container whose disk was replaced can still restore, which is the
+whole point.
+
+On a container that has just been reinstalled, the sequence is four steps:
+
+    app-setup install backup-mysql     installs MariaDB too
+    app-setup set backup-mysql store=s3 folder=web01/backup-mysql
+    app-setup list backup-mysql        are they visible?
+    app-setup restore backup-mysql
+
+`/data` survives a reinstall and your settings do not, which is why steps one
+and two exist.
+
+== From a script ==
+
+    app-setup backup backup-mysql      run it now
+    app-setup restore backup-mysql     the newest
+    app-setup list backup-mysql        what exists
+    app-setup set backup-mysql schedule=daily keep_daily=7
+
+    sh /etc/app-setup/backup-mysql.sh restore backup-mysql_20260813041700.tgz
+
+The last one is how you restore a particular archive from a shell.
+
+== Worth remembering ==
+
+TWO PLACES, NOT ONE. Keep the local copy for the restore you do at 10am
+because a migration went wrong, and an off-site copy for the one that saves
+you. They are different jobs.
+
+NOT BOTH AT THE SAME COMPANY. A bucket in the account that also holds your
+domain is one password reset away from being gone with everything else.
+
+RUN ONE THE DAY YOU SET IT UP. Press "Back up now" and watch it finish. Test
+connection proves the credentials; only a backup proves the backup.
+
+THEN RESTORE ONE, ON PURPOSE. Into a spare container, or a database you made
+for the job. A backup nobody has restored is a hope, not a backup, and this
+is the step everybody skips.
+
+SCOPE THE KEY. The credential sits in a file on this machine. Issue it for
+one bucket and one folder, not for your whole account.
+
+WRITE DOWN WHERE IT WENT. The bucket, the folder, and which kind of store —
+somewhere that is not this container. A restore starts with knowing where to
+look, and the machine that knew is the one that is gone.

@@ -139,6 +139,13 @@ SQLite
     a blog, a small shop or anything with one machine and moderate traffic,
     it is the right one.
 
+  Put the file on /data
+    A reinstall of this container replaces the whole root filesystem and
+    keeps /data. So a database at /data/mysite.db survives one and the same
+    file at /var/lib/mysite.db does not. `app-setup doctor` says whether
+    this container has a data disk at all; without one, nothing on it
+    survives a reinstall and the only copy that does is a backup.
+
   Use it
     sqlite3 /data/mysite.db
     sqlite> CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT);

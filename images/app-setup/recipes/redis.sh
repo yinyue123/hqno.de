@@ -134,6 +134,7 @@ Redis
     redis://:$_pw@127.0.0.1:6379/0
 EOF
 		fi
+		redis_set_dir "$_conf"
 		redis_tune "$_conf"
 	else
 		warn "no redis.conf found; it is running with the package defaults"
@@ -155,7 +156,7 @@ do_uninstall() {
 	svc_disable "$(svc)"
 	pkg_remove $(pmv PKGS)
 	drop_note redis
-	info "/var/lib/redis was left in place"
+	info "$(redis_data_dir) was left in place"
 }
 
 # -------------------------------------------------------- dump/load/backup --
@@ -175,6 +176,54 @@ redis_dir() {
 	_d="$(redis_cli_auth --raw CONFIG GET dir 2>/dev/null | sed -n 2p)"
 	[ -n "$_d" ] || _d=/var/lib/redis
 	printf '%s' "$_d"
+}
+
+# Where the RDB is written. /var/lib/redis is on the root filesystem, which a
+# reinstall replaces — so on a container with a data disk the snapshot lives on
+# it instead. Redis is a cache for a lot of people and a database for the rest;
+# the ones using it as a database are the ones this is for.
+REDIS_DIR_DEFAULT=/var/lib/redis
+redis_data_dir() { data_path redis "$REDIS_DIR_DEFAULT"; }
+
+redis_set_dir() {  # redis_set_dir <conf>
+	local _d
+	_d="$(redis_data_dir)"
+	if [ "$_d" = "$REDIS_DIR_DEFAULT" ]; then
+		data_warn "$REDIS_DIR_DEFAULT" "key"
+		return 0
+	fi
+	mkdir -p "$_d" || { warn "could not make $_d; leaving the data where it is"; return 0; }
+	chown redis:redis "$_d" 2>/dev/null || true
+	# `dir` is the working directory the RDB and the AOF are written into, so
+	# changing it is the whole move. An existing dump.rdb has to come along or
+	# the server starts up empty, which looks exactly like data loss because it
+	# is: the old file is still there, just not where redis is now looking.
+	if [ -f "$REDIS_DIR_DEFAULT/dump.rdb" ] && [ ! -f "$_d/dump.rdb" ]; then
+		step "moving the existing snapshot onto the data disk"
+		cp -a "$REDIS_DIR_DEFAULT/dump.rdb" "$_d/dump.rdb" &&
+			chown redis:redis "$_d/dump.rdb" 2>/dev/null || true
+	fi
+	step "keeping the snapshot on the data disk"
+	if grep -q '^[[:space:]]*dir ' "$1"; then
+		sed -i "s#^[[:space:]]*dir .*#dir $_d#" "$1"
+	else
+		printf '\n# added by app-setup\ndir %s\n' "$_d" >> "$1"
+	fi
+	ok "dir $_d"
+}
+
+do_movedata() {
+	local _conf _d _was
+	_d="$(redis_data_dir)"
+	[ "$_d" = "$REDIS_DIR_DEFAULT" ] &&
+		die "this container has no data disk, so there is nowhere durable to move to."
+	_conf="$(redis_conf)"
+	[ -n "$_conf" ] || die "no redis.conf to point at $_d"
+	_was=no
+	if svc_running "$(svc)"; then _was=yes; step "stopping $(svc)"; svc_stop "$(svc)"; fi
+	redis_set_dir "$_conf"
+	if [ "$_was" = yes ]; then step "starting $(svc)"; svc_start "$(svc)" || die "redis will not start on $_d"; fi
+	ok "the snapshot is on the data disk now, and survives a reinstall."
 }
 
 redis_rdb_to() {   # redis_rdb_to <file>
