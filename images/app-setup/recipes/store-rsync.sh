@@ -178,6 +178,7 @@ do_rm() {     # do_rm <folder> <name>
 # pass and then every backup would die at its first mkdir.
 do_test() {
 	local _f _d _rc _probe
+	bk_unbless "$(basename "$STAMP" .ok)"
 	rs_ensure_key
 	[ -n "$(param target)" ] || die "no target set. Put user@host:/path in Settings first."
 	rs_pin_host || return 1

@@ -3,8 +3,10 @@
 # id: backup
 # name: Backup
 # name.zh: 备份
-# category: system
-# order: 15
+# category: backup
+# category.name: Backup
+# category.name.zh: 备份
+# order: 30
 # summary: Scheduled backups of your databases and sites, packed and sent off this machine
 # summary.zh: 定时备份数据库和网站，打包后传到这台机器之外
 # includes: rclone (or aws-cli), a cron entry, and one dated .tgz per app
@@ -19,6 +21,10 @@
 # param: keep       | 7            | Keep last       | 保留份数 | number
 # param: schedule   | daily        | When            | 定时     | off,hourly,daily,weekly
 # group: remote | Where it goes | 传到哪 |
+# param: store      | none         | Destination     | 目的地   | none,s3,r2,webdav,ftp,rsync,scp
+# param: folder     |              | Folder on the remote | 远端目录 |
+#
+# group: legacy | The old single bucket (use a store card instead) | 旧的单桶配置（改用上面的备份源） |
 # param: tool       | rclone       | Upload with     | 上传工具 | rclone,aws,none
 # param: remote     |              | Bucket          | 存储桶   |
 # param: endpoint   |              | S3 endpoint     | S3 地址  |
@@ -51,8 +57,10 @@ is_installed() { [ -f "$BK_STAMP" ]; }
 
 version_line() {
 	local _last _n
-	_n="$(ls -1 "$BK_DIR"/*.tgz 2>/dev/null | wc -l | tr -d ' ')"
-	_last="$(ls -1 "$BK_DIR"/*.tgz 2>/dev/null | sort -r | head -1)"
+	# Archives live in a directory per job now, so this counts across them
+	# rather than globbing one flat pile.
+	_n="$(find "$BK_DIR" -name '*.tgz' -type f 2>/dev/null | wc -l | tr -d ' ')"
+	_last="$(find "$BK_DIR" -name '*.tgz' -type f 2>/dev/null | sort -r | head -1)"
 	if [ "${_n:-0}" -gt 0 ]; then
 		printf '%s archives, newest %s' "$_n" "$(basename "$_last")"
 	elif [ -n "$(cron_line_of "$CRON_NAME")" ]; then

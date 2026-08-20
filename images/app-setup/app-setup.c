@@ -154,6 +154,13 @@ static const L T_NORECIPE  = {"No software sources found. Put recipes in /etc/ap
 static const L T_CONFIRM   = {"Enter confirms, Esc cancels", "回车确认，Esc 取消"};
 static const L T_REMOVEQ   = {"Uninstall %s? Its configuration goes too; data is kept.",
                              "确定卸载 %s？配置会一起删除，数据会保留。"};
+/* A destructive `# button:` verb, named along with what it will act on. The
+ * sentence is the whole point of the dialog, so it says both: which verb, and
+ * on which card — "⟲ Restore on MySQL / MariaDB" rather than "Are you sure?".
+ * What exactly gets overwritten is the recipe's own business and is in the
+ * text it prints on the progress screen a moment later. */
+static const L T_BUTTONQ   = {"%s on %s? This overwrites what is there now.",
+                             "「%s」—— 在 %s 上执行？现在的内容会被覆盖。"};
 static const L T_TIGHTQ    = {"%s wants %s but this machine has %s. Install anyway?",
                              "%s 需要 %s，本机只有 %s。仍要安装吗？"};
 static const L T_KILLQ     = {"Stop it now? A half-finished package manager has to be repaired by hand.",
@@ -289,9 +296,16 @@ typedef struct {
  * `# action:`, which belongs to one field inside Settings, this sits on the
  * app screen's own verb row — see build_actions for what declaring even one
  * of these does to that row. */
+/* How the verb is run, from the fourth field of the `# button:` line:
+ *   (blank)    B_PAGE     capture stdout, page it — a verb that prints
+ *   progress   B_PROG     the streaming progress screen — a verb that works
+ *   confirm    B_CONFIRM  the confirm dialog, then the progress screen */
+enum { B_PAGE = 0, B_PROG, B_CONFIRM };
+
 typedef struct {
 	char verb[32];
 	char label[64], label_zh[96];
+	int  mode;
 } Btn;
 
 typedef struct {
@@ -1045,9 +1059,9 @@ static void add_button(Pkg *p, const char *spec)
 	char buf[256];
 	copy_str(buf, sizeof buf, spec);
 
-	char *f[3] = { buf, NULL, NULL };
+	char *f[4] = { buf, NULL, NULL, NULL };
 	int nf = 1;
-	for (char *q = buf; *q && nf < 3; q++)
+	for (char *q = buf; *q && nf < 4; q++)
 		if (*q == '|') { *q = '\0'; f[nf++] = q + 1; }
 	for (int i = 0; i < nf; i++) trim(f[i]);
 	if (!*f[0]) return;
@@ -1057,6 +1071,11 @@ static void add_button(Pkg *p, const char *spec)
 	copy_str(b->verb, sizeof b->verb, f[0]);
 	copy_str(b->label, sizeof b->label, nf > 1 && *f[1] ? f[1] : f[0]);
 	copy_str(b->label_zh, sizeof b->label_zh, nf > 2 && *f[2] ? f[2] : b->label);
+	b->mode = B_PAGE;
+	if (nf > 3 && *f[3]) {
+		if      (!strcmp(f[3], "progress")) b->mode = B_PROG;
+		else if (!strcmp(f[3], "confirm"))  b->mode = B_CONFIRM;
+	}
 	p->nbuttons++;
 }
 
@@ -3585,7 +3604,7 @@ enum { A_INSTALL = 1, A_REMOVE, A_START, A_STOP, A_RESTART, A_BOOT,
 
 /* `verb` is only ever read when `act == A_BUTTON` — every other action's
  * verb is implied by `act` itself and dispatched by name in screen_app. */
-typedef struct { int act; char label[64]; char aux[32]; int dim; char verb[32]; } Action;
+typedef struct { int act; char label[64]; char aux[32]; int dim; char verb[32]; int mode; } Action;
 
 /* Fill in the Log entry: grey until something has been run on this package,
  * carrying the file's size when there is one — which answers "is there
@@ -3614,20 +3633,35 @@ static int build_actions(const Pkg *p, Action *a)
 {
 	int n = 0;
 
-	/* A recipe that declares `# button:` owns this row completely — see
-	 * add_button's comment for why. Nothing below this block runs for it:
-	 * no Install/Log/Settings/Details/Uninstall computed from state that
-	 * does not describe what the recipe actually is. */
+	/* A recipe that declares `# button:` replaces the *service* half of this
+	 * row — Install/Start/Stop/Restart/Boot/Status/Update/Uninstall, every one
+	 * of which is computed from a state machine that does not describe it.
+	 *
+	 * Settings, Details, Docs and the log are **not** part of that half and
+	 * stay. Taking them too is what the first version did, and it made a store
+	 * card impossible to use: the card whose entire purpose is to hold a
+	 * bucket name and a key had no way to open the form they go in. A verb row
+	 * with nothing on it but "✓ Test connection" is not a smaller interface,
+	 * it is a dead one. */
 	if (p->nbuttons) {
-		for (int i = 0; i < p->nbuttons && n < p->nbuttons; i++) {
+		for (int i = 0; i < p->nbuttons; i++) {
 			const Btn *b = &p->buttons[i];
 			a[n].act = A_BUTTON;
 			copy_str(a[n].label, 64, (g_zh && b->label_zh[0]) ? b->label_zh : b->label);
 			copy_str(a[n].verb, sizeof a[n].verb, b->verb);
+			a[n].mode = b->mode;
 			a[n].aux[0] = '\0';
 			a[n].dim = 0;
 			n++;
 		}
+		a[n].act = A_PARAMS; copy_str(a[n].label, 64, S(T_PARAMS));
+		snprintf(a[n].aux, sizeof a[n].aux, "%d", p->nparams);
+		if (!p->nparams) a[n].aux[0] = '\0';
+		a[n].dim = !p->nparams; n++;
+
+		add_log_action(p, &a[n]); n++;
+		a[n].act = A_DETAILS; copy_str(a[n].label, 64, S(T_DETAILS)); a[n].aux[0] = 0; a[n].dim = 0; n++;
+		a[n].act = A_DOCS;    copy_str(a[n].label, 64, S(T_DOCS));    a[n].aux[0] = 0; a[n].dim = 0; n++;
 		return n;
 	}
 
@@ -4088,7 +4122,23 @@ static void screen_app(Pkg *p)
 		case A_BUTTON: {
 			char title[256];
 			snprintf(title, sizeof title, "%s %s %s", pkg_name(p), MK_DOT, v.acts[v.sel].label);
-			screen_docs_verb(p, v.acts[v.sel].verb, title);
+			/* A verb that only prints goes through the pager on a 20s
+			 * deadline, which is right for it and fatal for anything else: a
+			 * mysqldump of a real database is killed a third of the way in,
+			 * and what the pager then shows is a truncated log of a backup
+			 * that did not happen. Anything declared `progress` streams
+			 * through the same screen Install uses, with no deadline and a
+			 * log behind it. */
+			if (v.acts[v.sel].mode == B_CONFIRM) {
+				char q[500];
+				snprintf(q, sizeof q, S(T_BUTTONQ), v.acts[v.sel].label, pkg_name(p));
+				if (confirm(pkg_name(p), q))
+					screen_progress(p, v.acts[v.sel].verb, title);
+			} else if (v.acts[v.sel].mode == B_PROG) {
+				screen_progress(p, v.acts[v.sel].verb, title);
+			} else {
+				screen_docs_verb(p, v.acts[v.sel].verb, title);
+			}
 			break;
 		}
 		}

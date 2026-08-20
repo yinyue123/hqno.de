@@ -105,7 +105,7 @@ Or on the far end, by hand:
     chmod 600 ~/.ssh/authorized_keys
 
 Worth doing while you are there: restrict what this key may do, so a stolen
-container cannot use it for a shell. `restrict` turns off port forwarding,
+container cannot use it for a shell. \`restrict\` turns off port forwarding,
 agent forwarding, X11 and a pty, and leaves file transfer working.
 
     restrict $(cat "$KEY.pub")
@@ -187,6 +187,7 @@ do_rm() {     # do_rm <folder> <name>
 # pass and then every backup would die at its first mkdir.
 do_test() {
 	local _f _d _rc _probe
+	bk_unbless "$(basename "$STAMP" .ok)"
 	sc_ensure_key
 	[ -n "$(param target)" ] || die "no target set. Put user@host:/path in Settings first."
 	sc_pin_host || return 1

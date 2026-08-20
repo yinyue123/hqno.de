@@ -1330,11 +1330,53 @@ mysql_conf_dir() {
 	return 1
 }
 
+# The credential file every mysql client below runs through. It is $MY_CNF —
+# root's own, written by mysql.sh — for a database on this machine, and a job
+# card on the Backup tab points it at a throwaway file holding the host, port,
+# user and password somebody typed for a database that is not here.
+#
+# One variable, so there is exactly one mysqldump command line in this tree.
+# The rule the whole Backup tab is judged on is that adding a job card must not
+# add a second answer to "what is a correct dump of this database": the one
+# that drifts is always the one on the timer that nobody watches.
+MY_DEFAULTS="${MY_DEFAULTS:-$MY_CNF}"
+
+# A throwaway my.cnf for one connection, written where the caller says and left
+# for the caller to remove. A password on mysqldump's command line is in `ps`
+# for every user on the box for as long as the dump runs, which on a real
+# database is minutes; MYSQL_PWD avoids that and prints a deprecation warning
+# into the middle of the output on some builds. A file is the one way that is
+# neither.
+#
+# An empty password means *use the local credential file*, not *no password*:
+# for a local server the secret is never copied into a second place, and only
+# somebody connecting to another host ever types one.
+mysql_conn_cnf() { # mysql_conn_cnf <dest> <host> <port> <user> <password> -> path to use
+	local _h
+	_h="${2:-127.0.0.1}"
+	if [ -z "${5-}" ]; then
+		case "$_h" in
+			127.0.0.1|localhost|::1|'')
+				[ -r "$MY_CNF" ] && { printf '%s' "$MY_CNF"; return 0; } ;;
+		esac
+	fi
+	( umask 077; cat > "$1" <<EOF
+[client]
+host=$_h
+port=${3:-3306}
+user=${4:-root}
+password=${5-}
+EOF
+	) || return 1
+	chmod 600 "$1" 2>/dev/null || true
+	printf '%s' "$1"
+}
+
 mysql_root() {
-	if [ -r "$MY_CNF" ]; then
+	if [ -r "$MY_DEFAULTS" ]; then
 		# Authoritative once it exists: an error from here is a real error and
 		# should be seen, not masked by a retry that gets access denied.
-		mysql --defaults-file="$MY_CNF" "$@"
+		mysql --defaults-file="$MY_DEFAULTS" "$@"
 	else
 		# A fresh install lets root in over the unix socket with no password.
 		mysql --protocol=socket -uroot "$@" 2>/dev/null || mysql -uroot "$@"
@@ -1345,8 +1387,8 @@ mysql_wait() {     # the service is up before the socket is
 	local _n
 	_n=0
 	while [ "$_n" -lt 30 ]; do
-		if [ -r "$MY_CNF" ]; then
-			mysqladmin --defaults-file="$MY_CNF" ping >/dev/null 2>&1 && return 0
+		if [ -r "$MY_DEFAULTS" ]; then
+			mysqladmin --defaults-file="$MY_DEFAULTS" ping >/dev/null 2>&1 && return 0
 		fi
 		mysqladmin --protocol=socket ping >/dev/null 2>&1 && return 0
 		mysqladmin ping >/dev/null 2>&1 && return 0
@@ -1543,10 +1585,20 @@ cron_line_of() {
 #           bk_finish                           # pack, upload, prune, restart
 #   }
 #
-# The settings all of this reads belong to the `backup` recipe, not to the
-# recipe being backed up: one destination and one schedule for the machine,
-# edited in one form, and `bk_conf` is how the other recipes see them.
-BK_DIR="${BK_DIR:-/data/backups}"
+# A job card on the Backup tab carries its own destination, folder and
+# schedule; an engine recipe backed up from the machine-wide `backup` card
+# carries none, and reads the same names out of `params/backup.conf` through
+# `bk_conf`. Everything below asks the recipe first and falls back to that, so
+# one pipeline serves both without either of them knowing about the other.
+#
+# One path under /data says *app-setup put this here*, the way /etc/app-setup
+# does at the other end — and /data is the part that matters: it is the only
+# directory that survives a container reinstall (docs/tenant_image.md). Each
+# job then gets a directory of its own inside, so "the newest archive for this
+# job" is `sort -r | head -1` over a directory rather than a glob over a shared
+# pile that a prefix can match too much of.
+BK_ROOT="${BK_ROOT:-/data/app-setup}"
+BK_DIR="${BK_DIR:-$BK_ROOT/backups}"
 
 # `dump` and `load` are the other half, and deliberately not the same thing as
 # `backup` and `restore`. A backup is the whole pipeline — packed, dated,
@@ -1554,7 +1606,48 @@ BK_DIR="${BK_DIR:-/data/backups}"
 # scp somewhere, mail to somebody who asked, or feed to a different server.
 # Both exist because people want both, and a tool that only offers the
 # packaged one gets worked around with a half-remembered mysqldump line.
-DUMP_DIR="${DUMP_DIR:-/data/dumps}"
+DUMP_DIR="${DUMP_DIR:-$BK_ROOT/dumps}"
+
+# The archives that are already on disk from before the move, brought across by
+# `mv` and not by copy — the disk that cannot hold two copies is exactly the one
+# this matters on. Runs once, only when the old directory is there, and leaves
+# anything it does not recognise where it is rather than sweeping a stranger's
+# files into a new tree. Nothing is uploaded again: a migration that re-uploads
+# a year of archives to prove a point is a migration that runs up somebody's
+# bill.
+bk_migrate() {
+	local _f _n _pfx _old
+	_old="${1:-/data/backups}"
+	[ -d "$_old" ] || return 0
+	[ "$_old" != "$BK_DIR" ] || return 0
+	_n=0
+	for _f in "$_old"/*.tgz; do
+		[ -f "$_f" ] || continue
+		_pfx="$(basename "$_f")"
+		# <prefix>_<14 digits>.tgz and nothing else. A file that does not match
+		# is not ours to move.
+		case "$_pfx" in
+			*_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].tgz) : ;;
+			*) continue ;;
+		esac
+		_pfx="${_pfx%_*}"
+		mkdir -p "$BK_DIR/$_pfx" || continue
+		mv "$_f" "$BK_DIR/$_pfx/" && _n=$((_n + 1))
+	done
+	[ "$_n" -gt 0 ] && info "moved $_n archive(s) from $_old into $BK_DIR/<job>/"
+	# Only if it is empty. Somebody else's file in there is somebody else's.
+	rmdir "$_old" 2>/dev/null || true
+	return 0
+}
+
+# This job's directory under $BK_DIR. Made on demand, 700, because an archive
+# of a database is the database.
+bk_jobdir() {      # bk_jobdir <prefix>
+	mkdir -p "$BK_DIR/$1" 2>/dev/null || true
+	chmod 700 "$BK_DIR" 2>/dev/null || true
+	chmod 700 "$BK_DIR/$1" 2>/dev/null || true
+	printf '%s' "$BK_DIR/$1"
+}
 
 # Where a dump should be written: what was asked for, or a dated name under
 # $DUMP_DIR using the same stamp the archives use.
@@ -1611,6 +1704,11 @@ bk_name() {        # bk_name <prefix> -> mysql_20210403123221.tgz
 bk_begin() {       # bk_begin <prefix>
 	BK_PREFIX="$1"
 	BK_ARCHIVE="$(bk_name "$1")"
+	# One lock for every backup on the machine, taken here because this is the
+	# one line every do_backup has in common. Two mysqldumps of the same server
+	# at once is the case it exists for, and a box with one CPU is where it
+	# matters.
+	bk_lock || die "another backup is still running — nothing was done"
 	BK_WORK="$(tmp_dir)"
 	BK_SVC_WAS=""
 	mkdir -p "$BK_WORK/$BK_PREFIX"
@@ -1627,6 +1725,7 @@ bk_abort() {
 	bk_resume
 	[ -n "${BK_WORK:-}" ] && rm -rf "$BK_WORK"
 	BK_WORK=""
+	bk_unlock
 }
 
 # Where a dump should write itself. Inside the staging tree, so it lands in the
@@ -1655,7 +1754,10 @@ bk_add() {         # bk_add <path>
 			warn "refusing to copy $1 — that is not a thing to put in a backup"
 			return 0 ;;
 	esac
-	_ex="--exclude=${BK_DIR#/} --exclude=${DUMP_DIR#/}"
+	# One rule rather than two: everything app-setup writes under /data lives
+	# in one directory, so excluding that directory stays correct when
+	# something else is put under it.
+	_ex="--exclude=${BK_ROOT#/}"
 	for _e in ${BK_EXCLUDE:-}; do _ex="$_ex --exclude=$_e"; done
 	_rel="${1#/}"
 	mkdir -p "$BK_WORK/$BK_PREFIX/files"
@@ -1700,8 +1802,9 @@ bk_resume() {
 
 bk_finish() {
 	local _arch _sz
-	_arch="$BK_DIR/$BK_ARCHIVE"
-	mkdir -p "$BK_DIR" || die "cannot write to $BK_DIR"
+	bk_migrate
+	_arch="$(bk_jobdir "$BK_PREFIX")/$BK_ARCHIVE"
+	[ -d "$(dirname "$_arch")" ] || die "cannot write to $BK_DIR/$BK_PREFIX"
 	step "packing $BK_ARCHIVE"
 	tar czf "$_arch" -C "$BK_WORK" "$BK_PREFIX" || die "could not pack the archive"
 	chmod 600 "$_arch"
@@ -1709,11 +1812,17 @@ bk_finish() {
 	# remote must not be the reason a site is down for another two minutes.
 	bk_resume
 	rm -rf "$BK_WORK"; BK_WORK=""
-	trap - EXIT INT TERM
+	# Narrowed rather than cleared. Everything after this point — upload,
+	# prune — can still fail under `set -e`, and a run that dies there must
+	# not leave the lock behind for the six-hour breaker to find: that is a
+	# whole night of backups silently skipped for one failed upload.
+	trap 'bk_unlock' EXIT INT TERM
 	_sz="$(du -h "$_arch" 2>/dev/null | awk '{print $1}')"
 	ok "$_arch${_sz:+  ($_sz)}"
 	bk_upload "$_arch"
 	bk_prune "$BK_PREFIX"
+	bk_prune_remote "$BK_PREFIX"
+	bk_unlock
 }
 
 # Everything that talks to the bucket goes through one of these two, so the
@@ -1773,13 +1882,26 @@ bk_remote_set() {  # sets BK_TOOL, BK_BUCKET, BK_KEY; non-zero if not configured
 # derives it when a recipe omits `# id:`, so the two cannot disagree.
 BK_ID="${BK_ID:-$(basename "$0" .sh)}"
 
+# Which store, and which folder in it. A job card on the Backup tab declares
+# both as its own `# param:`; an engine recipe run from the machine-wide
+# `backup` card declares neither and gets them out of params/backup.conf. Asked
+# in that order, so a job that sets nothing still inherits the machine's
+# destination and a job that sets one is never overruled by it.
+bk_setting() {     # bk_setting <key> [default]
+	local _v
+	_v="$(param "$1")"
+	[ -n "$_v" ] || _v="$(bk_conf "$1")"
+	[ -n "$_v" ] || _v="${2-}"
+	printf '%s' "$_v"
+}
+
 # The folder this job writes into, under the store's own base. The hostname is
 # what keeps two containers sharing one destination from pruning each other's
 # history — silently, on a timer, and discovered by the second one to need a
 # restore.
 bk_folder() {
 	local _f
-	_f="$(bk_conf folder)"
+	_f="$(bk_setting folder)"
 	[ -n "$_f" ] || _f="$(hostname 2>/dev/null || echo unknown)/$BK_ID"
 	printf '%s' "$_f"
 }
@@ -1789,7 +1911,7 @@ bk_folder() {
 # away and `folder` belongs to the backup settings rather than to the store.
 bk_store() {       # bk_store <verb> [args…]
 	local _s _f _folder _verb
-	_s="$(bk_conf store)"
+	_s="$(bk_setting store)"
 	[ -n "$_s" ] && [ "$_s" != none ] || return 1
 	_f="$(recipe_path "store-$_s")" || { err "no store-$_s recipe on this machine"; return 1; }
 	_folder="$(bk_folder)"
@@ -1797,14 +1919,204 @@ bk_store() {       # bk_store <verb> [args…]
 	( param_reset; param_export "store-$_s"; BK_ID="$BK_ID" sh "$_f" "$_verb" "$_folder" "$@" )
 }
 
-bk_store_set() { [ -n "$(bk_conf store)" ] && [ "$(bk_conf store)" != none ]; }
+bk_store_set() { [ -n "$(bk_setting store)" ] && [ "$(bk_setting store)" != none ]; }
+
+# Where a store's Test button leaves its stamp. Read rather than probed:
+# do_status is killed at eight seconds and a card grid that opened six network
+# connections on every redraw would spend that budget on the first one.
+BK_STATE="${BK_STATE:-$APP_SETUP_STATE/backup}"
+
+# Has the configured store ever passed all five steps of its own Test? This is
+# the difference between "a destination is named" and "a destination works",
+# and it is the question install and `backup` both have to ask before they
+# promise anybody anything.
+bk_store_ready() {
+	local _s
+	_s="$(bk_setting store)"
+	[ -n "$_s" ] && [ "$_s" != none ] || return 1
+	[ -f "$BK_STATE/store-$_s.ok" ]
+}
+
+# The stores that have passed, as a list — which turns "set one up first" from
+# an instruction into a choice as soon as there is one.
+bk_stores_ready() {
+	local _f _out
+	_out=""
+	for _f in "$BK_STATE"/store-*.ok; do
+		[ -f "$_f" ] || continue
+		_f="$(basename "$_f" .ok)"
+		_out="$_out ${_f#store-}"
+	done
+	printf '%s' "${_out# }"
+}
+
+# A stamp back to seconds since the epoch, using the same integer arithmetic
+# the retention ladder does and for the same reason: `date -d` is GNU-only in
+# the form this wants and busybox's takes a different subset.
+bk_stamp_epoch() { # bk_stamp_epoch <YYYYMMDDHHMMSS>
+	local _s _n
+	_s="$1"
+	case "$_s" in
+		[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) : ;;
+		*) return 1 ;;
+	esac
+	_n="$(bk_daynum "$(printf '%s' "$_s" | cut -c1-4)" \
+	                "$(printf '%s' "$_s" | cut -c5-6)" \
+	                "$(printf '%s' "$_s" | cut -c7-8)")"
+	printf '%s' $(( _n * 86400 \
+		+ $(bk_num "$(printf '%s' "$_s" | cut -c9-10)")  * 3600 \
+		+ $(bk_num "$(printf '%s' "$_s" | cut -c11-12)") * 60 \
+		+ $(bk_num "$(printf '%s' "$_s" | cut -c13-14)") ))
+}
+
+# "3h ago". Round numbers on purpose: a card is read at a glance and the
+# question behind it is "recently, or ages ago", never "how many minutes".
+bk_ago() {         # bk_ago <YYYYMMDDHHMMSS>
+	local _t _n _d
+	_t="$(bk_stamp_epoch "$1")" || { printf 'at %s' "$1"; return 0; }
+	_n="$(date -u +%s 2>/dev/null)" || { printf 'at %s' "$1"; return 0; }
+	_d=$((_n - _t))
+	[ "$_d" -ge 0 ] || { printf 'just now'; return 0; }
+	if   [ "$_d" -lt 90 ];    then printf 'just now'
+	elif [ "$_d" -lt 5400 ];  then printf '%sm ago' $((_d / 60))
+	elif [ "$_d" -lt 172800 ];then printf '%sh ago' $((_d / 3600))
+	else                           printf '%sd ago' $((_d / 86400))
+	fi
+}
+
+# ------------------------------------------------ the store's own contract --
+#
+# Five operations, because each one fails on its own, and a store that has
+# never passed all five is not a destination anybody should rely on:
+# credentials that can PutObject and not ListBucket are the single most common
+# half-working S3 configuration, an FTP account often lands you in a directory
+# you cannot write to, and a `rm` that is refused is not discovered until the
+# first prune — a month later, on a timer, in a log nobody opens.
+#
+# It probes into a folder rather than into the base, because that is what a job
+# does, and the two permissions are not the same one: a WebDAV share or an FTP
+# account that lets you write files into the directory it gave you and refuses
+# to let you create a subdirectory under it is a normal configuration. Testing
+# at the base would pass, and then every backup would fail at its first mkdir.
+#
+# One implementation, called by all six stores. A conformance test with six
+# copies is a conformance test that means six different things by the third
+# time somebody fixes one of them.
+bk_probe_cleanup() { :; }   # a store that can remove a directory overrides this
+
+# Un-bless, before anything can go wrong. Every do_test calls this as its first
+# statement, ahead of its own "is this even filled in" checks — because those
+# checks `die`, and a die before bk_probe would leave last week's passing stamp
+# sitting there. The card reads correctly either way (do_status exits 2 when
+# the settings are gone), but bk_store_ready reads only the stamp, so a job
+# would pass bk_need_store and go looking for a bucket whose name had been
+# deleted. A store is blessed by a test that passed, not by one that once did.
+bk_unbless() { rm -f "$BK_STATE/$1.ok"; return 0; }
+
+bk_probe() {       # bk_probe <store id> <what to call the destination>
+	local _f _d _rc
+	_f=".app-setup-probe-$(date -u +%Y%m%dT%H%M%SZ)"
+	# The stamp is what keeps two machines testing the same store from
+	# deleting each other's probe.
+	_d="$(tmp_dir)"
+	printf 'app-setup backup reachability check\n' > "$_d/probe"
+	_rc=0
+
+	step "making a folder"
+	do_mkdir "$_f" || _rc=1
+	if [ "$_rc" = 0 ]; then
+		step "writing a file into it"
+		do_put "$_f" "$_d/probe" || _rc=1
+	fi
+	if [ "$_rc" = 0 ]; then
+		step "listing it"
+		do_ls "$_f" | grep -q '^probe$' ||
+			{ err "the file was written and does not appear in the listing"; _rc=1; }
+	fi
+	if [ "$_rc" = 0 ]; then
+		step "reading it back"
+		do_get "$_f" probe "$_d/back" || _rc=1
+		cmp -s "$_d/probe" "$_d/back" || { err "what came back is not what went out"; _rc=1; }
+	fi
+	if [ "$_rc" = 0 ]; then
+		step "deleting it"
+		do_rm "$_f" probe || _rc=1
+	fi
+	# Whether it passed or failed, the probe does not stay behind.
+	do_rm "$_f" probe >/dev/null 2>&1 || true
+	bk_probe_cleanup "$_f" >/dev/null 2>&1 || true
+	rm -rf "$_d"
+
+	mkdir -p "$BK_STATE"
+	if [ "$_rc" = 0 ]; then
+		date -u +%Y%m%d%H%M%S > "$BK_STATE/$1.ok"
+		ok "folder, write, read and delete all worked — $2"
+	else
+		# Un-blessed, so nothing offers it as a working destination. A store
+		# that fails today and passed last week must not keep the old stamp.
+		rm -f "$BK_STATE/$1.ok"
+		err "this destination is not usable yet. Nothing above should be relied on until it is."
+	fi
+	return "$_rc"
+}
+
+# The card, in three states, and never over the network: do_status is killed at
+# eight seconds and a grid that opened six connections on every redraw would
+# spend that budget on the first one. Both files were written by something that
+# had already paid for the round trip.
+bk_store_card() {  # bk_store_card <store id> <one line describing the settings>
+	local _st _up
+	_st="$BK_STATE/$1.ok"
+	if [ -f "$_st" ]; then
+		_up="$(cat "$BK_STATE/$1.state" 2>/dev/null || true)"
+		if [ -n "$_up" ]; then
+			_up=" · last upload $(bk_ago "${_up%% *}"), ${_up##* }"
+		fi
+		echo "detail=$2 — tested $(bk_ago "$(cat "$_st")")$_up"
+		exit 0
+	fi
+	echo "detail=$2 — never tested. Press ✓ Test connection."
+	exit 3
+}
+
+# One sentence, three callers. `install`, `do_status` and ▶ Back up now are
+# each somewhere a person arrives at with nowhere to send a backup, and the
+# error they get should be the one that says where to go — the same one, so
+# nobody has to work out whether they are two different problems.
+bk_need_store() {
+	local _r
+	bk_store_set || {
+		err "this job has nowhere to send its backups."
+		info "Open Backup → pick a store (S3, R2, WebDAV, FTP, rsync or SCP), fill it"
+		info "in and press ✓ Test connection. Then set Destination on this card."
+		_r="$(bk_stores_ready)"
+		info "Set up already: ${_r:-(none)}"
+		return 1
+	}
+	bk_store_ready || {
+		err "the $(bk_setting store) store has never passed a connection test."
+		info "Open Backup → $(bk_setting store), fill it in and press ✓ Test connection."
+		_r="$(bk_stores_ready)"
+		info "Set up already: ${_r:-(none)}"
+		return 1
+	}
+	return 0
+}
 
 bk_upload() {      # bk_upload <archive>
 	if bk_store_set; then
-		step "uploading $(basename "$1") to $(bk_conf store):$(bk_folder)"
+		step "uploading $(basename "$1") to $(bk_setting store):$(bk_folder)"
 		bk_store mkdir >/dev/null 2>&1 || true
 		bk_store put "$1" || { err "upload failed — the archive is still in $BK_DIR"; return 1; }
-		ok "uploaded to $(bk_conf store):$(bk_folder)"
+		ok "uploaded to $(bk_setting store):$(bk_folder)"
+		# What the store's card reports, written by the one thing that has just
+		# paid for a round trip. The stamp is stored rather than a rendered
+		# "3h ago", because the card is read at some other time than this and
+		# a frozen "3h ago" is worse than no line at all.
+		mkdir -p "$BK_STATE"
+		printf '%s %s\n' "$(date -u +%Y%m%d%H%M%S)" \
+			"$(du -h "$1" 2>/dev/null | awk '{print $1}')" \
+			> "$BK_STATE/store-$(bk_setting store).state" 2>/dev/null || true
 		return 0
 	fi
 	bk_remote_set || {
@@ -1834,7 +2146,7 @@ bk_upload() {      # bk_upload <archive>
 # it — otherwise the bucket is a place data goes and never comes back from.
 bk_download() {    # bk_download <filename> <dest>
 	if bk_store_set; then
-		step "fetching $1 from $(bk_conf store):$(bk_folder)"
+		step "fetching $1 from $(bk_setting store):$(bk_folder)"
 		bk_store get "$1" "$2"
 		return
 	fi
@@ -1870,27 +2182,381 @@ bk_remote_ls() {   # bk_remote_ls [prefix]
 	esac | grep "^${1:-}.*\.tgz$" | sort
 }
 
-# Local only. Deleting somebody's remote history on a schedule is a decision
-# for their bucket's lifecycle rules, not for a shell script that might be
-# running with the wrong prefix.
+# ------------------------------------------------------------- retention --
+#
+#   Sort the archives for one job newest first. Keep an archive if it is the
+#   newest one in its hour, day, week or month, and that hour, day, week or
+#   month is inside the corresponding budget. Delete the rest.
+#
+# Three properties fall out of writing it that way round, and each is why it is
+# written that way round:
+#
+#   The newest archive is always kept. It is trivially the newest of its own
+#   hour, day, week and month, so no combination of settings can delete the
+#   backup that was taken thirty seconds ago.
+#
+#   A completed period's representative never changes. Once August is over the
+#   newest August archive is fixed forever, so nothing is deleted and then
+#   re-promoted, and nothing has to be uploaded twice.
+#
+#   It is a pure function of the filenames. No index, no state file, no .keep
+#   marker, nothing to fall out of step with the directory. A prune after a
+#   crash, after a manual rm, or over a directory written by an older version
+#   gives the same answer.
+
+# Leading zeros off, before any of this reaches $(( )). $((08)) is an invalid
+# octal constant, so August and September crash a prune written the obvious way
+# — and they are the two months nobody is testing in January.
+#
+# The documented fix for that is $((10#$m)), and it is not usable here: base#n
+# is a ksh extension that bash and busybox ash took and **dash did not**, and
+# dash is /bin/sh on every Debian and Ubuntu image we ship. `10#08` there is a
+# syntax error, which trades a crash in August for a crash all year round.
+bk_num() {         # bk_num <digits> -> the same number, base ten
+	local _n
+	_n="$1"
+	while : ; do
+		case "$_n" in
+			0[0-9]*) _n="${_n#0}" ;;
+			*) break ;;
+		esac
+	done
+	printf '%s' "${_n:-0}"
+}
+
+# days_from_civil — 1970-01-01 is day 0. Pure integer arithmetic, because the
+# bucket a stamp falls in has to be computed on busybox, dash and bash without
+# `date -d`: the GNU form we would want is GNU-only and Alpine's busybox date
+# accepts a different subset again.
+bk_daynum() {      # bk_daynum <Y> <M> <D>
+	local _y _m _d _era _yoe _doy _doe
+	_y="$(bk_num "$1")"; _m="$(bk_num "$2")"; _d="$(bk_num "$3")"
+	[ "$_m" -le 2 ] && _y=$((_y - 1))
+	if [ "$_y" -ge 0 ]; then _era=$((_y / 400)); else _era=$(((_y - 399) / 400)); fi
+	_yoe=$((_y - _era * 400))
+	if [ "$_m" -gt 2 ]; then _doy=$(((153 * (_m - 3) + 2) / 5 + _d - 1))
+	else                     _doy=$(((153 * (_m + 9) + 2) / 5 + _d - 1)); fi
+	_doe=$((_yoe * 365 + _yoe / 4 - _yoe / 100 + _doy))
+	printf '%s' $((_era * 146097 + _doe - 719468))
+}
+
+# The four bucket keys for one archive name, as one space-separated line:
+# hour day week month. Non-zero if the name carries no stamp we recognise,
+# which is what keeps a stranger's file out of the walk entirely.
+bk_buckets() {     # bk_buckets <name> -> "<hour> <day> <week> <month>"
+	local _s _y _mo _d _h _n
+	_s="${1##*_}"; _s="${_s%.tgz}"
+	case "$_s" in
+		[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) : ;;
+		*) return 1 ;;
+	esac
+	_y="$(bk_num "${_s%??????????}")"
+	_mo="$(bk_num "$(printf '%s' "$_s" | cut -c5-6)")"
+	_d="$(printf '%s' "$_s" | cut -c7-8)"
+	_h="$(bk_num "$(printf '%s' "$_s" | cut -c9-10)")"
+	_n="$(bk_daynum "$_y" "$_mo" "$_d")"
+	# The +3 is the whole of the week handling: day 0 is Thursday 1970-01-01,
+	# so adding three puts Monday 1969-12-29 at the start of bucket 0 and every
+	# boundary thereafter lands on a Monday. No ISO week table, no year-end
+	# special case, and a Sunday belongs to the week that began six days back.
+	printf '%s %s %s %s' \
+		$((_n * 24 + _h)) "$_n" $(((_n + 3) / 7)) $((_y * 12 + _mo - 1))
+}
+
+# The walk. Reads names on stdin, newest first, and prints the ones to delete —
+# it deletes nothing itself, because the same walk has to run over a local
+# directory and over `bk_store ls`, and the two do not remove a file the same
+# way. Names, not paths: that is what the driver contract's do_ls is for, and
+# it is the whole reason one prune serves both places.
+#
+# Budgets are measured back from the newest archive rather than from the clock.
+# A machine that was off for six weeks otherwise comes back and deletes its
+# entire daily rung on the first prune, at exactly the moment somebody is most
+# likely to want it. Retention is how much history to keep, not how old it is.
+bk_prune_gfs() {   # bk_prune_gfs <keep_h> <keep_d> <keep_w> <keep_m>  <names on stdin
+	local _kh _kd _kw _km _name _b _hour _day _week _month
+	local _h0 _d0 _w0 _m0 _ph _pd _pw _pm _why
+	_kh="${1:-0}"; _kd="${2:-0}"; _kw="${3:-0}"; _km="${4:-0}"
+	case "$_kh$_kd$_kw$_km" in *[!0-9]*) return 0 ;; esac
+	# All four at zero keeps everything. That is a real thing to want and it
+	# must not read as "no rungs, so nothing is worth keeping".
+	[ $((_kh + _kd + _kw + _km)) -gt 0 ] || return 0
+	_h0=""; _ph=""; _pd=""; _pw=""; _pm=""
+	while IFS= read -r _name; do
+		[ -n "$_name" ] || continue
+		_b="$(bk_buckets "$_name")" || continue
+		_hour="${_b%% *}"; _b="${_b#* }"
+		_day="${_b%% *}";  _b="${_b#* }"
+		_week="${_b%% *}"; _month="${_b#* }"
+		[ -n "$_h0" ] || { _h0=$_hour; _d0=$_day; _w0=$_week; _m0=$_month; }
+		# Because the list is sorted, "the newest in its bucket" is "the first
+		# one whose bucket differs from the previous archive's" — one
+		# comparison, and no set of kept names to carry along.
+		_why=""
+		[ "$_hour"  != "$_ph" ] && [ $((_h0 - _hour))  -lt "$_kh" ] && _why=hourly
+		[ -z "$_why" ] && [ "$_day"   != "$_pd" ] && [ $((_d0 - _day))   -lt "$_kd" ] && _why=daily
+		[ -z "$_why" ] && [ "$_week"  != "$_pw" ] && [ $((_w0 - _week))  -lt "$_kw" ] && _why=weekly
+		[ -z "$_why" ] && [ "$_month" != "$_pm" ] && [ $((_m0 - _month)) -lt "$_km" ] && _why=monthly
+		_ph=$_hour; _pd=$_day; _pw=$_week; _pm=$_month
+		[ -n "$_why" ] || printf '%s\n' "$_name"
+	done
+	return 0
+}
+
+# The four budgets, from the job's own settings or the machine's. `keep` is
+# what the old single-number setting was called; somebody who has one gets it
+# read as the daily rung, which is what it was doing.
+bk_keep() {        # bk_keep -> "<h> <d> <w> <m>"
+	printf '%s %s %s %s' \
+		"$(bk_setting keep_hourly 0)" \
+		"$(bk_setting keep_daily "$(bk_setting keep 7)")" \
+		"$(bk_setting keep_weekly 4)" \
+		"$(bk_setting keep_monthly 6)"
+}
+
 bk_prune() {       # bk_prune <prefix>
-	local _f _keep _n
-	_keep="$(bk_conf keep 7)"
-	case "$_keep" in ''|*[!0-9]*) return 0 ;; esac
-	[ "$_keep" -gt 0 ] || return 0
+	local _d _f _n
+	_d="$BK_DIR/$1"
+	[ -d "$_d" ] || return 0
 	_n=0
 	# Newest first by name, which is why the stamp is fixed-width and UTC.
-	for _f in $(ls -1 "$BK_DIR/${1}_"*.tgz 2>/dev/null | sort -r); do
-		_n=$((_n + 1))
-		[ "$_n" -gt "$_keep" ] || continue
-		rm -f "$_f" && info "pruned $(basename "$_f")"
+	# shellcheck disable=SC2046  # bk_keep is our own four numbers, split on purpose
+	for _f in $(ls -1 "$_d" 2>/dev/null | grep '\.tgz$' | sort -r |
+	            bk_prune_gfs $(bk_keep)); do
+		rm -f "$_d/$_f" && { info "pruned $_f"; _n=$((_n + 1)); }
 	done
+	[ "$_n" -gt 0 ] && info "$(ls -1 "$_d" 2>/dev/null | grep -c '\.tgz$') kept in $_d"
+	return 0
+}
+
+# The same ladder, on the far end — off unless somebody turned it on, and
+# fenced four ways, because this is the one operation here that destroys
+# something it cannot get back.
+bk_prune_remote() {   # bk_prune_remote <prefix>
+	local _list _f _n _cap _kept _stray
+	param_on prune_remote || return 0
+	bk_store_set || return 0
+	_list="$(bk_store ls 2>/dev/null)" || {
+		warn "could not list $(bk_setting store):$(bk_folder) — nothing was deleted there"
+		return 0
+	}
+	# "I could not see what is there" and "there is nothing there" must not
+	# produce the same action. An empty listing deletes nothing, ever.
+	[ -n "$_list" ] || return 0
+
+	# Guard 3, and the folder is what makes it absolute rather than a judgement
+	# call: this job created that folder and is its only writer, so a stranger's
+	# file in it means the folder is not what this job thinks it is — somebody
+	# reused the path, two machines collided on a hand-edited folder, or the
+	# base is wrong. Every one of those is a reason to stop, not to delete
+	# carefully.
+	_stray=""
+	for _f in $_list; do
+		case "$_f" in
+			"$1"_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].tgz) : ;;
+			*) _stray="$_f"; break ;;
+		esac
+	done
+	[ -z "$_stray" ] || {
+		warn "$(bk_setting store):$(bk_folder) holds something this job did not write — '$_stray'."
+		warn "nothing was deleted there. Point Folder somewhere this job owns, or clear it out."
+		return 0
+	}
+
+	# Guard 4: at most one ladder's worth in a single run. A misconfiguration
+	# that would otherwise clear a bucket clears seventeen files and then
+	# complains, which is a thing somebody can still recover from.
+	# shellcheck disable=SC2046
+	_cap=$(( $(bk_setting keep_hourly 0) + $(bk_setting keep_daily 7) +
+	         $(bk_setting keep_weekly 4) + $(bk_setting keep_monthly 6) ))
+	[ "$_cap" -gt 0 ] || _cap=17
+	_n=0
+	step "pruning $(bk_setting store):$(bk_folder)"
+	# shellcheck disable=SC2046
+	for _f in $(printf '%s\n' "$_list" | grep '\.tgz$' | sort -r | bk_prune_gfs $(bk_keep)); do
+		if [ "$_n" -ge "$_cap" ]; then
+			warn "stopped after $_cap deletions — that is more than one ladder's worth."
+			warn "check Folder and the keep_* numbers before running this again."
+			break
+		fi
+		bk_store rm "$_f" && { info "pruned $(bk_setting store):$(bk_folder)/$_f"; _n=$((_n + 1)); }
+	done
+	_kept="$(printf '%s\n' "$_list" | grep -c '\.tgz$')"
+	info "$((_kept - _n)) kept there"
+	# The folder itself is never removed. An empty folder that stays is a
+	# record that a job used to write here; one that disappears with the last
+	# archive is a job that looks like it never ran.
+	return 0
+}
+
+# ------------------------------------------------------------ the schedule --
+#
+# One file, rewritten from every job's settings whenever any of them changes,
+# because `cat /etc/cron.d/app-setup-backup` is then the whole answer to "what
+# runs, and when". install, uninstall and every manual run call this, so the
+# file is derived from the settings rather than remembered alongside them.
+BK_CRON=app-setup-backup
+
+# The minute is the sum of the id's bytes mod 60: deterministic, needs no
+# setting, and it keeps four jobs from waking at once on a box with one CPU.
+# backup-mysql 41, backup-postgresql 43, backup-redis 10, backup-mongodb 37,
+# files 51.
+#
+# awk rather than `od -An -tu1`, because busybox's od and GNU's disagree about
+# which -t specifiers exist and this has to give the same minute on both — a
+# schedule that moves when the image changes is a schedule nobody can reason
+# about. awk's sprintf("%c", n) is the one primitive all three awks share.
+bk_cron_minute() { # bk_cron_minute <id>
+	awk -v s="$1" 'BEGIN{
+		for (i = 32; i < 127; i++) T[sprintf("%c", i)] = i
+		t = 0
+		for (j = 1; j <= length(s); j++) t += T[substr(s, j, 1)]
+		print t % 60
+	}'
+}
+
+bk_cron_spec() {   # bk_cron_spec <schedule> <minute>
+	case "$1" in
+		off|'')  printf '' ;;
+		hourly)  printf '%s *  * * *' "$2" ;;
+		weekly)  printf '%s 4  * * 0' "$2" ;;
+		monthly) printf '%s 4  1 * *' "$2" ;;
+		*)       printf '%s 4  * * *' "$2" ;;
+	esac
+}
+
+# Every backup job on the machine, in the order the tab shows them: the
+# `backup-*` cards plus `files`, whichever of them are actually installed here.
+bk_cron_jobs() {
+	local _d _f _id _seen _out
+	_out=""; _seen=" "
+	for _d in $(printf '%s' "${APP_SETUP_PATH:-$APP_SETUP_CONF:$APP_SETUP_CONF/local}" | tr ':' ' '); do
+		for _f in "$_d"/backup-*.sh "$_d"/files.sh; do
+			[ -f "$_f" ] || continue
+			_id="$(basename "$_f" .sh)"
+			case "$_seen" in *" $_id "*) continue ;; esac
+			_seen="$_seen$_id "
+			_out="$_out $_id"
+		done
+	done
+	printf '%s' "${_out# }"
+}
+
+bk_cron_rebuild() {
+	local _id _sch _spec _body _cur _mark _n
+	_body=""; _n=0
+	for _id in $(bk_cron_jobs); do
+		_sch="$( (param_reset; param_export "$_id"; param schedule off) 2>/dev/null )"
+		_spec="$(bk_cron_spec "$_sch" "$(bk_cron_minute "$_id")")"
+		[ -n "$_spec" ] || continue
+		_body="$_body$_spec  root  app-setup --no-color backup $_id  >/dev/null 2>&1
+"
+		_n=$((_n + 1))
+	done
+	case "$(cron_kind)" in
+	dropin)
+		# cron.d ignores a filename containing a dot, silently and forever.
+		# This one has none and the check that keeps it that way lives in
+		# cron_set; the name is a constant here for the same reason.
+		if [ "$_n" = 0 ]; then rm -f "/etc/cron.d/$BK_CRON"; return 0; fi
+		cat > "/etc/cron.d/$BK_CRON" <<EOF || { warn "could not write /etc/cron.d/$BK_CRON"; return 0; }
+# /etc/cron.d/$BK_CRON — written by app-setup, edit Settings not this file.
+# Rebuilt from every backup job's own \`schedule\` whenever one of them changes.
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+SHELL=/bin/sh
+$_body
+EOF
+		chmod 0644 "/etc/cron.d/$BK_CRON"
+		;;
+	crontab)
+		# busybox crond reads one crontab per user and its lines carry no user
+		# field, so the same schedule is a different shape here. The trailing
+		# marker is a comment to the shell that runs the command and an anchor
+		# to us.
+		_mark="# app-setup:$BK_CRON"
+		_cur="$(crontab -l 2>/dev/null | grep -v "$_mark\$" || true)"
+		for _id in $(bk_cron_jobs); do
+			_sch="$( (param_reset; param_export "$_id"; param schedule off) 2>/dev/null )"
+			_spec="$(bk_cron_spec "$_sch" "$(bk_cron_minute "$_id")")"
+			[ -n "$_spec" ] || continue
+			_cur="$(printf '%s\n%s app-setup --no-color backup %s >/dev/null 2>&1 %s' \
+				"$_cur" "$_spec" "$_id" "$_mark")"
+		done
+		printf '%s\n' "$_cur" | sed '/^[[:space:]]*$/d' | crontab - ||
+			warn "could not write root's crontab — the ▶ button still works, the timer will not"
+		;;
+	*)
+		[ "$_n" = 0 ] ||
+			warn "no cron on this machine — the ▶ button still works, the timer will not"
+		;;
+	esac
+	return 0
+}
+
+# One lock for all backups. The derived minutes keep jobs from waking at the
+# same second and not from overlapping — 41 and 43 is two minutes and a
+# mysqldump of anything real takes longer — so a second job waits rather than
+# failing, and says what it is waiting for.
+#
+# mkdir rather than flock: mkdir is atomic on every filesystem here and flock
+# is not on Alpine's base image.
+BK_LOCK="${BK_LOCK:-/var/lock/app-setup-backup}"
+BK_LOCK_HELD=""
+
+bk_lock() {
+	local _i _age _who
+	mkdir -p "$(dirname "$BK_LOCK")" 2>/dev/null || true
+	_i=0
+	while ! mkdir "$BK_LOCK" 2>/dev/null; do
+		_who="$(cat "$BK_LOCK/job" 2>/dev/null || echo 'another backup')"
+		# A stale lock from a killed run must not silence every backup on the
+		# machine for good. Six hours is longer than any real job here and
+		# short enough that the next night's run recovers by itself.
+		_age="$(bk_lock_age)"
+		if [ "$_age" -gt 21600 ]; then
+			warn "breaking a stale backup lock left by $_who — it is $((_age / 3600))h old"
+			rm -rf "$BK_LOCK"
+			continue
+		fi
+		[ "$_i" = 0 ] && step "waiting for $_who to finish"
+		_i=$((_i + 1))
+		# An hour, then give up. A job that never gets the lock says so in the
+		# log rather than sitting there until the next one queues behind it.
+		if [ "$_i" -gt 360 ]; then
+			err "gave up after an hour waiting for $_who"
+			return 1
+		fi
+		sleep 10
+	done
+	printf '%s' "${BK_ID:-backup}" > "$BK_LOCK/job" 2>/dev/null || true
+	BK_LOCK_HELD=1
+	return 0
+}
+
+bk_lock_age() {
+	local _n _t
+	_n="$(date -u +%s 2>/dev/null || echo 0)"
+	_t="$(date -u -r "$BK_LOCK" +%s 2>/dev/null || echo "$_n")"
+	printf '%s' $((_n - _t))
+}
+
+bk_unlock() {
+	[ -n "$BK_LOCK_HELD" ] || return 0
+	rm -rf "$BK_LOCK"
+	BK_LOCK_HELD=""
+	return 0
 }
 
 # The newest archive for a prefix, which is what `restore` with no argument
-# means and the only thing anybody wants at three in the morning.
+# means and the only thing anybody wants at three in the morning. One
+# directory holding exactly this job's archives, so it is a sort and not a
+# search — a restore that picks the wrong archive because a prefix matched too
+# much is not a failure mode this can have.
 bk_latest() {      # bk_latest <prefix>
-	ls -1 "$BK_DIR/${1}_"*.tgz 2>/dev/null | sort -r | head -1
+	local _f
+	_f="$(ls -1 "$BK_DIR/$1" 2>/dev/null | grep '\.tgz$' | sort -r | head -1)"
+	[ -n "$_f" ] || return 0
+	printf '%s/%s/%s' "$BK_DIR" "$1" "$_f"
 }
 
 # Unpack an archive and set $BK_UNPACKED to the directory a recipe reads out of.
@@ -1905,7 +2571,9 @@ bk_latest() {      # bk_latest <prefix>
 # it. Every progress line here goes to stderr for the same reason, so a caller
 # who does capture output gets nothing surprising in it.
 bk_open() {        # bk_open <prefix> [archive]; sets $BK_UNPACKED
-	local _a _r
+	local _a _r _dir
+	bk_migrate
+	_dir="$(bk_jobdir "$1")"
 	_a="${2-}"
 	if [ -z "$_a" ]; then
 		_a="$(bk_latest "$1")"
@@ -1914,19 +2582,21 @@ bk_open() {        # bk_open <prefix> [archive]; sets $BK_UNPACKED
 		# giving up, rather than telling them their backups are gone.
 		if [ -z "$_a" ]; then
 			_r="$(bk_remote_ls "$1" 2>/dev/null | tail -1)"
-			[ -n "$_r" ] || die "no backup for $1 in $BK_DIR and none in the bucket either"
-			mkdir -p "$BK_DIR"
-			bk_download "$_r" "$BK_DIR/$_r" || die "could not download $_r"
-			_a="$BK_DIR/$_r"
+			[ -n "$_r" ] || die "no backup for $1 in $_dir and none on the remote either"
+			bk_download "$_r" "$_dir/$_r" || die "could not download $_r"
+			_a="$_dir/$_r"
 		fi
 	elif [ ! -f "$_a" ]; then
-		if [ -f "$BK_DIR/$_a" ]; then
-			_a="$BK_DIR/$_a"
+		# A name typed into `Which one` is looked for locally first and
+		# downloaded if it is only on the remote — the local copy is the one
+		# that gets pruned hardest, and the remote is the one that survives
+		# the disk.
+		if [ -f "$_dir/$_a" ]; then
+			_a="$_dir/$_a"
 		else
-			mkdir -p "$BK_DIR"
-			bk_download "$(basename "$_a")" "$BK_DIR/$(basename "$_a")" ||
-				die "no such archive here or in the bucket: $_a"
-			_a="$BK_DIR/$(basename "$_a")"
+			bk_download "$(basename "$_a")" "$_dir/$(basename "$_a")" ||
+				die "no such archive here or on the remote: $_a"
+			_a="$_dir/$(basename "$_a")"
 		fi
 	fi
 	[ -f "$_a" ] || die "no such archive: $_a"
@@ -1943,6 +2613,225 @@ bk_close() {
 	BK_WORK=""; BK_UNPACKED=""
 	trap - EXIT INT TERM
 	return 0
+}
+
+# ------------------------------------------------------- the job's install --
+#
+# The ask was specific: read what is already configured, then let it be
+# changed. The `dflt` in a `# param:` line is a static string in a header and
+# cannot do that, so the seeding happens at install — and only ever into a file
+# that does not exist. An install that has already been configured re-reads
+# nothing and overwrites nothing, which is what keeps `install` idempotent;
+# docs/app-setup.md §5 calls the second install the thing that breaks recipes.
+bk_seed() {        # bk_seed <id>  <<EOF key=value… EOF
+	local _f
+	_f="$APP_SETUP_CONF/params/$1.conf"
+	if [ -f "$_f" ]; then
+		# Drain stdin so the caller's heredoc does not end up on the terminal.
+		cat > /dev/null
+		info "$_f is already here — nothing was re-read and nothing overwritten"
+		return 1
+	fi
+	mkdir -p "$APP_SETUP_CONF/params"
+	( umask 077; cat > "$_f" ) || return 1
+	chmod 600 "$_f"
+	ok "wrote $_f, mode 600"
+	return 0
+}
+
+# Is the database this job points at on this machine? Everything that reads a
+# local install, stops a local service or copies a local directory has to ask,
+# and the answer is not "did somebody type a host" — the default is 127.0.0.1.
+bk_job_local() {   # bk_job_local [host]
+	case "${1:-$(param host 127.0.0.1)}" in
+		''|127.0.0.1|localhost|::1|/*) return 0 ;;
+	esac
+	return 1
+}
+
+# Said at install rather than at 05:17. Both of these are settings that look
+# reasonable, do something surprising, and are only ever discovered by somebody
+# counting archives that are no longer there.
+bk_keep_warn() {
+	local _h _d _w _m
+	_h="$(param keep_hourly 0)"; _d="$(param keep_daily 7)"
+	_w="$(param keep_weekly 4)"; _m="$(param keep_monthly 6)"
+	case "$_h$_d$_w$_m" in *[!0-9]*) return 0 ;; esac
+	if [ $((_h + _d + _w + _m)) = 0 ]; then
+		warn "every keep_* is 0, so nothing is ever pruned. Archives will pile up"
+		warn "until the disk is full. That is allowed; it is rarely meant."
+		return 0
+	fi
+	if [ "$(param schedule daily)" = hourly ] && [ "$_h" = 0 ]; then
+		warn "an hourly schedule with keep_hourly 0 throws away 23 of every 24"
+		warn "archives the moment they are taken. Set keep_hourly to 24 unless"
+		warn "that is really what you want."
+	fi
+	if [ "$(param schedule daily)" = weekly ] && [ "$_d" -gt 1 ]; then
+		info "note: keep_daily is seven *days*, not seven backups. On a weekly"
+		info "schedule at most one archive is ever inside it."
+	fi
+	return 0
+}
+
+# What a job card says. Three states, and the middle one is the point: a job
+# with nowhere to send its output is visibly in error rather than looking
+# configured and quietly saving nothing.
+bk_job_card() {    # bk_job_card <prefix> <what it is backing up>
+	local _n _sch
+	_n="$(ls -1 "$BK_DIR/$1" 2>/dev/null | grep -c '\.tgz$' || true)"
+	if ! bk_store_set; then
+		echo "detail=no destination — set up a store first"
+		exit 3
+	fi
+	if ! bk_store_ready; then
+		echo "detail=$(bk_setting store) has never passed a connection test"
+		exit 3
+	fi
+	_sch="$(param schedule daily)"
+	if [ "$_sch" = off ]; then
+		# Installed and not running. The schedule is this card's service.
+		echo "detail=off · ${2:+$2 · }$_n kept here"
+		exit 1
+	fi
+	echo "detail=$_sch → $(bk_setting store) · $_n kept here"
+	exit 0
+}
+
+# ▤ List backups. Both sides, labelled, because they are not the same set: the
+# local one is pruned hardest and the remote is the one that survives the disk.
+#
+# The right control for picking an archive is a chooser filled with the ones
+# that exist, which needs the form to run a recipe per field — a real feature
+# with a real cost, and not one this waits for. So the names are printed and
+# the one you want goes in `Which one`. It is ugly, it works today, and
+# restoring *yesterday's* backup instead of last night's broken one is the
+# entire reason anybody has backups.
+bk_list() {        # bk_list <prefix>
+	local _d _f _n _r _rn
+	bk_migrate
+	_d="$BK_DIR/$1"
+	printf '\n  on this machine   %s/\n' "$_d"
+	_n=0
+	for _f in $(ls -1 "$_d" 2>/dev/null | grep '\.tgz$' | sort -r); do
+		printf '    %-44s %8s   %s\n' "$_f" \
+			"$(du -h "$_d/$_f" 2>/dev/null | awk '{print $1}')" \
+			"$(bk_when "$_f")"
+		_n=$((_n + 1))
+	done
+	[ "$_n" -gt 0 ] || printf '    (nothing here)\n'
+
+	_rn=0
+	if bk_store_set; then
+		printf '\n  on %-14s %s/\n' "$(bk_setting store)" "$(bk_folder)"
+		for _r in $(bk_remote_ls "$1" 2>/dev/null | sort -r); do
+			printf '    %-44s %8s   %s\n' "$_r" "" "$(bk_when "$_r")"
+			_rn=$((_rn + 1))
+		done
+		[ "$_rn" -gt 0 ] || printf '    (nothing there, or it could not be listed)\n'
+	else
+		printf '\n  no destination set — there is no off-machine copy of any of these.\n'
+	fi
+
+	printf '\n  %s here, %s there.  To put a particular one back, copy its name into\n' "$_n" "$_rn"
+	printf '  Settings → Which one, then press ⟲ Restore. Or, from a shell:\n\n'
+	printf '      sh %s/%s.sh restore <name>\n\n' "$APP_SETUP_CONF" "$BK_ID"
+	return 0
+}
+
+# The stamp, read back out of the name. `date -d` is GNU-only in the form this
+# would want and busybox's takes a different subset, so the archive says when
+# it was taken by being named for it — which is the same property that makes
+# `sort` a sort by time.
+bk_when() {        # bk_when <name>
+	local _s
+	_s="${1##*_}"; _s="${_s%.tgz}"
+	case "$_s" in
+		[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) : ;;
+		*) printf '?'; return 0 ;;
+	esac
+	printf '%s-%s-%s %s:%s UTC' \
+		"$(printf '%s' "$_s" | cut -c1-4)" "$(printf '%s' "$_s" | cut -c5-6)" \
+		"$(printf '%s' "$_s" | cut -c7-8)" "$(printf '%s' "$_s" | cut -c9-10)" \
+		"$(printf '%s' "$_s" | cut -c11-12)"
+}
+
+# ✓ Verify. docs/app-setup.md says a backup nobody has restored is a hope
+# rather than a backup, and then gives nobody a way to check short of
+# performing one. This downloads the archive if it is not here, unpacks it into
+# a temporary directory, and looks at what came out.
+#
+# It never touches the database, so it is safe to press on a running site. It
+# answers the two ways an archive is silently useless — a truncated upload, and
+# a dump that ran but produced nothing because the credential was wrong — and
+# it deliberately does not claim more than that. Only a real restore proves a
+# restore.
+bk_verify() {      # bk_verify <prefix> [archive]
+	local _d _f _sz _lines _n _ok _files
+	bk_open "$1" "${2-}"
+	_d="$BK_UNPACKED"
+	_ok=0; _files=0
+	step "unpacked"
+	for _f in "$_d"/*; do
+		[ -e "$_f" ] || continue
+		case "$(basename "$_f")" in
+		files)
+			# A `files` job's whole payload is this directory, so a non-empty
+			# one *is* the backup. For a database job it is the config that
+			# travelled alongside the dump and proves nothing on its own —
+			# hence _ok only when there is nothing else in the archive, which
+			# is decided after the loop.
+			_n="$(find "$_f" -type f 2>/dev/null | wc -l | tr -d ' ')"
+			if [ "${_n:-0}" -gt 0 ]; then
+				ok "files/  $_n file(s), $(du -sh "$_f" 2>/dev/null | awk '{print $1}')"
+				_files="$_n"
+			else
+				err "files/ is empty — nothing was actually copied"
+			fi ;;
+		*.sql)
+			_sz="$(du -h "$_f" 2>/dev/null | awk '{print $1}')"
+			_lines="$(grep -c '^CREATE TABLE' "$_f" 2>/dev/null || echo 0)"
+			# A dump that was cut off mid-statement unpacks perfectly well.
+			# What it does not do is end where mysqldump and pg_dumpall both
+			# end, which is the one cheap check that catches a truncated
+			# upload without reading the whole file twice.
+			if tail -c 4096 "$_f" 2>/dev/null | grep -qE 'Dump completed|PostgreSQL database dump complete|^\)|;[[:space:]]*$'; then
+				ok "$(basename "$_f")  $_sz, $_lines CREATE TABLE, ends in a complete statement"
+				_ok=1
+			else
+				err "$(basename "$_f")  $_sz — does not end in a complete statement. Truncated."
+			fi ;;
+		*.rdb)
+			# An RDB's last eight bytes are a CRC64 preceded by the EOF opcode;
+			# the five-byte magic at the front is REDIS. Both ends present is
+			# as much as can be said without loading it.
+			_sz="$(du -h "$_f" 2>/dev/null | awk '{print $1}')"
+			if head -c 5 "$_f" 2>/dev/null | grep -q REDIS; then
+				ok "$(basename "$_f")  $_sz, REDIS magic present"; _ok=1
+			else
+				err "$(basename "$_f")  $_sz — no REDIS magic. That is not a snapshot."
+			fi ;;
+		*.archive)
+			_sz="$(du -h "$_f" 2>/dev/null | awk '{print $1}')"
+			ok "$(basename "$_f")  $_sz"; _ok=1 ;;
+		*)
+			info "$(basename "$_f")" ;;
+		esac
+	done
+	bk_close
+	if [ "$_ok" = 1 ]; then
+		ok "this archive opens and contains a dump. It has not been loaded anywhere."
+		return 0
+	fi
+	# A `files` job has no dump and never will — its payload is the directory
+	# tree, and a non-empty one is the whole of a correct backup. Demanding a
+	# dump here failed every `files` archive ever taken.
+	if [ "$_files" -gt 0 ]; then
+		ok "this archive opens and holds $_files saved file(s). Nothing has been written back."
+		return 0
+	fi
+	err "nothing in this archive looks like a backup of $1."
+	return 1
 }
 
 # WordPress, Typecho and Nextcloud all keep one database and one directory,
@@ -1965,34 +2854,136 @@ dump_tool_check() {  # dump_tool_check <command> <sentence>
 # because the LNMP and LAMP suites need exactly the same thing, and two
 # implementations of "how do you dump this server" drift — the one that drifts
 # is always the one on the timer that nobody watches.
-mysql_dump_all() { # mysql_dump_all <file>
-	if [ -r "$MY_CNF" ]; then
-		mysqldump --defaults-file="$MY_CNF" --single-transaction --quick \
-			--routines --events --all-databases > "$1"
+# The one mysqldump command line. Everything else here chooses what to point
+# it at; nothing else in the tree builds one.
+#
+# --single-transaction takes the whole dump from one consistent snapshot
+# without locking a running site out, --quick streams row by row instead of
+# buffering a large table into memory, and --routines/--triggers/--events carry
+# the parts of a schema that are not tables — a dump missing its triggers
+# restores clean and behaves wrong, which is the worst shape a restore can
+# take.
+mysql_dumpcmd() {  # mysql_dumpcmd <what to dump…>
+	if [ -r "$MY_DEFAULTS" ]; then
+		mysqldump --defaults-file="$MY_DEFAULTS" --single-transaction --quick \
+			--routines --triggers --events "$@"
 	else
 		mysqldump --protocol=socket -uroot --single-transaction --quick \
-			--routines --events --all-databases > "$1"
-	fi || die "mysqldump failed — is the server running, and is $MY_CNF still right?"
-	[ -s "$1" ] || die "the dump came out empty; that is not a backup"
+			--routines --triggers --events "$@"
+	fi
 }
 
-# One database to one file. `--databases` rather than a bare name so the dump
-# carries its own CREATE DATABASE and USE, and loading it recreates the schema
-# instead of needing one to exist first.
-mysql_dump_db() {  # mysql_dump_db <database> <file>
-	if [ -r "$MY_CNF" ]; then
-		mysqldump --defaults-file="$MY_CNF" --single-transaction --quick \
-			--routines --events --databases "$1" > "$2"
+mysql_dump_all() { # mysql_dump_all <file> [database…]
+	local _f _rc
+	_f="$1"; shift
+	_rc=0
+	if [ "$#" -gt 0 ]; then
+		# --databases rather than bare names, so the dump carries its own
+		# CREATE DATABASE and USE and loading it recreates the schema instead
+		# of needing one to exist first.
+		mysql_dumpcmd --databases "$@" > "$_f" || _rc=$?
 	else
-		mysqldump --protocol=socket -uroot --single-transaction --quick \
-			--routines --events --databases "$1" > "$2"
-	fi || die "could not dump the $1 database"
+		mysql_dumpcmd --all-databases > "$_f" || _rc=$?
+	fi
+	[ "$_rc" = 0 ] ||
+		die "mysqldump failed — is the server running, and is $MY_DEFAULTS still right?"
+	[ -s "$_f" ] || die "the dump came out empty; that is not a backup"
+}
+
+# One database to one file, through the same command line.
+mysql_dump_db() {  # mysql_dump_db <database> <file>
+	local _rc
+	_rc=0
+	mysql_dumpcmd --databases "$1" > "$2" || _rc=$?
+	[ "$_rc" = 0 ] || die "could not dump the $1 database"
 	[ -s "$2" ] || die "the dump came out empty; that is not a backup"
 }
 
 mysql_load_file() { # mysql_load_file <file>
 	[ -f "$1" ] || die "no such dump: $1"
 	mysql_root < "$1" || die "the import failed"
+}
+
+# ------------------------------------------- the other three, same rule --
+#
+# One command line per engine, here, parameterised by a connection. The engine
+# recipe on the Databases tab passes the local one and the job card on the
+# Backup tab passes the form's; nothing else in the tree builds a dump command.
+
+# PostgreSQL. Empty PG_CONN is the local unix socket as the postgres user,
+# which is peer auth and needs no password stored anywhere at all — the reason
+# the local case is the good case here.
+PG_CONN=""
+
+# A .pgpass rather than PGPASSWORD: the environment of a process is readable
+# out of /proc for as long as it runs, and libpq has a file format for exactly
+# this. host:port:database:user:password, mode 600, and libpq refuses to read
+# it at any other mode — which is a check worth having rather than working
+# around.
+pg_conn_file() {   # pg_conn_file <dest> <host> <port> <user> <password>
+	( umask 077; printf '%s:%s:*:%s:%s\n' "$2" "$3" "$4" "$5" > "$1" ) || return 1
+	chmod 600 "$1"
+	PG_CONN="-h $2 -p $3 -U $4 -w"
+	PGPASSFILE="$1"; export PGPASSFILE
+	printf '%s' "$1"
+}
+
+pg_dumpcmd() {     # pg_dumpcmd <pg_dumpall arguments…>
+	if [ -n "$PG_CONN" ]; then
+		# shellcheck disable=SC2086  # PG_CONN is our own flag list
+		pg_dumpall $PG_CONN "$@"
+	else
+		# su rather than sudo: sudo is not on a minimal Debian image and this
+		# has to work on one.
+		su postgres -c "pg_dumpall $*"
+	fi
+}
+
+pg_psqlcmd() {     # pg_psqlcmd <psql arguments…>
+	if [ -n "$PG_CONN" ]; then
+		# shellcheck disable=SC2086
+		psql $PG_CONN "$@"
+	else
+		su postgres -c "psql $*"
+	fi
+}
+
+# Redis. Empty REDIS_CONN is "read the password out of the local redis.conf",
+# which is what redis.sh has always done.
+REDIS_CONN=""
+
+# -a puts the password in argv, where every process on the box can read it for
+# as long as the command runs. redis-cli reads REDISCLI_AUTH out of the
+# environment instead, and has since 6.0; older ones fall back to -a with
+# --no-auth-warning, which is the case where there is nothing better available.
+redis_cli_at() {   # redis_cli_at <host> <port> <password> <redis-cli arguments…>
+	local _h _p _pw
+	_h="${1:-127.0.0.1}"; _p="${2:-6379}"; _pw="${3-}"; shift 3
+	if [ -n "$_pw" ]; then
+		REDISCLI_AUTH="$_pw" redis-cli -h "$_h" -p "$_p" --no-auth-warning "$@" 2>/dev/null ||
+			redis-cli -h "$_h" -p "$_p" -a "$_pw" --no-auth-warning "$@"
+	else
+		redis-cli -h "$_h" -p "$_p" "$@"
+	fi
+}
+
+# MongoDB. --archive rather than --out: one file instead of a directory of
+# BSON, so a dump is something you can scp, and the backup and the dump are
+# the same call with a different destination.
+mongo_dumpcmd() {  # mongo_dumpcmd <uri or empty> <mongodump arguments…>
+	local _uri
+	_uri="$1"; shift
+	have mongodump || die "mongodump is not installed — it ships in mongodb-database-tools"
+	if [ -n "$_uri" ]; then mongodump --quiet --uri="$_uri" "$@"
+	else                    mongodump --quiet "$@"; fi
+}
+
+mongo_restorecmd() {  # mongo_restorecmd <uri or empty> <mongorestore arguments…>
+	local _uri
+	_uri="$1"; shift
+	have mongorestore || die "mongorestore is not installed — it ships in mongodb-database-tools"
+	if [ -n "$_uri" ]; then mongorestore --quiet --uri="$_uri" "$@"
+	else                    mongorestore --quiet "$@"; fi
 }
 
 bk_mysql_db() {    # bk_mysql_db <database>
@@ -2054,6 +3045,12 @@ do_help()      { echo "This source ships no documentation."; }
 # then turns out to be one at the worst possible moment.
 do_backup()    { warn "this software has no backup in its recipe — nothing was saved"; return 0; }
 do_restore()   { warn "this software has no restore in its recipe"; return 0; }
+# Restore is not one button, because at the moment somebody needs it they are
+# asking three different questions — what have I got, is it any good, and put
+# it back. One button answers the third and leaves the other two to a shell
+# nobody is in a state to be typing into.
+do_list()      { warn "this software keeps no archives to list"; return 0; }
+do_verify()    { warn "this software has no archive format to check"; return 0; }
 do_dump()      { warn "this software has no dump in its recipe"; return 0; }
 do_load()      { warn "this software has no load in its recipe"; return 0; }
 do_movedata()  { info "this software keeps nothing that a reinstall would take"; return 0; }
@@ -2123,6 +3120,11 @@ app_main() {
 		# `sh /etc/app-setup/mysql.sh restore mysql_20210403123221.tgz`. With
 		# no argument both this and `app-setup restore mysql` take the newest.
 		restore)            need_root; shift; do_restore "$@" ;;
+		# The other two thirds of restoring. `list` reads only, so it does not
+		# need root; `verify` downloads and unpacks into a temp directory and
+		# does, on an archive that is mode 600.
+		list)                         shift; do_list   "$@" ;;
+		verify)             need_root; shift; do_verify "$@" ;;
 		# Same shift, same reason: `sh /etc/app-setup/mysql.sh dump /tmp/x.sql`
 		# and `… load /tmp/x.sql` both name a file. With no argument, dump
 		# picks a dated name and load takes the newest.

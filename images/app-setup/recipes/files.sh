@@ -3,18 +3,42 @@
 # id: files
 # name: Files and folders
 # name.zh: 文件和目录
-# category: system
-# order: 16
+# category: backup
+# category.name: Backup
+# category.name.zh: 备份
+# order: 24
 # summary: Back up any directories you name — an app's config, its uploads, anything with no recipe of its own.
 # summary.zh: 备份你指定的任意目录 —— 程序的配置、上传的文件，任何没有专门脚本管的东西。
 # includes: nothing to install; it saves paths you list
 # includes.zh: 不装任何东西，只保存你列出的路径
 # disk: 0
 # memory: 0
+#
+# group: what | What to save | 备份哪些 |
 # param: paths   |                                  | What to save    | 备份哪些 |
 # action: paths  | backup                           | ▶ Back up now   | ▶ 立即备份
 # param: exclude | *.log, *.tmp, node_modules, .git | Skip            | 跳过     |
 # param: service |                                  | Stop first      | 先停掉   |
+#
+# group: where | Where it goes | 存到哪 |
+# param: store        | none | Destination                    | 目的地   | none,s3,r2,webdav,ftp,rsync,scp
+# param: folder       |      | Folder on the remote           | 远端目录 |
+# param: prune_remote | off  | Also delete old archives there | 同时删除远端旧文件 | bool
+#
+# group: when | When, and how many to keep | 定时与保留 |
+# param: schedule     | off | When         | 定时       | off,hourly,daily,weekly,monthly
+# param: keep_hourly  | 0   | Keep hourly  | 每小时保留 | number
+# param: keep_daily   | 7   | Keep daily   | 每天保留   | number
+# param: keep_weekly  | 4   | Keep weekly  | 每周保留   | number
+# param: keep_monthly | 6   | Keep monthly | 每月保留   | number
+#
+# group: restore | Putting one back | 恢复 |
+# param: archive |  | Which one (blank = the newest) | 哪一份 |
+#
+# button: backup  | ▶ Back up now  | ▶ 立即备份     | progress
+# button: list    | ▤ List backups | ▤ 列出所有备份
+# button: verify  | ✓ Verify       | ✓ 校验         | progress
+# button: restore | ⟲ Restore      | ⟲ 恢复         | confirm
 #
 # The catch-all, and the reason it exists: a recipe knows what *its* data is,
 # and app-setup only has recipes for what it ships. Somebody running their own
@@ -67,7 +91,22 @@ version_line() {
 
 do_status() {
 	is_installed || exit 2
-	echo "detail=$(version_line)"
+	# The same three states every card on this tab has. A job with nowhere to
+	# send its output is visibly in error rather than looking configured and
+	# quietly saving to one disk.
+	if ! bk_store_set; then
+		echo "detail=$(version_line) · no destination — set up a store first"
+		exit 3
+	fi
+	if ! bk_store_ready; then
+		echo "detail=$(bk_setting store) has never passed a connection test"
+		exit 3
+	fi
+	if [ "$(param schedule off)" = off ]; then
+		echo "detail=$(version_line) · off"
+		exit 1
+	fi
+	echo "detail=$(version_line) · $(param schedule off) → $(bk_setting store)"
 	exit 0
 }
 
@@ -90,13 +129,24 @@ do_install() {
 		"") : ;;
 		*)  info "$(param service) will be stopped while these are copied" ;;
 	esac
-	info "add 'files' to the Backup card's list to have this run on the schedule"
+
+	bk_need_store || die "nothing was scheduled."
+	bk_keep_warn
+	bk_migrate
+	bk_cron_rebuild
+	if [ "$(param schedule off)" = off ]; then
+		info "schedule is off — nothing runs on a timer. ▶ Back up now still works."
+	else
+		ok "scheduled $(param schedule off), minute $(bk_cron_minute files)"
+	fi
 	ok "ready — press ▶ Back up now to take one"
 }
 
 do_uninstall() {
+	bk_cron_rebuild
 	info "nothing was installed, so nothing was removed."
 	info "clear Paths in Settings if you want this to stop being listed."
+	warn "$BK_DIR/files was NOT deleted — your archives are still there."
 }
 
 # ------------------------------------------------------------------ backup --
@@ -106,6 +156,7 @@ do_backup() {
 	[ -n "$_list" ] || die "nothing listed. Put the directories in Settings, comma separated."
 	_miss="$(files_missing)"
 	[ -z "$_miss" ] || warn "listed but missing, so not saved: $_miss"
+	bk_need_store || exit 1
 
 	bk_begin files
 
@@ -137,9 +188,12 @@ do_backup() {
 	bk_finish
 }
 
+do_list()   { bk_list files; }
+do_verify() { bk_verify files "${1:-$(param archive)}"; }
+
 do_restore() {
 	local _d
-	bk_open files "${1-}"
+	bk_open files "${1:-$(param archive)}"
 	_d="$BK_UNPACKED"
 	[ -d "$_d/files" ] || die "that archive has no files in it"
 	echo
