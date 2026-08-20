@@ -578,4 +578,6 @@ them — is on [using your container](using-your-container.md).
 - [Using your container](using-your-container.md) — limits, expiry, rebuilds.
 - [Adding your own software](app-setup-sources.md) — put your own entry in the
   menu.
+- [Panel REST API](api.md) — do all of the above from a script or a CI job
+  instead of a browser.
 - [How this works](how-it-works.md) — the picture behind all of the above.

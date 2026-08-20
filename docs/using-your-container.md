@@ -261,6 +261,9 @@ dashboard net          # just the traffic meter — used this window, and left
 dashboard cpu mem      # just those two
 ```
 
+From somewhere that is not the container — a monitor, a CI job — the same
+figures are one HTTP call away: [the panel REST API](api.md).
+
 | Limit | At the ceiling |
 |---|---|
 | **vCPU** | You are throttled, never killed. Everything just runs slower. It is a share rather than a wall: when the machine is quiet you may run faster than the number, and the number is what you are guaranteed when it is not. |
