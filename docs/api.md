@@ -1093,6 +1093,12 @@ Everything in [Container endpoints](#container-endpoints) has a twin here — po
 usage, credentials — under `/machines/{mid}/containers/{cid}/…` with the same
 bodies. What follows is what only an owner can do.
 
+Two differences in [Rebuild](#rebuild)'s twin, both because the caller owns the
+machine: `allowed_images` and `allow_user_images` are not applied to it — a `ref`
+of your own works whatever the host policy says about holders — and a container
+the machine no longer has is rebuilt rather than reinstalled, which is a create
+and so takes `image_id`, `digest` or `archive` but never `ref`.
+
 ### List your machines
 
 ```
