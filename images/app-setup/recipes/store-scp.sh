@@ -264,6 +264,7 @@ Backup destination — SCP over SSH
   host key    pinned in $KNOWN
 
   Point a backup at it:
+    app-setup test store-scp
     app-setup set backup store=scp
     app-setup backup mysql
 EOF
@@ -311,6 +312,7 @@ SCP 备份存储源
     能续，而且只传变化的部分。
 
   用它
+    app-setup test store-scp
     app-setup set backup store=scp
     app-setup backup mysql
 EOF
@@ -352,6 +354,7 @@ SCP backup destination
     only sends what changed.
 
   Using it
+    app-setup test store-scp
     app-setup set backup store=scp
     app-setup backup mysql
 EOF

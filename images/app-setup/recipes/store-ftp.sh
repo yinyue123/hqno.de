@@ -215,6 +215,7 @@ Backup destination — FTP
   FTPS        $(param_on tls on && echo on || echo 'OFF — everything crosses the network in clear')
 
   Point a backup at it:
+    app-setup test store-ftp
     app-setup set backup store=ftp
     app-setup backup mysql
 EOF
@@ -255,6 +256,7 @@ FTP / FTPS 备份存储源
     一个月后第一次清理旧文件时才会发现。
 
   用它
+    app-setup test store-ftp
     app-setup set backup store=ftp
     app-setup backup mysql
 EOF
@@ -291,6 +293,7 @@ FTP / FTPS backup destination
     nobody opens.
 
   Using it
+    app-setup test store-ftp
     app-setup set backup store=ftp
     app-setup backup mysql
 EOF

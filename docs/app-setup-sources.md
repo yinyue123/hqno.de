@@ -289,6 +289,9 @@ gets a default that works from `PKGS` and `SERVICE`.
 | `do_restore` | `app-setup restore <id>` | the same |
 | `do_dump` | `app-setup dump <id>` | "this software has no dump in its recipe" |
 | `do_load` | `app-setup load <id>` | the same |
+| `do_list` | `app-setup archives <id>` — the name differs because `list` is already the catalogue | "this software has no backup in its recipe" |
+| `do_verify` | `app-setup verify <id>` | the same |
+| `do_test` | `app-setup test <id>`, and a `# button: test` | "this is not a backup destination" |
 | `is_installed` | inside `do_status` | `CHECK_PKG`, else `CHECK_BIN`, else `CHECK_FILE`, else all of `PKGS` |
 | `version_line` | inside `do_status` | nothing |
 

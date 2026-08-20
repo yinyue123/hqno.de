@@ -5139,7 +5139,8 @@ static void usage(FILE *f)
 	  "app-setup %s — install software into this container\n"
 	  "\n"
 	  "  app-setup                    the full-screen picker (this is the one you want)\n"
-	  "  app-setup list [category]    everything, or one of: stack web db dev system\n"
+	  "  app-setup list [category]    everything, or one of: stack web db backup\n"
+	  "                               dev system\n"
 	  "  app-setup info <id>          one package in detail\n"
 	  "  app-setup status [id...]     state only. Exit: 0 running, 1 stopped,\n"
 	  "                               2 not installed, 3 broken, 4 no such id\n"
@@ -5149,6 +5150,9 @@ static void usage(FILE *f)
 	  "  app-setup enable|disable <id>...   start at boot, or stop doing that\n"
 	  "  app-setup backup <id>...     pack it, and upload it if a bucket is set\n"
 	  "  app-setup restore <id>...    put the newest archive back\n"
+	  "  app-setup archives <id>      the archives this job has, here and there\n"
+	  "  app-setup verify <id>        open the newest one and check it loads\n"
+	  "  app-setup test <id>          a backup destination's five-step check\n"
 	  "  app-setup dump <id>...       one plain .sql (or .rdb) file you can read\n"
 	  "  app-setup load <id>...       feed the newest one back in\n"
 	  "  app-setup set <id> [k=v ...] show or change a recipe's settings\n"
@@ -7002,6 +7006,19 @@ int main(int argc, char **argv)
 	else if (!strcmp(cmd, "restore")) rc = na ? cli_run("restore", na, aa) : (usage(stderr), 2);
 	else if (!strcmp(cmd, "dump"))    rc = na ? cli_run("dump", na, aa) : (usage(stderr), 2);
 	else if (!strcmp(cmd, "load"))    rc = na ? cli_run("load", na, aa) : (usage(stderr), 2);
+	/* The Backup tab's other three buttons. Without these, a store configured
+	 * from a shell — which is how anybody provisioning a container does it —
+	 * can never be blessed: every job refuses with "has never passed a
+	 * connection test", and the only thing that writes that stamp is a button
+	 * on a full-screen picker. `verify` and `archives` are the same argument
+	 * one step later: a backup nobody has looked at is a hope, and looking at
+	 * it must not require a terminal that can draw. */
+	else if (!strcmp(cmd, "test"))    rc = na ? cli_run("test", na, aa) : (usage(stderr), 2);
+	else if (!strcmp(cmd, "verify"))  rc = na ? cli_run("verify", na, aa) : (usage(stderr), 2);
+	/* Named `archives` because `list` is already this program's catalogue,
+	 * and `app-setup list backup` — a category and a recipe with one id
+	 * between them — has to keep meaning the tab. */
+	else if (!strcmp(cmd, "archives")) rc = na ? cli_run("list", na, aa) : (usage(stderr), 2);
 	else if (!strcmp(cmd, "domain")) rc = cli_domain(na, aa);
 	else if (!strcmp(cmd, "dashboard")) rc = cli_dashboard(na, aa);
 	else if (!strcmp(cmd, "helppage") || !strcmp(cmd, "guide")) rc = cli_helppage(na, aa);

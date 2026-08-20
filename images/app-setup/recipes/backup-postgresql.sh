@@ -353,7 +353,8 @@ Backup job — PostgreSQL
   archives    $BK_DIR/$JOB/
 
   Run one now:      app-setup backup $JOB
-  See what exists:  sh $APP_SETUP_CONF/$JOB.sh list
+  See what exists:  app-setup archives $JOB
+  Check the newest: app-setup verify $JOB
   Put one back:     app-setup restore $JOB
 EOF
 	ok "ready."
@@ -404,6 +405,8 @@ PostgreSQL 备份任务
 
   用它
     app-setup backup $JOB
+    app-setup archives $JOB
+    app-setup verify $JOB
     app-setup restore $JOB
 EOF
 	else
@@ -452,6 +455,8 @@ PostgreSQL backup job
 
   Using it
     app-setup backup $JOB
+    app-setup archives $JOB
+    app-setup verify $JOB
     app-setup restore $JOB
 EOF
 	fi

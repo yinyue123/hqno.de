@@ -255,6 +255,7 @@ Backup destination — rsync over SSH
   host key    pinned in $KNOWN
 
   Point a backup at it:
+    app-setup test store-rsync
     app-setup set backup store=rsync
     app-setup backup mysql
 EOF
@@ -301,6 +302,7 @@ rsync 备份存储源
     话，用 SCP 那张卡。
 
   用它
+    app-setup test store-rsync
     app-setup set backup store=rsync
     app-setup backup mysql
 EOF
@@ -340,6 +342,7 @@ rsync backup destination
     far end has sshd and no rsync binary, use the SCP card instead.
 
   Using it
+    app-setup test store-rsync
     app-setup set backup store=rsync
     app-setup backup mysql
 EOF

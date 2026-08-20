@@ -50,7 +50,15 @@ PKGS_rpm="rclone"
 # it. A secret on disk in one place (params/store-s3.conf, mode 600) is a
 # limitation somebody can reason about; the same secret copied into a second
 # file by a tool they did not run is not.
+#
+# RCLONE_CONFIG=/dev/null says the same thing to rclone itself. Without it
+# every transfer opens with `NOTICE: Config file "/root/.config/rclone/
+# rclone.conf" not found - using defaults` — a timestamped line about a file
+# nobody asked for, in the middle of the progress screen of a backup that is
+# working perfectly. It also pins the configuration to this environment on a
+# machine where somebody does keep an rclone.conf of their own.
 s3_rclone() {
+	RCLONE_CONFIG=/dev/null \
 	RCLONE_CONFIG_BK_TYPE=s3 \
 	RCLONE_CONFIG_BK_PROVIDER="$([ -n "$(param endpoint)" ] && echo Other || echo AWS)" \
 	RCLONE_CONFIG_BK_ACCESS_KEY_ID="$(param access_key)" \
@@ -213,6 +221,7 @@ Backup destination — S3
   region      $(param region us-east-1)
 
   Point a backup at it:
+    app-setup test store-s3
     app-setup set backup store=s3
     app-setup backup mysql
 EOF
@@ -267,6 +276,7 @@ S3 备份存储源
     带主机名，是因为两台机器共用一个桶时，谁也不能删掉对方的历史。
 
   用它
+    app-setup test store-s3
     app-setup set backup store=s3
     app-setup backup mysql
 EOF
@@ -317,6 +327,7 @@ S3 backup destination
     prune each other's history.
 
   Using it
+    app-setup test store-s3
     app-setup set backup store=s3
     app-setup backup mysql
 EOF

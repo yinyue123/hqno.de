@@ -114,6 +114,7 @@ Backup destination — Cloudflare R2
   region      auto                (R2 requires this; it is not a setting)
 
   Point a backup at it:
+    app-setup test store-r2
     app-setup set backup store=r2
     app-setup backup mysql
 EOF
@@ -156,6 +157,7 @@ Cloudflare R2 备份存储源
     备份时失败。
 
   用它
+    app-setup test store-r2
     app-setup set backup store=r2
     app-setup backup mysql
 EOF
@@ -191,6 +193,7 @@ Cloudflare R2 backup destination
     backup.
 
   Using it
+    app-setup test store-r2
     app-setup set backup store=r2
     app-setup backup mysql
 EOF

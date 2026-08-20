@@ -41,7 +41,13 @@ PKGS_rpm="rclone"
 # `vendor` is not decoration: rclone's WebDAV backend changes how it checksums
 # and how it moves files per vendor, and a Nextcloud configured as `other`
 # uploads fine and then fails to verify.
+#
+# RCLONE_CONFIG=/dev/null for the reason store-s3.sh gives at the same line:
+# the configuration is these variables and nothing else, and a missing
+# ~/.config/rclone/rclone.conf is not news anybody needs in the middle of a
+# backup.
 dav_rclone() {
+	RCLONE_CONFIG=/dev/null \
 	RCLONE_CONFIG_BK_TYPE=webdav \
 	RCLONE_CONFIG_BK_URL="$(param url)" \
 	RCLONE_CONFIG_BK_VENDOR="$(param vendor other)" \
@@ -65,6 +71,23 @@ dav_url() {  # dav_url [folder] [name]
 	[ -n "${1-}" ] && _u="$_u/$1"
 	[ -n "${2-}" ] && _u="$_u/$2"
 	printf '%s' "$_u"
+}
+
+# A collection is addressed with a trailing slash, and the servers this card
+# exists for enforce it: Apache's mod_dav — which is what a Synology, a
+# Nextcloud and most of the rest are underneath — answers any method aimed at
+# a collection *without* the slash with a 301 to the URL that has one. curl
+# does not follow redirects and must not be told to, so both places that name
+# a folder rather than a file say so in the URL.
+#
+# It failed silently in both, which is why it survived: the PROPFIND returned
+# nothing and read as an empty directory — so a backup uploaded fine and then
+# could not be listed, verified or restored — and the probe's DELETE did
+# nothing, leaving a .app-setup-probe-* folder on the server for every
+# connection test anybody ever pressed. Only on machines where rclone would
+# not install, which is the half of this recipe nobody runs.
+dav_dir_url() {  # dav_dir_url <folder>
+	printf '%s/' "$(dav_url "$1")"
 }
 
 dav_configured() { [ -n "$(param url)" ] && [ -n "$(param user)" ]; }
@@ -146,7 +169,7 @@ do_ls() {     # do_ls <folder>
 	if have rclone; then
 		dav_rclone lsf "BK:$1" 2>/dev/null | grep -v '/$' | sort
 	else
-		dav_curl -X PROPFIND -H 'Depth: 1' "$(dav_url "$1")" 2>/dev/null |
+		dav_curl -X PROPFIND -H 'Depth: 1' "$(dav_dir_url "$1")" 2>/dev/null |
 			tr '<' '\n' | sed -n 's#^[dD]:\?href>##p' |
 			sed 's#/$##; s#.*/##' |
 			sed 's/%20/ /g; s/%2F/\//g' |
@@ -169,7 +192,7 @@ do_rm() {     # do_rm <folder> <name>
 # The probe folder goes when the probe does, whether it passed or failed.
 bk_probe_cleanup() {
 	if have rclone; then dav_rclone purge "BK:$1" >/dev/null 2>&1 || true
-	else dav_curl -X DELETE "$(dav_url "$1")" >/dev/null 2>&1 || true; fi
+	else dav_curl -X DELETE "$(dav_dir_url "$1")" >/dev/null 2>&1 || true; fi
 }
 
 do_test() {
@@ -222,6 +245,7 @@ Backup destination — WebDAV
   server      $(param vendor other)
 
   Point a backup at it:
+    app-setup test store-webdav
     app-setup set backup store=webdav
     app-setup backup mysql
 EOF
@@ -268,6 +292,7 @@ WebDAV 备份存储源
     但五个动作都能做。用了哪个，测试连接时会说。
 
   用它
+    app-setup test store-webdav
     app-setup set backup store=webdav
     app-setup backup mysql
 EOF
@@ -309,6 +334,7 @@ WebDAV backup destination
     one it used.
 
   Using it
+    app-setup test store-webdav
     app-setup set backup store=webdav
     app-setup backup mysql
 EOF

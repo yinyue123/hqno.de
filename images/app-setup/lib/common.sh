@@ -1887,9 +1887,22 @@ BK_ID="${BK_ID:-$(basename "$0" .sh)}"
 # `backup` card declares neither and gets them out of params/backup.conf. Asked
 # in that order, so a job that sets nothing still inherits the machine's
 # destination and a job that sets one is never overruled by it.
+#
+# `none` counts as nothing set, and it has to: the binary exports every
+# declared parameter, and for one that has never been saved it exports the
+# header's *default* — so a job card whose Destination has never been touched
+# arrives here as store=none, not as an empty string. Without this line the
+# inheritance the paragraph above describes could never happen even once, and
+# `app-setup set backup store=webdav; app-setup install backup-mysql` — the two
+# lines every store's own help text ends with — failed with "this job has
+# nowhere to send its backups" directly under "Set up already: webdav".
+# It is not a value anybody loses by this: a job pointed at `none` is refused
+# by bk_need_store, so the dropdown's first entry means "not chosen yet"
+# everywhere else already.
 bk_setting() {     # bk_setting <key> [default]
 	local _v
 	_v="$(param "$1")"
+	[ "$_v" = none ] && _v=""
 	[ -n "$_v" ] || _v="$(bk_conf "$1")"
 	[ -n "$_v" ] || _v="${2-}"
 	printf '%s' "$_v"
