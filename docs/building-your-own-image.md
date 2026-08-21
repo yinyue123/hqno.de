@@ -5,6 +5,10 @@ and until this page is published that button points at a placeholder URL
 (`buildImageHelpURL` in `server/internal/api/me.go`). Swap the constant when
 this is live.*
 
+*The same box is on the new-container form now (image.md §10), so the page has
+two doors to answer for rather than one: a machine's owner may name a reference
+at create, and a holder brings one by reinstalling.*
+
 ## What this page has to answer
 
 Someone holding a container has been shown a box that wants a full registry

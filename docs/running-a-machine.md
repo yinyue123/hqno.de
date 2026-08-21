@@ -208,6 +208,13 @@ tenants read those numbers and file support requests about them.
 Pick an image the machine already has and the create downloads nothing and takes
 seconds — one copy on the machine is shared by every container built from it.
 
+The image row has three tabs. **From the market** is that shared copy. **A
+reference of your own** is anything you have pushed to a registry the machine
+can reach: the machine downloads it while it builds the container, unpacks it
+into that container's own disk, and counts the download as that container's
+traffic — so it needs a disk size. **From this host** is a file you have copied
+into the machine's image directory yourself, which costs no traffic at all.
+
 **You should see:**
 
 <FigScreen title="wp-1 is running" :lines="[
