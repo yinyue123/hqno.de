@@ -6046,6 +6046,13 @@ static int cli_reinstall(int argc, char **argv)
 	char typed[128];
 	if (confirm) {
 		snprintf(typed, sizeof typed, "%s", confirm);
+		/* The screen above is on stdout and the refusal below is on stderr,
+		 * and the branch that prompts flushes between them by having to. This
+		 * one does not prompt, so nothing flushes: to a terminal that costs
+		 * nothing (stdout is line-buffered there), but redirected to a file or
+		 * a pipe — which is what --confirm is for — stdout is block-buffered
+		 * and the refusal lands in the middle of the screen it is refusing. */
+		fflush(stdout);
 	} else {
 		printf("\n%s", prompt[0] ? prompt : "Type this container's name to confirm: ");
 		fflush(stdout);
