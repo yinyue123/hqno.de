@@ -200,6 +200,31 @@ all, and a container with no disk size of its own has nowhere to keep an image
 only it can see — the dialog says which of the two it is. See
 [building your own image](building-your-own-image.md).
 
+There is a third source the dialog offers where your host has put one there:
+an **archive** on the machine, which is how a host whose network cannot carry
+a 200 MB pull hands you an image anyway.
+
+### Or from the shell, with `reinstall`
+
+The same thing, typed inside the container, for when you are already in a
+shell:
+
+```
+reinstall                  what this container can be rebuilt from
+reinstall ubuntu-24.04     one of those images — part of the name is enough
+reinstall ref ghcr.io/you/thing:tag
+reinstall archive box.tar
+```
+
+Bare `reinstall` only ever prints the list. Naming one tells you what it
+would install and what you are about to lose, and then asks you to type the
+container's name — the same confirmation the dialog asks for, and a bare
+Enter cancels.
+
+When you confirm, **your SSH session ends**: the container is stopped part-way
+through the rebuild and the connection goes with it. That is what is supposed
+to happen. Log back in a minute or two later, same address, same password.
+
 ### The systems on offer
 
 What your host has cached on that machine is what you can pick, and the list

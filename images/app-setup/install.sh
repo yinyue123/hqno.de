@@ -54,7 +54,7 @@ uninstall)
 	rm -f /bin/app-setup /etc/profile.d/app-setup.sh
 	rm -rf /usr/lib/app-setup
 	rm -f /etc/app-setup/*.sh
-	rm -f /usr/local/bin/helppage /usr/local/bin/dashboard
+	rm -f /usr/local/bin/helppage /usr/local/bin/dashboard /usr/local/bin/reinstall
 	# local/, params/ and secrets/ stay. Software this installed is still
 	# installed and still running on the port that was set and the password
 	# that was generated, and the recipes in local/ are the holder's own work;
@@ -136,8 +136,16 @@ if [ -d "$here/../helppage" ]; then
 	rm -rf /etc/helppage; mkdir -p /etc/helppage /usr/local/bin
 	for f in "$here"/../helppage/*.txt; do install -m 0644 "$f" /etc/helppage/; done
 	ln -sf /bin/app-setup /usr/local/bin/helppage
-	ln -sf /bin/app-setup /usr/local/bin/dashboard
 fi
+
+# The bare words that answer to this binary, which are not conditional on the
+# guide being here: `dashboard` and `reinstall` talk to the host's daemon over
+# the container's own socket and are the two things somebody wants at a shell
+# prompt that app-setup itself is not (docs/dashboard-cli.md,
+# docs/reinstall-cli.md).
+mkdir -p /usr/local/bin
+ln -sf /bin/app-setup /usr/local/bin/dashboard
+ln -sf /bin/app-setup /usr/local/bin/reinstall
 if [ "$demo" = 1 ]; then
 	for f in "$here"/demo/*.sh; do install -m 0755 "$f" /etc/app-setup/; done
 fi

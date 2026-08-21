@@ -189,12 +189,13 @@ RUN set -eux; \
     ln -sf /bin/app-setup /usr/local/sbin/poweroff; \
     test -x /sbin/halt; \
     ln -sf /bin/app-setup /usr/local/sbin/halt; \
-    # domain and dashboard answer to app-setup too, bare, the same
-    # multicall way — no real system binary behind either name to fall
-    # through to, so unlike poweroff/halt there is nothing to guard with
-    # test -x.
+    # domain, dashboard and reinstall answer to app-setup too, bare, the
+    # same multicall way — no real system binary behind any of those names
+    # to fall through to, so unlike poweroff/halt there is nothing to guard
+    # with test -x.
     ln -sf /bin/app-setup /usr/local/bin/domain; \
     ln -sf /bin/app-setup /usr/local/bin/dashboard; \
+    ln -sf /bin/app-setup /usr/local/bin/reinstall; \
     ln -sf /bin/app-setup /usr/local/bin/helppage; \
     app-setup doctor >/dev/null
 

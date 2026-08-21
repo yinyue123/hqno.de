@@ -5164,6 +5164,10 @@ static void usage(FILE *f)
 	  "  app-setup dashboard [section ...]  what this box is, is allowed and is\n"
 	  "                               using. No section draws all of them:\n"
 	  "                               box cpu mem disk net ports domains ssh\n"
+	  "  app-setup reinstall [ls|<image>|ref <r>|archive <f>]\n"
+	  "                               rebuild this container's root filesystem\n"
+	  "                               from an image. No argument lists what it\n"
+	  "                               can be rebuilt from — `reinstall help`\n"
 	  "  app-setup helppage [page]    the guide, full-screen: ports and domains,\n"
 	  "                               installing software, limits, reinstall.\n"
 	  "                               `helppage --list` names the pages\n"
@@ -5807,6 +5811,290 @@ static int cli_dashboard(int argc, char **argv)
 	int rc = dashboard_print(rows, "System", g_sys.pretty[0] ? g_sys.pretty : "this container");
 	printf("\n");
 	return rc;
+}
+
+
+/* -------------------------------------------------------------- reinstall --
+ * `reinstall` — rebuild this container's root filesystem from an image, from
+ * inside the container that is about to lose it (docs/reinstall-cli.md). Same
+ * socket as `domain` and `dashboard`, same reason: this container has no
+ * credential of its own, only a connection to the daemon on its host, which
+ * relays the request over its own already-authenticated link to the panel.
+ *
+ * It is the only thing on that socket that destroys anything, and the whole
+ * shape of this command follows from one fact — **the shell that types it
+ * does not survive it.** Part-way through, the container is stopped; this
+ * process is killed with it, and so is the SSH session it was typed into. So:
+ *
+ *   1. ASK   the daemon what the typed word resolves to. Nothing is touched.
+ *            A word naming no image is refused here, before anybody has been
+ *            made to retype their container's name for nothing.
+ *   2. the confirmation prompt, worded by the daemon and printed by this.
+ *   3. GO    and say so before waiting, because the last thing this terminal
+ *            ever prints is whatever was flushed before the rebuild began.
+ *
+ * As everywhere else on this socket, the wording is the daemon's and the
+ * drawing is this program's: the daemon is upgraded in place from the panel,
+ * while this binary is baked into twenty published images where a changed
+ * sentence costs a rebuild and a republish of all of them.
+ */
+#define REINSTALL_MAX_ROWS 256
+
+static void reinstall_usage(FILE *out)
+{
+	fprintf(out,
+		"Usage: reinstall [ls | <image> | ref <reference> | archive <file>]\n"
+		"\n"
+		"Replace this container's root filesystem with a fresh image, and\n"
+		"start it again. Everything in the root filesystem is erased. A\n"
+		"/data disk, where this container has one, is not touched.\n"
+		"\n"
+		"Commands:\n"
+		"  ls                 what this container can be rebuilt from: the\n"
+		"                     images this machine offers, the archives on it,\n"
+		"                     and whether it takes an image of your own.\n"
+		"                     This is also what bare `reinstall` prints.\n"
+		"  <image>            one of the images from \"ls\". Part of the name\n"
+		"                     is enough, as long as it names only one of them\n"
+		"                     — \"reinstall ubuntu-24.04\".\n"
+		"  ref <reference>    an image of your own, from any registry this\n"
+		"                     machine can reach. It is fetched for this\n"
+		"                     container alone and the download counts against\n"
+		"                     this container's traffic allowance. Only where\n"
+		"                     the machine allows it and this container has a\n"
+		"                     disk of its own.\n"
+		"  archive <file>     one of the archive files from \"ls\", which\n"
+		"                     whoever runs the machine put there.\n"
+		"  help               this text\n"
+		"\n"
+		"Options:\n"
+		"  --confirm <name>   answer the confirmation prompt up front, with\n"
+		"                     this container's own name. For a script; typing\n"
+		"                     it at a prompt is the ordinary way.\n"
+		"\n"
+		"Examples:\n"
+		"  reinstall\n"
+		"      What this container can be rebuilt from.\n"
+		"\n"
+		"  reinstall debian-13\n"
+		"      Rebuild from the machine's Debian 13 image, after confirming.\n"
+		"\n"
+		"  reinstall ref ghcr.io/me/mine:v2\n"
+		"      Rebuild from an image of your own.\n");
+}
+
+/* The value travels base64 for the reason the password in SETPW does: a
+ * registry reference and an operator's own file name are not this protocol's
+ * to put rules on, and the request is one line. */
+static int reinstall_encode(const char *value, char *out, size_t cap)
+{
+	size_t n = strlen(value);
+	if (n * 4 / 3 + 8 > cap) return 0;
+	b64_encode((const unsigned char *)value, n, out);
+	return 1;
+}
+
+/* Draws the rows the daemon sent — the same three-field framing `dashboard`
+ * reads, with one row kind of its own: 'P' is the prompt to print before
+ * reading an answer, and is handed back rather than drawn. Its label is the
+ * one word that answers it, which is this container's own name. */
+static void reinstall_print(const char *payload, char *prompt, size_t prompt_cap,
+                            char *expect, size_t expect_cap)
+{
+	static char buf[8192];
+	snprintf(buf, sizeof buf, "%s", payload);
+	if (prompt && prompt_cap) prompt[0] = '\0';
+	if (expect && expect_cap) expect[0] = '\0';
+
+	static char *items[REINSTALL_MAX_ROWS];
+	int n = dash_split(buf, DASH_RS, items, REINSTALL_MAX_ROWS);
+
+	static char *kind[REINSTALL_MAX_ROWS], *label[REINSTALL_MAX_ROWS], *value[REINSTALL_MAX_ROWS];
+	int width = 0;
+	for (int i = 0; i < n; i++) {
+		char *f[3] = { (char *)"", (char *)"", (char *)"" };
+		dash_split(items[i], DASH_US, f, 3);
+		kind[i] = f[0]; label[i] = f[1]; value[i] = f[2];
+		if (kind[i][0] == 'F') {
+			int len = (int)strlen(label[i]);
+			if (len > width) width = len;
+		}
+	}
+
+	int drawn = 0;
+	for (int i = 0; i < n; i++) {
+		if (kind[i][0] == 'P') {
+			if (prompt && prompt_cap) snprintf(prompt, prompt_cap, "%s", value[i]);
+			if (expect && expect_cap) snprintf(expect, expect_cap, "%s", label[i]);
+			continue;
+		}
+		if (kind[i][0] == 'H') {
+			if (drawn) printf("\n");
+			printf("%s", label[i]);
+			if (value[i][0]) printf("  %s", value[i]);
+			printf("\n");
+		} else if (!label[i][0]) {
+			printf("  %s\n", value[i]);
+		} else {
+			printf("  %-*s  %s\n", width, label[i], value[i]);
+		}
+		drawn = 1;
+	}
+}
+
+/* One line of typed answer, echo left on — this is a container's own name
+ * being retyped, not a secret. NULL on end of input, which is what a script
+ * that piped nothing in gets, and is a cancel rather than a confirmation. */
+static char *reinstall_read_line(char *buf, size_t cap)
+{
+	if (!fgets(buf, (int)cap, stdin)) return NULL;
+	size_t n = strlen(buf);
+	while (n && (buf[n - 1] == '\n' || buf[n - 1] == '\r')) buf[--n] = '\0';
+	return buf;
+}
+
+/* hqnode_sock_call's answer, checked the way domain_reply checks it, but
+ * handing the payload back instead of printing it: the three verbs here each
+ * do something different with theirs. NULL means it has already been
+ * reported. */
+static const char *reinstall_payload(const char *resp)
+{
+	if (!resp) {
+		fprintf(stderr, "reinstall: could not reach the hqnode daemon\n");
+		return NULL;
+	}
+	if (!strncmp(resp, "ERR ", 4)) {
+		fprintf(stderr, "reinstall: %s\n", resp + 4);
+		return NULL;
+	}
+	if (strncmp(resp, "OK", 2) != 0) {
+		fprintf(stderr, "reinstall: unexpected answer from the hqnode daemon\n");
+		return NULL;
+	}
+	if (g_sock_truncated) {
+		fprintf(stderr, "reinstall: the answer was too long to read whole; "
+		                "nothing was done\n");
+		return NULL;
+	}
+	return resp[2] == ' ' ? resp + 3 : resp + 2;
+}
+
+static int reinstall_ls(void)
+{
+	const char *rows = reinstall_payload(hqnode_sock_call("REINSTALL LS\n"));
+	if (!rows) return 1;
+	reinstall_print(rows, NULL, 0, NULL, 0);
+	return 0;
+}
+
+static int cli_reinstall(int argc, char **argv)
+{
+	const char *confirm = NULL;
+	char *rest[8];
+	int n = 0;
+	for (int i = 0; i < argc; i++) {
+		if (!strcmp(argv[i], "--confirm") && i + 1 < argc) { confirm = argv[++i]; continue; }
+		if (n < 7) rest[n++] = argv[i];
+	}
+
+	if (n == 0) return reinstall_ls();
+	const char *verb = rest[0];
+	if (!strcmp(verb, "help") || !strcmp(verb, "-h") || !strcmp(verb, "--help")) {
+		reinstall_usage(stdout);
+		return 0;
+	}
+	if (!strcmp(verb, "ls") || !strcmp(verb, "list")) return reinstall_ls();
+
+	/* Three sources, and the bare form is the one people type: `reinstall
+	 * debian-13` means the machine's own image list, because that is where
+	 * nearly every reinstall comes from. An image whose name happens to be
+	 * one of the words above can still be named as `reinstall image ls`. */
+	const char *kind = "image", *value = NULL;
+	if (!strcmp(verb, "ref") || !strcmp(verb, "reference") ||
+	    !strcmp(verb, "archive") || !strcmp(verb, "image")) {
+		if (n < 2) {
+			fprintf(stderr, "reinstall: %s needs something after it\n\n", verb);
+			reinstall_usage(stderr);
+			return 2;
+		}
+		kind = !strcmp(verb, "reference") ? "ref" : verb;
+		value = rest[1];
+	} else {
+		value = rest[0];
+	}
+
+	char encoded[1400];
+	if (!reinstall_encode(value, encoded, sizeof encoded)) {
+		fprintf(stderr, "reinstall: that is too long to name here\n");
+		return 1;
+	}
+
+	/* 1. What would this be? Nothing is touched by asking. */
+	char line[2048];
+	int len = snprintf(line, sizeof line, "REINSTALL ASK %s %s\n", kind, encoded);
+	if (len < 0 || (size_t)len >= sizeof line) {
+		fprintf(stderr, "reinstall: that is too long to name here\n");
+		return 1;
+	}
+	const char *rows = reinstall_payload(hqnode_sock_call(line));
+	if (!rows) return 1;
+
+	char prompt[256], expect[128];
+	reinstall_print(rows, prompt, sizeof prompt, expect, sizeof expect);
+
+	/* 2. The confirmation, which is this container's own name. */
+	char typed[128];
+	if (confirm) {
+		snprintf(typed, sizeof typed, "%s", confirm);
+	} else {
+		printf("\n%s", prompt[0] ? prompt : "Type this container's name to confirm: ");
+		fflush(stdout);
+		if (!reinstall_read_line(typed, sizeof typed) || typed[0] == '\0') {
+			printf("Nothing was done.\n");
+			return 1;
+		}
+	}
+	/* Checked here as well as by the panel, and only so that the line below
+	 * — which says this session is about to end — is never printed over an
+	 * answer that was never going to be accepted. The panel checks it again
+	 * and is the thing that decides; this is about what the terminal says. */
+	if (expect[0] ? strcmp(typed, expect) != 0 : strpbrk(typed, " \t") != NULL) {
+		/* The fallback, for an answer this end cannot check against a name:
+		 * a container name cannot hold whitespace (the panel's own rule) and
+		 * the request is one line, so an answer that could not be one is a
+		 * mismatch rather than something to send and let the line break on. */
+		fprintf(stderr, "reinstall: that is not this container's name. Nothing was done.\n");
+		return 1;
+	}
+
+	/* 3. Say it before doing it: the rebuild stops this container, which
+	 * kills this process and the SSH session it is running in. Whatever is
+	 * still in the output buffer at that moment is never seen. */
+	len = snprintf(line, sizeof line, "REINSTALL GO %s %s %s\n", kind, typed, encoded);
+	if (len < 0 || (size_t)len >= sizeof line) {
+		fprintf(stderr, "reinstall: that is too long to name here\n");
+		return 1;
+	}
+	printf("\nRebuilding. This session ends here — log back in a minute or two "
+	       "from now, with the same address and the same password.\n");
+	fflush(stdout);
+
+	/* The answer to this arrives only where there is still somebody to read
+	 * it, which means only where it was refused: on success this process is
+	 * long dead by the time the daemon writes back. */
+	const char *done = hqnode_sock_call(line);
+	if (!done) {
+		fprintf(stderr, "reinstall: the connection to the hqnode daemon ended "
+		                "without an answer. If this container is still up in a "
+		                "few minutes, nothing was rebuilt.\n");
+		return 1;
+	}
+	if (!strncmp(done, "ERR ", 4)) {
+		fprintf(stderr, "reinstall: %s\n", done + 4);
+		return 1;
+	}
+	printf("%s\n", done[2] == ' ' ? done + 3 : done + 2);
+	return 0;
 }
 
 /* -------------------------------------------------------------- helppage --
@@ -6929,6 +7217,11 @@ int main(int argc, char **argv)
 	// name of the program that happens to provide it.
 	if (argc > 0 && !strcmp(prog_basename(argv[0]), "dashboard"))
 		return cli_dashboard(argc - 1, argv + 1);
+	// And `reinstall`, which is the one of these that is very nearly a system
+	// binary: it is what somebody types when they want the box back the way
+	// it came, and there is nothing else on the machine by that name.
+	if (argc > 0 && !strcmp(prog_basename(argv[0]), "reinstall"))
+		return cli_reinstall(argc - 1, argv + 1);
 	if (argc > 0 && !strcmp(prog_basename(argv[0]), "helppage"))
 		return cli_helppage(argc - 1, argv + 1);
 
@@ -7021,6 +7314,7 @@ int main(int argc, char **argv)
 	else if (!strcmp(cmd, "archives")) rc = na ? cli_run("list", na, aa) : (usage(stderr), 2);
 	else if (!strcmp(cmd, "domain")) rc = cli_domain(na, aa);
 	else if (!strcmp(cmd, "dashboard")) rc = cli_dashboard(na, aa);
+	else if (!strcmp(cmd, "reinstall")) rc = cli_reinstall(na, aa);
 	else if (!strcmp(cmd, "helppage") || !strcmp(cmd, "guide")) rc = cli_helppage(na, aa);
 	else if (!strcmp(cmd, "docs") || !strcmp(cmd, "help")) {
 		if (!na) { usage(stdout); return 0; }

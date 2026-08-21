@@ -128,6 +128,30 @@ your laptop, and three things follow:
 If the machine already happens to hold that exact image, it uses its own
 copy: nothing is downloaded and nothing is charged.
 
+== Doing it from in here ==
+
+`reinstall`, typed at this prompt, is the same thing the panel's button does
+— the same images, the same rules, the same confirmation. It is there for
+when you are already in a shell and would rather not go and find a browser.
+
+    reinstall                  what this container can be rebuilt from
+    reinstall ubuntu-24.04     one of those images. Part of the name is
+                               enough, as long as it names only one
+    reinstall ref ghcr.io/you/thing:tag     an image of your own
+    reinstall archive box.tar  a file your host put on the machine
+    reinstall help             the full syntax
+
+Bare `reinstall` never reinstalls anything — it prints the list. Naming an
+image prints what would happen and then asks you to type this container's
+name, exactly as the dialog does; a bare Enter there cancels and nothing has
+happened.
+
+When you confirm, YOUR SSH SESSION ENDS. That is not a failure: the
+container is stopped part-way through the rebuild, and the connection goes
+with it. There is no progress bar to watch from in here, because there is no
+"in here" any more. Wait a minute or two and log back in — same address,
+same password.
+
 == After a reinstall ==
 
 Your domains still point here and your ports are still open, but nothing is
