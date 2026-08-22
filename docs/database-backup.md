@@ -468,6 +468,74 @@ root@box:~# app-setup backup backup-postgresql  # once now, to be sure
 root@box:~# app-setup restore backup-postgresql # the day you need it
 ```
 
+## Bringing an old database in
+
+If you already have data somewhere — a PostgreSQL in another container, on an
+old host, or a managed cloud database — moving it into the one app-setup now
+manages is a **one-time dump-then-load**, done with the same two tools. You do
+it once, on the way in; after that the backup job set up above protects it.
+
+The rule that makes this painless: a **logical dump** (`pg_dump` /
+`pg_dumpall`) reads on one version and loads on another. A dump taken from
+PostgreSQL 17 loads straight into the 18 app-setup installs — tested, and the
+whole reason to migrate this way rather than copying data files.
+
+### The common case: the old one is a container on this machine
+
+Move just your application's database. This carries the tables and the data and
+**nothing else** — no roles, no passwords cross over, which is exactly what you
+want when the old container had its own credentials you are leaving behind:
+
+```
+# 1. Dump only your database from the old container. --no-owner --no-privileges
+#    is what drops the old ownership and grants, so no old account comes with it.
+#    (Read-only: it changes nothing in the old database.)
+root@box:~# podman exec OLD_CONTAINER \
+    pg_dump -U OLD_USER -d OLD_DBNAME --no-owner --no-privileges > /root/olddata.sql
+
+# 2. Make an empty database of the same name in the one app-setup manages.
+root@box:~# podman exec NEW_CONTAINER su postgres -c "createdb OLD_DBNAME"
+
+# 3. Load the data into it.
+root@box:~# podman cp /root/olddata.sql NEW_CONTAINER:/tmp/olddata.sql
+root@box:~# podman exec NEW_CONTAINER su postgres -c "psql -d OLD_DBNAME -f /tmp/olddata.sql"
+
+# 4. Check it arrived.
+root@box:~# podman exec NEW_CONTAINER su postgres -c "psql -d OLD_DBNAME -c '\dt'"
+```
+
+`\dt` should list your tables. Point your application at the new database, and
+run `app-setup backup backup-postgresql` once — now the data you just moved has
+a copy in the bucket too.
+
+### The old one is another host, or a managed cloud database
+
+Same three steps; only the dump changes, to reach across the network with the
+credentials you already have for the old side:
+
+```
+root@box:~# pg_dump -h OLD_HOST -p 5432 -U OLD_USER -d OLD_DBNAME \
+              --no-owner --no-privileges > /root/olddata.sql
+```
+
+Then `createdb` and `psql -f` into the app-setup database exactly as above. (If
+the old host needs SSL, add the same `?sslmode=…` your application uses.)
+
+### If you would rather move the whole cluster
+
+Roles and every database at once — use `pg_dumpall`, and mind that it carries
+the old roles' **password hashes** with it, so only do this when you mean to
+bring those accounts across too:
+
+```
+root@box:~# podman exec OLD_CONTAINER pg_dumpall -U OLD_USER > /root/old-all.sql
+root@box:~# podman exec -i NEW_CONTAINER su postgres -c psql < /root/old-all.sql
+```
+
+For MySQL / MariaDB the shape is identical with its own tools —
+`mysqldump OLD_DBNAME > olddata.sql` on the old side, `mysql NEW_DBNAME <
+olddata.sql` on the new.
+
 ## See also
 
 - [Quick start](/quick-start) — installing the database in the first place.

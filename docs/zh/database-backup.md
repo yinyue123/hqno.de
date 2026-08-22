@@ -418,6 +418,66 @@ root@box:~# app-setup backup backup-postgresql  # 现在先备一次，稳妥
 root@box:~# app-setup restore backup-postgresql # 需要那天
 ```
 
+## 把老数据库迁进来
+
+如果你已经有数据在别处 —— 另一个容器里的 PostgreSQL、一台老机器上的、或者一个云托管数据库 ——
+把它搬到 app-setup 现在管的这个库里，就是**一次性的先导出、再导入**，用的还是那两个工具。搬一次
+就好；搬完之后，上面配好的备份任务就顺带保护它了。
+
+让这件事不痛的那条规律：**逻辑导出**（`pg_dump` / `pg_dumpall`）在一个版本上导出、能在另一个版本上
+导入。从 PostgreSQL 17 导出的，直接能进 app-setup 装的 18 —— 实测过，这也正是为什么要这样迁，而不是
+去拷数据文件。
+
+### 常见情况：老库是本机上的另一个容器
+
+只搬你应用那一个数据库。这样只带走表和数据、**别的都不带** —— 角色、密码都不跟过来，这正是你要的：
+老容器有它自己那套凭证，你正好把它留在原地：
+
+```
+# 1. 只从老容器导出你那个库。--no-owner --no-privileges 把老的属主和授权去掉，
+#    所以不会有老账号跟过来。（只读：老库里什么都不动。）
+root@box:~# podman exec 老容器 \
+    pg_dump -U 老用户 -d 老库名 --no-owner --no-privileges > /root/olddata.sql
+
+# 2. 在 app-setup 管的那个库里，建一个同名的空库。
+root@box:~# podman exec 新容器 su postgres -c "createdb 老库名"
+
+# 3. 把数据导进去。
+root@box:~# podman cp /root/olddata.sql 新容器:/tmp/olddata.sql
+root@box:~# podman exec 新容器 su postgres -c "psql -d 老库名 -f /tmp/olddata.sql"
+
+# 4. 看它到没到。
+root@box:~# podman exec 新容器 su postgres -c "psql -d 老库名 -c '\dt'"
+```
+
+`\dt` 应该列出你的表。把应用指向新库，再跑一次 `app-setup backup backup-postgresql` —— 你刚搬进来的
+数据现在在桶里也有一份了。
+
+### 老库是另一台机器，或者一个云托管数据库
+
+同样三步，只有导出那条变一下，用你手上老库的凭证走网络连过去：
+
+```
+root@box:~# pg_dump -h 老主机 -p 5432 -U 老用户 -d 老库名 \
+              --no-owner --no-privileges > /root/olddata.sql
+```
+
+然后照上面一样 `createdb` 再 `psql -f` 进 app-setup 的库。（老主机要 SSL 的话，把你应用在用的那个
+`?sslmode=…` 加上。）
+
+### 如果你想把整个集群一起搬
+
+角色加每个库一次全搬 —— 用 `pg_dumpall`，但要注意它会把老角色的**密码哈希**一起带过来，所以只有
+你确实想把那些账号也搬过去时才这么做：
+
+```
+root@box:~# podman exec 老容器 pg_dumpall -U 老用户 > /root/old-all.sql
+root@box:~# podman exec -i 新容器 su postgres -c psql < /root/old-all.sql
+```
+
+MySQL / MariaDB 形状一样，换成它自己的工具 —— 老边 `mysqldump 老库名 > olddata.sql`，
+新边 `mysql 新库名 < olddata.sql`。
+
 ## 另见
 
 - [快速上手](/zh/quick-start) —— 一开始怎么把数据库装上。
