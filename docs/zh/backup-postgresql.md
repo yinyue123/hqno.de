@@ -1,19 +1,14 @@
-# 备份和恢复数据库
+# 备份和恢复 PostgreSQL
 
 备份就是设置一次的两件事 —— **存到哪**，和**备什么** —— 之后它就定时自己跑，你不用再管。
 恢复是一条命令。
 
-这一页用一个真实例子从头走到尾：**PostgreSQL，备份到一个免费的 Cloudflare R2 桶，大约十分钟。**
-其它数据库步骤一样，只改一个词：
+这一页讲 **PostgreSQL**，从头到尾，配一个真实例子：备份到一个免费的 Cloudflare R2 桶，大约十分钟。
+用到两个 recipe：`postgresql`（数据库）和 `backup-postgresql`（备份任务）。
 
-| 你的数据库 | 装数据库 | 备份它 |
-|---|---|---|
-| **PostgreSQL** | `app-setup install postgresql` | `app-setup install backup-postgresql` |
-| **MySQL / MariaDB** | `app-setup install mysql` | `app-setup install backup-mysql` |
-| **MongoDB** | `app-setup install mongodb` | `app-setup install backup-mongodb` |
-| **Redis** | `app-setup install redis` | `app-setup install backup-redis` |
-
-下面的例子用 `backup-postgresql`。MySQL 就把出现的地方都换成 `backup-mysql`，表单和按钮一模一样。
+> 其它数据库做法一样，各自有各自的一页：MySQL / MariaDB（`backup-mysql`）、MongoDB
+> （`backup-mongodb`）、Redis（`backup-redis`）。下面的存储源、五步测试、四个动作按钮它们都共用，
+> 只有导出工具不同。
 
 ---
 
@@ -247,8 +242,8 @@ keep_monthly=6
 三种**方式**，最省事又最好的先说：
 
 <FigRows :rows="[
-  [{ t: 'dump', tone: 'strong' }, { t: 'pg_dumpall / mysqldump —— 能读的文本。默认，也是该用的那个。', tone: 'mute' }],
-  [{ t: 'binary', tone: 'strong' }, { t: '走复制协议的物理副本。唯一一个能真正备份远程机器的。', tone: 'mute' }],
+  [{ t: 'dump', tone: 'strong' }, { t: 'pg_dumpall —— 能读的文本。默认，也是该用的那个。', tone: 'mute' }],
+  [{ t: 'binary', tone: 'strong' }, { t: 'pg_basebackup，走复制协议的物理副本。唯一一个能真正备份远程机器的。', tone: 'mute' }],
   [{ t: 'files', tone: 'strong' }, { t: '停库、拷数据目录、启库。只能备本机，一定有停机。', tone: 'mute' }],
 ]" />
 
@@ -291,8 +286,7 @@ root@box:~# app-setup load postgresql    # 把最新那份喂回去
 它一条查询没服务就先占掉几百兆。**app-setup 在安装时替你按容器实际的内存把它调小** —— 常见情况
 你什么都不用做。这一节是给你想再小一点的时候看的。
 
-每个数据库脚本都问同一个问题 —— 这机器有多少内存 —— 而且答法一样，所以 PostgreSQL 和 MariaDB
-永远不会对「小」是什么各说各话：
+`postgresql` 脚本在安装时问一个问题 —— 这机器有多少内存 —— 按答案挑一个档位：
 
 <FigRows :head="['你这份容器', '档位', '会怎样']" :rows="[
   [{ t: '不到 512M' }, { t: 'tiny', tone: 'strong' }, { t: '每个默认值都不对，狠狠砍', tone: 'mute' }],
@@ -300,9 +294,9 @@ root@box:~# app-setup load postgresql    # 把最新那份喂回去
   [{ t: '1G 及以上' }, { t: 'normal', tone: 'strong' }, { t: '不动 —— 到这份上默认值就对了', tone: 'mute' }],
 ]" />
 
-到 1G 以下，它多写一个配置文件，大小按这台机器算，而且会告诉你它写了。**PostgreSQL** 是往集群
-自己的 `postgresql.conf` 追加一段。挑大梁的是 `shared_buffers`（启动时一次性预留）和 `work_mem`
-（*按每次排序、每个连接*收费 —— 真正的上限是它乘以同时在排的排序数，所以才一直压得很小）：
+到 1G 以下，它往集群自己的 `postgresql.conf` 追加一段，大小按这台机器算，而且会告诉你它写了。
+挑大梁的是 `shared_buffers`（启动时一次性预留）和 `work_mem`（*按每次排序、每个连接*收费 ——
+真正的上限是它乘以同时在排的排序数，所以才一直压得很小）：
 
 ```ini
 # 追加到 /data/postgresql/postgresql.conf  —— 512M 容器上
@@ -314,25 +308,11 @@ effective_cache_size = 64MB
 max_parallel_workers_per_gather = 0   # 这么小的机器上，并行的代价比收益大
 max_parallel_workers = 0
 autovacuum_max_workers = 1
-jit = off
-```
-
-**MariaDB** 那个文件是 `/etc/mysql/mariadb.conf.d/90-app-setup.cnf`，最要紧的三行，就是默认
-各自 128M 的那三个缓存：
-
-```ini
-# /etc/mysql/mariadb.conf.d/90-app-setup.cnf  —— 512M 容器上
-[mysqld]
-innodb_buffer_pool_size    = 64M    # 八分之一的内存（默认 128M）
-aria_pagecache_buffer_size = 16M    # 一个不用也照收费的老缓存
-key_buffer_size            = 16M
-max_connections            = 64
-tmp_table_size             = 16M
-max_heap_table_size        = 16M
+jit = off                 # 用 LLVM 编译查询计划，是单次最大的一笔内存
 ```
 
 实测差别不小：一个原样的 PostgreSQL 一条查询没服务就占掉 100M 以上常驻内存；按 512M 调过的，
-只占其中一小块。MariaDB 那三个 128M 的缓存 —— 一个连接都还没有就 384M —— 变成几十兆。
+只占其中一小块。
 
 **想比你的内存暗示的还要小** —— 一台 1G 的机器上数据库只是个配角 —— 安装时指定档位：
 
@@ -340,21 +320,20 @@ max_heap_table_size        = 16M
 root@box:~# APP_SETUP_PROFILE=tiny app-setup install postgresql
 ```
 
-`tiny` 不管实际内存多少，都写最狠的那一档。文件头上写着是谁写的；删掉它再重启服务就回到发行版
-自己的默认值。给机器加内存后再装一次，文件会重写来匹配 —— 到 1G 以上直接删掉。
+`tiny` 不管实际内存多少，都写最狠的那一档。那段配置头上写着是谁写的；删掉它再重启服务就回到
+PostgreSQL 自己的默认值。给机器加内存后再装一次，它会重写来匹配 —— 到 1G 以上直接删掉。
 
 调优还不够的话，还有两个旋钮：
 
 <FigRows :rows="[
-  [{ t: '减少连接数', tone: 'strong' }, { t: '每个连接是一个进程（PostgreSQL）或一套缓冲区（MariaDB）。max_connections 是个内存设置，不只是个上限。', tone: 'mute' }],
+  [{ t: '减少连接数', tone: 'strong' }, { t: '每个 PostgreSQL 连接都是一个进程。max_connections 是个内存设置，不只是个上限。', tone: 'mute' }],
   [{ t: '把数据挪到 /data', tone: 'strong' }, { t: '不是内存，是磁盘 —— 而且是重装后还在的那块。脚本会主动帮你挪。', tone: 'mute' }],
 ]" />
 
 ## 每个配置文件，完整版
 
-来来去去就这几个，全在一个路径下 —— `/etc/app-setup` —— 全是能读能改的纯文本。`params/` 是表单
-存下来的；`secrets/` 是生成的密码，`0700`，每个文件 `0600`。MongoDB 和 Redis 的任务文件
-（`backup-mongodb.conf`、`backup-redis.conf`）跟下面两个形状一样，只是端口不同。
+两个文件，都在一个路径下 —— `/etc/app-setup` —— 都是能读能改的纯文本。`params/` 是表单存下来的；
+`secrets/` 是生成的密码，`0700`，每个文件 `0600`。
 
 ```ini
 # /etc/app-setup/params/store-r2.conf          —— 一个 Cloudflare R2 目的地
@@ -370,23 +349,6 @@ secret_key=fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321
 host=                 # 留空 = 本机 socket
 port=5432
 user=postgres
-password=
-databases=            # 留空 = 全部
-method=dump
-store=r2
-folder=
-schedule=daily
-keep_hourly=0
-keep_daily=7
-keep_weekly=4
-keep_monthly=6
-```
-
-```ini
-# /etc/app-setup/params/backup-mysql.conf        —— MySQL / MariaDB 任务
-host=                 # 留空 = 本机 socket
-port=3306
-user=root
 password=
 databases=            # 留空 = 全部
 method=dump
@@ -475,12 +437,8 @@ root@box:~# podman exec 老容器 pg_dumpall -U 老用户 > /root/old-all.sql
 root@box:~# podman exec -i 新容器 su postgres -c psql < /root/old-all.sql
 ```
 
-MySQL / MariaDB 形状一样，换成它自己的工具 —— 老边 `mysqldump 老库名 > olddata.sql`，
-新边 `mysql 新库名 < olddata.sql`。
-
 ## 另见
 
-- [快速上手](/zh/quick-start) —— 一开始怎么把数据库装上。
+- [快速上手](/zh/quick-start) —— 一开始怎么把 PostgreSQL 装上。
 - [使用你的容器](/using-your-container)（英文）—— `/data` 是什么，数据库为什么该放上面。
-- `app-setup docs backup-postgresql` —— 脚本在机器上自己讲自己（其它数据库换成 `backup-mysql`、
-  `backup-mongodb`、`backup-redis`）。
+- `app-setup docs backup-postgresql` —— 脚本在机器上自己讲自己。

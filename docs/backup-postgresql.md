@@ -1,22 +1,17 @@
-# Backing up your database
+# Backing up PostgreSQL
 
 A backup is two things you set up once — **where it goes**, and **what it
 is** — and after that it runs on a timer and you forget about it. Putting one
 back is a single command.
 
-This page walks it through end to end with a real example: **PostgreSQL, to a
-free Cloudflare R2 bucket, in about ten minutes.** The same steps work for the
-other databases — you only change one word:
+This page is **PostgreSQL**, start to finish, with a real example: to a free
+Cloudflare R2 bucket, in about ten minutes. The two recipes it uses are
+`postgresql` (the database) and `backup-postgresql` (the backup job).
 
-| Your database | Install it | Back it up |
-|---|---|---|
-| **PostgreSQL** | `app-setup install postgresql` | `app-setup install backup-postgresql` |
-| **MySQL / MariaDB** | `app-setup install mysql` | `app-setup install backup-mysql` |
-| **MongoDB** | `app-setup install mongodb` | `app-setup install backup-mongodb` |
-| **Redis** | `app-setup install redis` | `app-setup install backup-redis` |
-
-The worked example below uses `backup-postgresql`. For MySQL, read
-`backup-mysql` everywhere it appears; the forms and buttons are identical.
+> The other databases work the same way, each on its own page: MySQL / MariaDB
+> (`backup-mysql`), MongoDB (`backup-mongodb`) and Redis (`backup-redis`). The
+> store, the five-step test and the four verb buttons below are shared by all of
+> them; only the dump tool differs.
 
 ---
 
@@ -272,8 +267,8 @@ keep_monthly=6
 The three **methods**, simplest-and-best first:
 
 <FigRows :rows="[
-  [{ t: 'dump', tone: 'strong' }, { t: 'pg_dumpall / mysqldump — text you can read. The default, and the one to use.', tone: 'mute' }],
-  [{ t: 'binary', tone: 'strong' }, { t: 'a physical copy over the replication protocol. The only one that backs up a remote host properly.', tone: 'mute' }],
+  [{ t: 'dump', tone: 'strong' }, { t: 'pg_dumpall — text you can read. The default, and the one to use.', tone: 'mute' }],
+  [{ t: 'binary', tone: 'strong' }, { t: 'pg_basebackup, a physical copy over the replication protocol. The only one that backs up a remote host properly.', tone: 'mute' }],
   [{ t: 'files', tone: 'strong' }, { t: 'stop the database, copy its data directory, start it. This machine only, always with downtime.', tone: 'mute' }],
 ]" />
 
@@ -324,9 +319,8 @@ for you, at install, from the RAM your container actually has** — you do not
 have to do anything for the common case. This section is for wanting it smaller
 still.
 
-Every database recipe asks one question — how much memory is here — and answers
-it the same way, so PostgreSQL and MariaDB never disagree about what "small"
-means:
+The `postgresql` recipe asks one question at install — how much memory is here —
+and picks a profile from the answer:
 
 <FigRows :head="['Your container', 'profile', 'what happens']" :rows="[
   [{ t: 'under 512M' }, { t: 'tiny', tone: 'strong' }, { t: 'every default is wrong and gets cut hard', tone: 'mute' }],
@@ -334,11 +328,11 @@ means:
   [{ t: '1G and up' }, { t: 'normal', tone: 'strong' }, { t: 'left alone — the defaults are right by then', tone: 'mute' }],
 ]" />
 
-Below 1G it writes one extra config file, scaled to the machine, and tells you
-it did. For **PostgreSQL** it appends a block to `postgresql.conf`. The two that
-carry the weight are `shared_buffers` (reserved once, up front) and `work_mem`
-(charged *per sort, per connection* — the real ceiling is this times the sorts
-in flight, which is why it stays tiny):
+Below 1G it appends a block to `postgresql.conf`, scaled to the machine, and
+tells you it did. The two lines that carry the weight are `shared_buffers`
+(reserved once, up front) and `work_mem` (charged *per sort, per connection* —
+the real ceiling is this times the sorts in flight, which is why it stays
+tiny):
 
 ```ini
 # appended to /data/postgresql/postgresql.conf  — on a 512M container
@@ -350,28 +344,12 @@ effective_cache_size = 64MB
 max_parallel_workers_per_gather = 0   # parallelism costs more than it returns here
 max_parallel_workers = 0
 autovacuum_max_workers = 1
-jit = off
-```
-
-For **MariaDB** the file is `/etc/mysql/mariadb.conf.d/90-app-setup.cnf`, and
-the three lines that matter are the three caches that are 128M *each* by
-default:
-
-```ini
-# /etc/mysql/mariadb.conf.d/90-app-setup.cnf  — on a 512M container
-[mysqld]
-innodb_buffer_pool_size    = 64M    # an eighth of RAM (default 128M)
-aria_pagecache_buffer_size = 16M    # a legacy cache charged even if unused
-key_buffer_size            = 16M
-max_connections            = 64
-tmp_table_size             = 16M
-max_heap_table_size        = 16M
+jit = off                 # LLVM-compiling a plan is the biggest single allocation
 ```
 
 The measured difference is not small: a stock PostgreSQL comes up over 100MB
 resident having served nothing; sized for a 512M box it reserves a fraction of
-that. MariaDB's three 128M caches — 384M before a connection — become a few tens
-of megabytes.
+that.
 
 **To force it smaller than your RAM would suggest** — a 1G box where the
 database is a bit part — set the profile when you install:
@@ -380,25 +358,23 @@ database is a bit part — set the profile when you install:
 root@box:~# APP_SETUP_PROFILE=tiny app-setup install postgresql
 ```
 
-`tiny` writes the hardest cuts regardless of the actual RAM. The file carries a
-header saying what wrote it; delete it and restart the service to go back to the
-distro's own defaults. Give the machine more memory and install again and it is
-rewritten to match — above 1G it is removed entirely.
+`tiny` writes the hardest cuts regardless of the actual RAM. The block carries a
+header saying what wrote it; delete it and restart the service to go back to
+PostgreSQL's own defaults. Give the machine more memory and install again and it
+is rewritten to match — above 1G it is removed entirely.
 
 Two more knobs, if the tuning is not enough:
 
 <FigRows :rows="[
-  [{ t: 'Fewer connections', tone: 'strong' }, { t: 'every connection is a process (PostgreSQL) or a set of buffers (MariaDB). max_connections is a memory setting, not just a limit.', tone: 'mute' }],
+  [{ t: 'Fewer connections', tone: 'strong' }, { t: 'every PostgreSQL connection is a process. max_connections is a memory setting, not just a limit.', tone: 'mute' }],
   [{ t: 'Move the data to /data', tone: 'strong' }, { t: 'not memory, but disk — and the one that survives a reinstall. The recipe offers to do it for you.', tone: 'mute' }],
 ]" />
 
 ## Every config file, in full
 
-There are only ever these, all under one path — `/etc/app-setup` — and all
-plain text you can read and edit. `params/` is what the forms saved; `secrets/`
-is generated passwords, `0700`, one file each `0600`. The job files for MongoDB
-and Redis (`backup-mongodb.conf`, `backup-redis.conf`) have the same shape as
-the two below with a different port.
+Two files, both under one path — `/etc/app-setup` — and both plain text you can
+read and edit. `params/` is what the forms saved; `secrets/` is generated
+passwords, `0700`, one file each `0600`.
 
 ```ini
 # /etc/app-setup/params/store-r2.conf          — a Cloudflare R2 destination
@@ -414,23 +390,6 @@ secret_key=fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321
 host=                 # blank = local socket
 port=5432
 user=postgres
-password=
-databases=            # blank = all
-method=dump
-store=r2
-folder=
-schedule=daily
-keep_hourly=0
-keep_daily=7
-keep_weekly=4
-keep_monthly=6
-```
-
-```ini
-# /etc/app-setup/params/backup-mysql.conf         — the MySQL / MariaDB job
-host=                 # blank = local socket
-port=3306
-user=root
 password=
 databases=            # blank = all
 method=dump
@@ -532,14 +491,9 @@ root@box:~# podman exec OLD_CONTAINER pg_dumpall -U OLD_USER > /root/old-all.sql
 root@box:~# podman exec -i NEW_CONTAINER su postgres -c psql < /root/old-all.sql
 ```
 
-For MySQL / MariaDB the shape is identical with its own tools —
-`mysqldump OLD_DBNAME > olddata.sql` on the old side, `mysql NEW_DBNAME <
-olddata.sql` on the new.
-
 ## See also
 
-- [Quick start](/quick-start) — installing the database in the first place.
+- [Quick start](/quick-start) — installing PostgreSQL in the first place.
 - [Using your container](/using-your-container) — what `/data` is, and why the
   database belongs on it.
-- `app-setup docs backup-postgresql` — the recipe explaining itself, on the box
-  (swap in `backup-mysql`, `backup-mongodb` or `backup-redis` for the others).
+- `app-setup docs backup-postgresql` — the recipe explaining itself, on the box.
