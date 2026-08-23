@@ -95,11 +95,20 @@ export default defineConfig({
         // first question, and it ends by sending a reader to whichever of the
         // other two is theirs.
         //
-        // Everything else is Advanced, which is not a demotion but an honest
-        // label: the quick start walks somebody all the way to a working site,
-        // and what is left — what a limit feels like when you reach it,
-        // building an image, writing an app-setup entry — is read later, by
-        // the few who go looking for it.
+        // Then two groups that are both read later, but for different reasons,
+        // and that is why they are not one.
+        //
+        // Advanced is not a demotion but an honest label: the quick start walks
+        // somebody all the way to a working site, and what is left — what a
+        // limit feels like when you reach it, building an image, writing an
+        // app-setup entry, the API — is looked *up*, by the few who go looking.
+        //
+        // Best practices is the other kind of page: a job you have to get right
+        // and will only set up once, walked end to end, where skipping a
+        // section leaves you with something that looks done and is not. The two
+        // backup pages are the only pages here like that — a backup you have
+        // never restored is not a backup — and burying them in a list somebody
+        // skims was underselling the one job on this site with no second try.
         sidebar: [
           {
             text: 'Start here',
@@ -115,12 +124,17 @@ export default defineConfig({
               { text: 'Using your container', link: '/using-your-container' },
               { text: 'Using Alpine', link: '/alpine' },
               { text: 'Using Debian', link: '/debian' },
-              { text: 'Backing up PostgreSQL', link: '/backup-postgresql' },
-              { text: 'Backing up files', link: '/backup-files' },
               { text: 'Public ports', link: '/ports' },
               { text: 'Building your own image', link: '/building-your-own-image' },
               { text: 'Adding your own software', link: '/app-setup-sources' },
               { text: 'Panel REST API', link: '/api' },
+            ],
+          },
+          {
+            text: 'Best practices',
+            items: [
+              { text: 'Backing up PostgreSQL', link: '/backup-postgresql' },
+              { text: 'Backing up files', link: '/backup-files' },
             ],
           },
         ],
@@ -155,9 +169,9 @@ export default defineConfig({
           { text: '面板', link: 'https://hqno.de' },
         ],
 
-        // The same two groups as English. An untranslated page keeps its place
-        // in the order and says （英文）, rather than being hidden or grouped
-        // by what language it happens to be in.
+        // The same three groups as English. An untranslated page keeps its
+        // place in the order and says （英文）, rather than being hidden or
+        // grouped by what language it happens to be in.
         sidebar: [
           {
             text: '从这里开始',
@@ -173,12 +187,17 @@ export default defineConfig({
               { text: '使用你的容器', link: '/zh/using-your-container' },
               { text: '使用 Alpine', link: '/zh/alpine' },
               { text: '使用 Debian', link: '/zh/debian' },
-              { text: '备份 PostgreSQL', link: '/zh/backup-postgresql' },
-              { text: '备份文件', link: '/zh/backup-files' },
               { text: '公网端口', link: '/zh/ports' },
               { text: '自己做镜像', link: '/zh/building-your-own-image' },
               { text: '添加你自己的软件（英文）', link: '/app-setup-sources' },
               { text: '面板 REST API', link: '/zh/api' },
+            ],
+          },
+          {
+            text: '最佳实践',
+            items: [
+              { text: '备份 PostgreSQL', link: '/zh/backup-postgresql' },
+              { text: '备份文件', link: '/zh/backup-files' },
             ],
           },
         ],
