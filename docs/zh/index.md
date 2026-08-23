@@ -37,5 +37,5 @@ features:
     details: >-
       碰到限额是什么感觉，重装会拿掉什么 —— 以及只给爱折腾的人看的：
       自己做镜像、往安装菜单里加自己的软件。
-    link: /using-your-container
+    link: /zh/using-your-container
 ---

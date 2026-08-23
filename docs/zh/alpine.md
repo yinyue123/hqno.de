@@ -17,7 +17,7 @@ Alpine 是小的那个。用它做出来的容器，文件系统 36 MB，Debian 
 `systemctl`、`journalctl`，你搜到的每一篇博客都能照抄。这是个完全体面的选择，
 第 12 节讲怎么做。
 
-这一页默认你已经读过[使用你的容器](/using-your-container)（英文）——
+这一页默认你已经读过[使用你的容器](using-your-container.md) ——
 容器怎么来的、重装做什么、五个限额是哪五个。这里讲的是 Alpine 那一半。
 
 ---

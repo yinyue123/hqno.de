@@ -533,12 +533,12 @@ title: 快速上手
 ]" />
 
 这三件各自的细节 —— 还有碰到限额是什么感觉 —— 写在
-[使用你的容器](/using-your-container)（英文）里。
+[使用你的容器](using-your-container.md)里。
 
 ---
 
 ## 接下来
 
-- [使用你的容器](/using-your-container)（英文）—— 限额、到期、重启和重装。
+- [使用你的容器](using-your-container.md) —— 限额、到期、重启和重装。
 - [添加你自己的软件](/app-setup-sources)（英文）—— 把自己的东西加进菜单。
 - [它是怎么工作的](how-it-works.md) —— 上面这一切背后的那张图。

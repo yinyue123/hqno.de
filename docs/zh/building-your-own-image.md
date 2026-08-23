@@ -750,6 +750,6 @@ docker buildx imagetools inspect ghcr.io/you/myapp:v1 --raw \
 
 ## 接下来
 
-- [使用你的容器（英文）](/using-your-container) —— 重装保留什么，以及住在里面的其他事
+- [使用你的容器](using-your-container.md) —— 重装保留什么，以及住在里面的其他事
 - [添加你自己的软件（英文）](/app-setup-sources) —— 一个 shell 文件，不用做镜像
 - [面板 REST API（英文）](/api) —— 第 9 节用到的每一个调用，完整版

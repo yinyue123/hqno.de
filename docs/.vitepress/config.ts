@@ -149,6 +149,7 @@ export default defineConfig({
       themeConfig: {
         nav: [
           { text: '快速上手', link: '/zh/quick-start' },
+          { text: '你的容器', link: '/zh/using-your-container' },
           { text: '它是怎么工作的', link: '/zh/how-it-works' },
           { text: '自己跑一台机器', link: '/zh/running-a-machine' },
           { text: '面板', link: 'https://hqno.de' },
@@ -169,7 +170,7 @@ export default defineConfig({
           {
             text: '进阶',
             items: [
-              { text: '使用你的容器（英文）', link: '/using-your-container' },
+              { text: '使用你的容器', link: '/zh/using-your-container' },
               { text: '使用 Alpine', link: '/zh/alpine' },
               { text: '使用 Debian', link: '/zh/debian' },
               { text: '备份 PostgreSQL', link: '/zh/backup-postgresql' },

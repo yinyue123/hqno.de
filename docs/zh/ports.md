@@ -161,6 +161,6 @@ title: 公网端口
 
 ## 接下来
 
-- [使用你的容器（英文）](/using-your-container) —— 其余归你改的东西。
+- [使用你的容器](using-your-container.md) —— 其余归你改的东西。
 - [快速上手](quick-start.md) —— 域名、DNS 和 HTTPS，按顺序走一遍。
 - [自己跑一台机器](running-a-machine.md) —— 这一页的另一面。

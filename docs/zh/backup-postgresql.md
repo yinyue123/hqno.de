@@ -440,5 +440,5 @@ root@box:~# podman exec -i 新容器 su postgres -c psql < /root/old-all.sql
 ## 另见
 
 - [快速上手](/zh/quick-start) —— 一开始怎么把 PostgreSQL 装上。
-- [使用你的容器](/using-your-container)（英文）—— `/data` 是什么，数据库为什么该放上面。
+- [使用你的容器](using-your-container.md) —— `/data` 是什么，数据库为什么该放上面。
 - `app-setup docs backup-postgresql` —— 脚本在机器上自己讲自己。
