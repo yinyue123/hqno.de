@@ -171,7 +171,7 @@ export default defineConfig({
               { text: '备份 PostgreSQL', link: '/zh/backup-postgresql' },
               { text: '备份文件', link: '/zh/backup-files' },
               { text: '公网端口', link: '/zh/ports' },
-              { text: '自己做镜像（英文）', link: '/building-your-own-image' },
+              { text: '自己做镜像', link: '/zh/building-your-own-image' },
               { text: '添加你自己的软件（英文）', link: '/app-setup-sources' },
               { text: '面板 REST API（英文）', link: '/api' },
             ],

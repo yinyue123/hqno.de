@@ -102,8 +102,8 @@ when you are not in the middle of something. Your username never changes in the
 panel; the shell username above is a different name and you may change it as
 often as you like.
 
-Prefer a key to a password? The machine's door can hold public keys, but the
-panel has no form for them yet — ask your host to add yours.
+Prefer a key to a password? Paste one under **Account → SSH keys**. It lands on
+every container this account holds, including the ones you are given later.
 
 ---
 

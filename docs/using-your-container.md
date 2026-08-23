@@ -228,12 +228,14 @@ to happen. Log back in a minute or two later, same address, same password.
 ### The systems on offer
 
 What your host has cached on that machine is what you can pick, and the list
-below is what hqnode publishes for them to cache. Every one boots systemd and
-behaves the same way; the difference is the package manager and how long the
-release is supported.
+below is what hqnode publishes for them to cache. Every one boots an init, so
+every one has services, cron, a package manager and a working `top`; what
+differs is the package manager, the init, and how long the release is
+supported.
 
 | | Systems |
 |---|---|
+| **Alpine** | 3.24, 3.23 |
 | **Debian** | 13, 12, 11 |
 | **Ubuntu** | 26.04, 24.04, 22.04, 20.04, 18.04\*, 16.04\* |
 | **AlmaLinux** | 10, 9, 8 |
@@ -244,6 +246,13 @@ release is supported.
 \* Past end of life. They are here because people still ask for them, and they
 still boot — but nothing in them gets a security update again. Do not put
 anything on the internet from one.
+
+Alpine is the odd one and the small one: it runs OpenRC under busybox init
+rather than systemd, so services are `rc-service` and `rc-update` rather than
+`systemctl`, and it idles in a few MB of memory instead of forty. It is also
+musl rather than glibc, which means software shipped as a prebuilt glibc binary
+— some vendor agents, some language runtimes — will not run on it. Everything
+installed from a package manager is fine.
 
 Your host caches these onto the machine before you can pick one, and they
 unpack under `/var/lib/hqnode/images/` there — not inside your container,
