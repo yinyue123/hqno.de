@@ -599,7 +599,7 @@ curl -sS --fail-with-body -b jar.txt -X POST "$PANEL/me/containers/$CID/reinstal
 那是一把七天有效、而你看不出它还剩多久的钥匙。`--fail-with-body` 很要紧：
 光用 `curl`，遇到拒绝也会退出 0，于是一个不看状态码的任务会在一个根本没回来的容器上
 打出绿色的勾。下载很久时用 `GET /me/containers/{cid}/progress` 看进度。
-完整的参考在[面板 REST API（英文）](/api)。
+完整的参考在[面板 REST API](api.md)。
 
 ### 通过 SSH 把程序送上去
 
@@ -752,4 +752,4 @@ docker buildx imagetools inspect ghcr.io/you/myapp:v1 --raw \
 
 - [使用你的容器](using-your-container.md) —— 重装保留什么，以及住在里面的其他事
 - [添加你自己的软件（英文）](/app-setup-sources) —— 一个 shell 文件，不用做镜像
-- [面板 REST API（英文）](/api) —— 第 9 节用到的每一个调用，完整版
+- [面板 REST API](api.md) —— 第 9 节用到的每一个调用，完整版

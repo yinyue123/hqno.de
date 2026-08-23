@@ -2,7 +2,7 @@
 title: 面板 REST API
 ---
 
-# 面板 REST API
+# 面板 REST API {#panel-rest-api}
 
 面板上的每一个界面都是这套 API 的客户端，按钮能做的事没有一件是 `curl` 够不着的。
 从 GitHub Actions 任务里重装一个容器，部署完把它重启，在自己的机器上开一个，
