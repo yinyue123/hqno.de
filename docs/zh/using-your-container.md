@@ -45,7 +45,7 @@ Ubuntu 和 Debian 那一页完全一样。AlmaLinux、Rocky、CentOS、Fedora �
 | 备份和恢复数据库 | [备份 PostgreSQL](backup-postgresql.md) |
 | 备份文件和目录 | [备份文件](backup-files.md) |
 | 自己做一个镜像并装上 | [自己做镜像](building-your-own-image.md) |
-| 把我自己的软件加进 `app-setup` 菜单 | [添加你自己的软件](/app-setup-sources)（英文） |
+| 把我自己的软件加进 `app-setup` 菜单 | [添加你自己的软件](/zh/app-setup-sources) |
 | 用脚本或监控读我这个容器的各项数字 | [面板 REST API](api.md) |
 
 **第一天值得敲的三个词**，都在容器里：

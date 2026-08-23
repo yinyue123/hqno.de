@@ -214,7 +214,7 @@ title: 快速上手
   root@wp-1:~# app-setup docs wordpress
 ```
 
-想装的东西不在列表里？你可以自己加一条：[添加你自己的软件](/app-setup-sources)（英文）。
+想装的东西不在列表里？你可以自己加一条：[添加你自己的软件](/zh/app-setup-sources)。
 
 ---
 
@@ -265,7 +265,7 @@ title: 快速上手
 ```
 
 你自己往菜单里加的东西可以声明这些字段，见
-[添加你自己的软件](/app-setup-sources)（英文）。
+[添加你自己的软件](/zh/app-setup-sources)。
 
 ---
 
@@ -540,5 +540,5 @@ title: 快速上手
 ## 接下来
 
 - [使用你的容器](using-your-container.md) —— 限额、到期、重启和重装。
-- [添加你自己的软件](/app-setup-sources)（英文）—— 把自己的东西加进菜单。
+- [添加你自己的软件](/zh/app-setup-sources) —— 把自己的东西加进菜单。
 - [它是怎么工作的](how-it-works.md) —— 上面这一切背后的那张图。

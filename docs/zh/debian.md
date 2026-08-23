@@ -159,7 +159,7 @@ app-setup doctor              # 这个容器在 app-setup 眼里是什么样
 但会先把你上传的东西挪到 `/root/`，并且告诉你。
 
 把你自己的软件加进这个菜单，就是往 `/etc/app-setup/` 丢一个 shell 脚本 ——
-见[添加你自己的软件](/app-setup-sources)（英文）。
+见[添加你自己的软件](/zh/app-setup-sources)。
 
 ### 装完之后：跑起来，以及开机自启
 

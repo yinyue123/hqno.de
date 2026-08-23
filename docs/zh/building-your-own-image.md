@@ -199,7 +199,7 @@ rc-update add nginx default    # 开机自启。      其他系统是 systemctl 
 | 让 init 适应容器的那几个设置 —— `rc_sys="lxc"`、`rc_provide="loopback net"`、`/etc/inittab` 里删掉 getty；或者 systemd 把硬件相关的 unit mask 掉 | 拦住 init 去启动那些在容器里根本不可能工作的硬件服务。不改的话，一个完全健康的盒子在 `rc-status` 或 `systemctl status` 里满屏是红的 |
 | sshd，装上了但**关着** | 留给想在自己端口上跑一个 sshd 的人：`systemctl enable --now ssh`，或者 `rc-update add sshd default && rc-service sshd start` |
 | 开机刷一次包索引，一天最多一次 | 让刚登录进去的 `apk add nginx` 就能用，而不是回你一句「没有这个包」 |
-| `app-setup`、它的配方，以及 `/etc/helppage` | 那个装 LNMP、WordPress、数据库、备份的菜单，以及 `helppage` 打出来的指南。往里加你自己的条目是[添加你自己的软件（英文）](/app-setup-sources) |
+| `app-setup`、它的配方，以及 `/etc/helppage` | 那个装 LNMP、WordPress、数据库、备份的菜单，以及 `helppage` 打出来的指南。往里加你自己的条目是[添加你自己的软件](/zh/app-setup-sources) |
 | `PATH` 上那几个 shim —— `passwd`、`poweroff`、`halt`、`dashboard`、`domain`、`reinstall`、`helppage` | 拿着容器的人得到的那几条命令：一次也会同步到 SSH 网关的改密码、一个关了就真的不再被拉起来的 `poweroff`、看自己配额、加域名，以及在 shell 里重装 |
 | `/data`，里面放一个 README | 重装唯一保留的那块盘的挂载点 |
 
@@ -356,7 +356,7 @@ RUN mkdir -p /etc/app-setup/local /etc/app-setup/params /etc/app-setup/secrets \
 
 那个二进制是对着 musl 静态链接编出来的，这正是为什么一份拷贝在 CentOS 7 和 Alpine 上
 都能跑。往它的菜单里加你自己的软件是另一件事，有自己的一页：
-[添加你自己的软件（英文）](/app-setup-sources)。
+[添加你自己的软件](/zh/app-setup-sources)。
 
 ---
 
@@ -744,12 +744,12 @@ docker buildx imagetools inspect ghcr.io/you/myapp:v1 --raw \
 
 如果你真正想要的其实是**菜单里多一个软件**、而不是一个新镜像，那是件小得多的事，
 它有自己的一页和自己的约定，AI 照着那一个文件也一样写得好：
-[添加你自己的软件（英文）](/app-setup-sources)。
+[添加你自己的软件](/zh/app-setup-sources)。
 
 ---
 
 ## 接下来
 
 - [使用你的容器](using-your-container.md) —— 重装保留什么，以及住在里面的其他事
-- [添加你自己的软件（英文）](/app-setup-sources) —— 一个 shell 文件，不用做镜像
+- [添加你自己的软件](/zh/app-setup-sources) —— 一个 shell 文件，不用做镜像
 - [面板 REST API](api.md) —— 第 9 节用到的每一个调用，完整版

@@ -7,7 +7,20 @@ writing one file and dropping it in a directory. Nothing is recompiled, nothing
 is registered, and your file is treated exactly like the ones that shipped with
 the image.
 
-This page is the whole contract.
+**Do not write that file by hand.** Nobody does any more, and there is nothing
+to be won by it. The whole contract is one page — this one — and a model handed
+that page plus any one of the forty-nine recipes already in the repository
+writes a working recipe on the first or second try. Sections 1 to 4 are that
+route, in order, and they are short.
+
+- [1. Get the recipes](#_1-get-the-recipes)
+- [2. The prompt](#_2-the-prompt)
+- [3. Check what comes back](#_3-check-what-comes-back)
+- [4. Ship it](#_4-ship-it)
+
+Everything after those four is the contract itself, unchanged. You do not have
+to read it: it is what you hand the model, and what you look things up in when
+what it gave you does something you did not expect.
 
 - [The shortest possible source](#the-shortest-possible-source)
 - [Where files go](#where-files-go)
@@ -20,6 +33,196 @@ This page is the whole contract.
 - [A worked example](#a-worked-example)
 - [Publishing a set of sources](#publishing-a-set-of-sources)
 - [Rules of the road](#rules-of-the-road)
+
+---
+
+## 1. Get the recipes
+
+```sh
+git clone https://github.com/yinyue123/hqno.de.git
+cd hqno.de/images/app-setup
+```
+
+Three things are in there, and the first two are what the model needs:
+
+| | |
+|---|---|
+| `recipes/` | the forty-nine that ship in every image, one file each |
+| `lib/common.sh` | the helper library all of them source |
+| `install.sh` | puts the whole thing on a Linux box you have root on, so you can test off the container |
+
+Pick the recipe closest to what you are adding and give the model that one file
+as well as this page. It is worth more than any amount of description:
+
+| Yours is… | Read |
+|---|---|
+| one package, no service | `htop.sh`, `ncdu.sh` — a dozen lines |
+| a package with a service and a config file | `nginx.sh`, 140 lines, the best reference there is |
+| a single binary off GitHub, no package anywhere | `gitea` in [a worked example](#a-worked-example) below |
+| several pieces behind one menu entry | `lnmp.sh` — nginx, MySQL and PHP as one |
+| something with a Settings form | `backup.sh`, and [Settings somebody can change](#settings-somebody-can-change) |
+
+---
+
+## 2. The prompt
+
+Paste this, with the last two lines filled in. Give the model the URL as well —
+this page is one file and models read it whole:
+`https://doc.hqno.de/app-setup-sources`.
+
+```text
+Write one app-setup source file for hqnode. app-setup is a TUI software
+picker inside a container: it reads /etc/app-setup/*.sh, draws one menu
+entry per file from the comment header, and runs a function in the file
+when somebody chooses an action. The full contract is at
+https://doc.hqno.de/app-setup-sources — read it before writing anything.
+
+Hard requirements:
+
+- POSIX sh only. It runs under busybox ash on Alpine. No [[ ]], no arrays,
+  no ${x^^}, no $'...', no bashisms of any kind.
+- The file starts with `#!/bin/sh` and a comment header. `# app-setup: 1`
+  is what makes it a source at all; `id`, `name`, `summary`, `category`
+  and `disk` are the minimum after it. Add `.zh` variants of name, summary
+  and includes — the panel is bilingual.
+- Source /usr/lib/app-setup/common.sh and USE IT. pkg_install, make_service,
+  svc_enable, fetch, rand_pass, param, data_path, guess_host, step, ok, die
+  already exist. Do not write per-distro if/else and do not write systemd
+  units and OpenRC scripts by hand — make_service emits whichever this
+  machine uses.
+- End the file with `app_main "$@"` and put nothing else at top level. The
+  file is executed for every action, so a bare `exit` in the body runs at
+  parse time for all of them.
+- do_uninstall removes the program and NEVER the data. Leave the databases,
+  the uploads, the repositories, and print where they are and the exact
+  command to delete them.
+- Installing twice in a row must work. The second run must not fail on a
+  user, a directory or a config the first one left behind.
+- Declare every temporary variable `local`. Functions share one namespace.
+- do_status runs every 8 seconds for every entry on screen: read a file or
+  check a process, nothing more. Exit 0 running, 1 stopped, 2 absent,
+  3 broken.
+- Be honest in `disk` and `memory`. Somebody on a 512MB box decides with
+  those numbers.
+
+Here is a shipped recipe to match the style of: <paste one file from
+images/app-setup/recipes/>
+
+What I am adding: <what it is, how it installs, what it listens on, where
+its data lives, and anything a person has to do by hand afterwards>
+```
+
+The two placeholders at the bottom are doing most of the work. "Add Uptime
+Kuma" gets you something plausible; "add Uptime Kuma, it is a Node app, npm
+install into /opt/uptime-kuma, listens on 3001, data in its own directory, no
+package exists for it" gets you something that installs.
+
+If it is your own private software, say so and say how it is fetched — a
+tarball behind a token, a `.deb` on an internal host, a git checkout. That is
+the part no model can guess and the only part that is really yours.
+
+---
+
+## 3. Check what comes back
+
+Six mistakes, and they are the six that actually happen. Two minutes with this
+list beats an hour of debugging a menu entry that half works.
+
+1. **Bashisms.** `[[ ]]` and arrays are the common two, and they run fine on
+   the model's mental Ubuntu and die on Alpine. One command settles it:
+   `busybox ash -n yourfile.sh`.
+2. **A hand-written systemd unit,** or an `if [ "$OS_ID" = alpine ]` ladder
+   around two copies of the same thing. `make_service` is one line and covers
+   both inits. If the answer has a heredoc writing into
+   `/etc/systemd/system`, send it back.
+3. **`rm -rf` in `do_uninstall`.** Sometimes on the data directory, sometimes
+   on `/data`. This is the one that costs somebody their database, so read
+   that function even if you read nothing else.
+4. **Not idempotent** — `useradd` with no `id … ||` in front of it,
+   `mkdir` without `-p`. Install it, uninstall it, install it again; the
+   second install is where sources break.
+5. **A `do_status` that starts a process** — `curl` at the port, a `docker
+   ps`, a full `systemctl show`. Every eight seconds, for every entry on the
+   screen.
+6. **A missing `summary`,** or a header that stops early because a blank line
+   crept into it. `app-setup doctor` exits non-zero on it, which is why that
+   is the first thing to run in §4.
+
+---
+
+## 4. Ship it
+
+Two ways, and they answer different questions.
+
+<FigRows :head="['', 'One container', 'Your own image']" :rows="[
+  [{ t: 'what you do', tone: 'mute' }, { t: 'copy the file into /etc/app-setup/local/', tone: 'strong' }, { t: 'add it to images/app-setup/recipes/ in your fork', tone: 'strong' }],
+  [{ t: 'how long', tone: 'mute' }, { t: 'seconds', tone: 'ok' }, { t: 'a push and a few minutes of CI', tone: 'mute' }],
+  [{ t: 'survives a reinstall', tone: 'mute' }, { t: 'no — /etc comes from the image', tone: 'bad' }, { t: 'yes, it is in the image', tone: 'ok' }],
+  [{ t: 'who gets it', tone: 'mute' }, { t: 'this one container', tone: 'mute' }, { t: 'everything installed from your image', tone: 'mute' }],
+]" />
+
+### Into one container
+
+```sh
+scp myapp.sh you@container:/etc/app-setup/local/     # from your laptop
+chmod +x /etc/app-setup/local/myapp.sh
+app-setup doctor && app-setup info myapp && app-setup install myapp
+```
+
+`local/` is already on the default search path and comes after the shipped
+directory, so a file there with the same `id` as one of ours replaces it
+without editing anything. [Testing it](#testing-it) is the longer version of
+that last line.
+
+This is the right way to find out whether the recipe works, and the wrong way
+to keep it: `/etc/app-setup` comes from the image and a reinstall replaces it.
+Keep the original under `/data` and copy it into place at boot, or do the other
+thing.
+
+### Into an image of your own
+
+The recipes directory *is* the image's `/etc/app-setup` — all three Dockerfiles
+carry one line, `COPY app-setup/recipes/ /etc/app-setup/`. So a file in that
+directory of your fork is in the image, and nothing else has to be told about
+it. No index, no registration, no build script to edit.
+
+1. **Fork** [`yinyue123/hqno.de`](https://github.com/yinyue123/hqno.de) on
+   GitHub, and clone your fork rather than ours.
+2. **Drop the file in** `images/app-setup/recipes/myapp.sh`, `chmod +x`, commit,
+   push to `main`.
+3. **Turn Actions on.** A fork arrives with its workflows disabled — the
+   Actions tab says so and has the button. One click, once.
+4. **The workflow then runs itself.**
+   [`.github/workflows/images.yml`](https://github.com/yinyue123/hqno.de/blob/main/.github/workflows/images.yml)
+   triggers on any push touching `images/**`, builds every system in
+   [`systems.yml`](https://github.com/yinyue123/hqno.de/blob/main/images/systems.yml),
+   and pushes them to `ghcr.io/<you>/hqnode:<tag>` — `alpine-3.24`,
+   `debian-13`, and eighteen more. It needs no secret: `GITHUB_TOKEN` and
+   `packages: write` are enough. Trim `systems.yml` to the one or two systems
+   you actually install from and the build drops from twenty legs to two.
+5. **Make the package public, once, by hand.** A new GHCR package is private,
+   and a private package is a `401` when the machine tries to pull it.
+   Settings → Packages → hqnode → Change visibility. Nothing in the workflow
+   can do this for you.
+6. **Install a container from it.** In the panel, paste the reference where an
+   image reference goes: `ghcr.io/<you>/hqnode:alpine-3.24`. The machine pulls
+   it, not the panel and not your laptop —
+   [Getting the machine to pull it](/building-your-own-image#_7-getting-the-machine-to-pull-it)
+   is the full set of cases, including private registries.
+
+Your fork also gets its own `images/catalog.json`, written back by the same
+workflow with the digests it just pushed. That is the file a panel fetches to
+fill its market, so a host pointed at your fork's raw URL offers your systems
+instead of ours.
+
+**A whole tab of your own** is one header line in any one source, if you have
+enough of them to want one:
+
+```sh
+# category: mycompany
+# category.name: Our software
+# category.name.zh: 我们的软件
+```
 
 ---
 

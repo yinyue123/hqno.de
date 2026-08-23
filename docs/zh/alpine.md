@@ -292,7 +292,7 @@ packages    apk
 第二个用 `lnmp` 那张卡代替。
 
 把你自己的软件加进这个菜单，就是往 `/etc/app-setup/` 丢一个 shell 脚本 ——
-见[添加你自己的软件](/app-setup-sources)（英文）。
+见[添加你自己的软件](/zh/app-setup-sources)。
 
 ---
 

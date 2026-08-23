@@ -199,7 +199,7 @@ export default defineConfig({
               { text: '使用 Debian', link: '/zh/debian' },
               { text: '公网端口', link: '/zh/ports' },
               { text: '自己做镜像', link: '/zh/building-your-own-image' },
-              { text: '添加你自己的软件（英文）', link: '/app-setup-sources' },
+              { text: '添加你自己的软件', link: '/zh/app-setup-sources' },
               { text: '面板 REST API', link: '/zh/api' },
             ],
           },
