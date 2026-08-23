@@ -105,10 +105,14 @@ export default defineConfig({
         //
         // Best practices is the other kind of page: a job you have to get right
         // and will only set up once, walked end to end, where skipping a
-        // section leaves you with something that looks done and is not. The two
-        // backup pages are the only pages here like that — a backup you have
-        // never restored is not a backup — and burying them in a list somebody
-        // skims was underselling the one job on this site with no second try.
+        // section leaves you with something that looks done and is not. The
+        // backup pages are the sharpest case — a backup you have never restored
+        // is not a backup — and burying them in a list somebody skims was
+        // underselling the one job on this site with no second try. The deploy
+        // pages sit above them in the order somebody meets them: get the thing
+        // running, then keep it. Five of those are placeholders for now; they
+        // hold their place in the sidebar so the shape of the group is settled
+        // before the words are, and each one says on the page that it is empty.
         sidebar: [
           {
             text: 'Start here',
@@ -133,6 +137,11 @@ export default defineConfig({
           {
             text: 'Best practices',
             items: [
+              { text: 'Deploying a website and CDN', link: '/deploy-website-cdn' },
+              { text: 'Deploying a Node.js app', link: '/deploy-nodejs' },
+              { text: 'Deploying an LNMP site', link: '/deploy-lnmp' },
+              { text: 'Deploying a Go program', link: '/deploy-go' },
+              { text: 'Deploying a Python program', link: '/deploy-python' },
               { text: 'Backing up PostgreSQL', link: '/backup-postgresql' },
               { text: 'Backing up files', link: '/backup-files' },
               { text: 'Running a proxy or VPN', link: '/proxy' },
@@ -197,6 +206,11 @@ export default defineConfig({
           {
             text: '最佳实践',
             items: [
+              { text: '部署网站和 CDN', link: '/zh/deploy-website-cdn' },
+              { text: '部署 Node.js 程序', link: '/zh/deploy-nodejs' },
+              { text: '部署 LNMP 网站', link: '/zh/deploy-lnmp' },
+              { text: '部署 Go 程序', link: '/zh/deploy-go' },
+              { text: '部署 Python 程序', link: '/zh/deploy-python' },
               { text: '备份 PostgreSQL', link: '/zh/backup-postgresql' },
               { text: '备份文件', link: '/zh/backup-files' },
               { text: '跑一个代理或 VPN', link: '/zh/proxy' },
