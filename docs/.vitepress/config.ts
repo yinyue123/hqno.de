@@ -113,6 +113,8 @@ export default defineConfig({
             text: 'Advanced',
             items: [
               { text: 'Using your container', link: '/using-your-container' },
+              { text: 'Using Alpine', link: '/alpine' },
+              { text: 'Using Debian', link: '/debian' },
               { text: 'Backing up PostgreSQL', link: '/backup-postgresql' },
               { text: 'Backing up files', link: '/backup-files' },
               { text: 'Public ports', link: '/ports' },
@@ -168,6 +170,8 @@ export default defineConfig({
             text: '进阶',
             items: [
               { text: '使用你的容器（英文）', link: '/using-your-container' },
+              { text: '使用 Alpine', link: '/zh/alpine' },
+              { text: '使用 Debian', link: '/zh/debian' },
               { text: '备份 PostgreSQL', link: '/zh/backup-postgresql' },
               { text: '备份文件', link: '/zh/backup-files' },
               { text: '公网端口', link: '/zh/ports' },

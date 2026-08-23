@@ -52,9 +52,10 @@ container. It is a name held by the SSH gateway on the machine: the gateway
 authenticates you, then steps into your container's namespaces and hands you a
 root shell in it. Two consequences worth knowing up front:
 
-- **`passwd` inside the container does not change how you log in.** The
-  password lives with the gateway, not in the container's `/etc/shadow`.
-  Change it in the panel, on the container page, under
+- **The password lives with the gateway, not in the container's
+  `/etc/shadow`.** You can still set it with `passwd` at your own prompt —
+  the images ship a shim that runs the real tool and then tells the machine,
+  so one command changes both — or in the panel, on the container page, under
   *Actions → Shell login → Reset password*.
 - **A reinstall does not cost you your login.** The gateway's copy is outside
   the filesystem being replaced.
@@ -64,8 +65,11 @@ whenever you set a new one. The panel does not keep it: it goes to the machine,
 which stores only a hash, and to your screen that one time. Lost it? Set a new
 one; there is nothing to recover.
 
-**SSH keys.** The gateway can hold public keys, but the panel has no form for
-them yet. If you want key-only access, ask your host to add one for you.
+**SSH keys.** A key belongs to your account rather than to a box: add one at
+**Account → SSH keys** and it lands on every container you hold and on every
+one handed to you afterwards. Copying a key into `~/.ssh/authorized_keys`
+inside the container does nothing — there is no sshd in there to read it, and
+the list of keys that may act as you is held by the gateway.
 
 ---
 
@@ -74,7 +78,7 @@ them yet. If you want key-only access, ask your host to add one for you.
 It is a system container, so the things you would do on a VM work:
 
 ```sh
-apt install nginx            # or dnf, depending on your image
+apt install nginx            # or dnf, or apk, depending on your image
 systemctl enable --now nginx
 journalctl -u nginx -f
 crontab -e
@@ -84,6 +88,11 @@ top
 systemd is PID 1. `systemctl reboot` works and restarts the container in
 place. If it is wedged badly enough that you cannot reach it at all, use
 **Restart** in the panel, which does the same thing from outside.
+
+On **Alpine** those middle two lines are `rc-update add nginx default` and
+`tail -f /var/log/nginx/error.log` instead — everything else on this page
+holds. [Using Alpine](alpine.md) is the whole translation, and
+[Using Debian](debian.md) is the same ground for the systems that need none.
 
 ### Installing software without reading four blog posts
 
@@ -230,18 +239,18 @@ to happen. Log back in a minute or two later, same address, same password.
 What your host has cached on that machine is what you can pick, and the list
 below is what hqnode publishes for them to cache. Every one boots an init, so
 every one has services, cron, a package manager and a working `top`; what
-differs is the package manager, the init, and how long the release is
-supported.
+differs is the package manager, the init, how long the release is supported,
+and how much of your disk the system itself takes.
 
-| | Systems |
-|---|---|
-| **Alpine** | 3.24, 3.23 |
-| **Debian** | 13, 12, 11 |
-| **Ubuntu** | 26.04, 24.04, 22.04, 20.04, 18.04\*, 16.04\* |
-| **AlmaLinux** | 10, 9, 8 |
-| **Rocky** | 9, 8 |
-| **CentOS** | Stream 10, Stream 9, 7\* |
-| **Fedora** | 43 |
+| | Systems | Manager | Init |
+|---|---|---|---|
+| **Alpine** | 3.24, 3.23 | `apk` | OpenRC |
+| **Debian** | 13, 12, 11 | `apt` | systemd |
+| **Ubuntu** | 26.04, 24.04, 22.04, 20.04, 18.04\*, 16.04\* | `apt` | systemd |
+| **AlmaLinux** | 10, 9, 8 | `dnf` | systemd |
+| **Rocky** | 9, 8 | `dnf` | systemd |
+| **CentOS** | Stream 10, Stream 9, 7\* | `dnf`, `yum` on 7 | systemd |
+| **Fedora** | 43 | `dnf` | systemd |
 
 \* Past end of life. They are here because people still ask for them, and they
 still boot — but nothing in them gets a security update again. Do not put
@@ -249,10 +258,15 @@ anything on the internet from one.
 
 Alpine is the odd one and the small one: it runs OpenRC under busybox init
 rather than systemd, so services are `rc-service` and `rc-update` rather than
-`systemctl`, and it idles in a few MB of memory instead of forty. It is also
-musl rather than glibc, which means software shipped as a prebuilt glibc binary
-— some vendor agents, some language runtimes — will not run on it. Everything
-installed from a package manager is fine.
+`systemctl`, and its filesystem is 36 MB against Debian's 164 MB — which on a
+small container is most of the reason to pick it. It is also musl rather than
+glibc, which means software shipped as a prebuilt glibc binary — some vendor
+agents, some language runtimes — will not run on it. Everything installed from
+a package manager is fine.
+
+Two pages cover the two sides in detail: [Using Alpine](alpine.md), which is
+honest about what it costs, and [Using Debian](debian.md), which is the one to
+read if you would rather not think about any of this.
 
 Your host caches these onto the machine before you can pick one, and they
 unpack under `/var/lib/hqnode/images/` there — not inside your container,
