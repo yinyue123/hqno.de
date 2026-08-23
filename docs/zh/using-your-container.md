@@ -20,11 +20,11 @@ SSH 进去，装包，跑服务，`top` 显示的是你自己的进程。
 
 | 你想要的 | 选哪个 |
 |---|---|
-| **想把一台小盒子榨干** | **[Alpine](alpine.md)** —— 文件系统 36 MB，空转时占大约 1 MB 内存。没有 systemd，没有 `apt`，没有 glibc，所以为别的系统写的教程都要翻译一遍。那一页就是那份翻译，而且老实交代了代价。 |
-| **想要一个普通的、不用学的 Linux** | **[Debian](debian.md)** —— 164 MB，`apt`、`systemctl`、`journalctl`。你搜到的每一篇博客都能照抄。拿不准就选这个。 |
+| **想把一台小盒子榨干** | **[Alpine](alpine.md)** —— 文件系统 36 MB，空转时占 15 MB 内存；Debian 是 164 MB 和 105 MB。没有 systemd，没有 `apt`，没有 glibc，所以为别的系统写的教程都要翻译一遍。那一页就是那份翻译，而且老实交代了代价。 |
+| **想要一个普通的、不用学的 Linux** | **[Debian](debian.md)** —— 大一些，换来 `apt`、`systemctl`、`journalctl`。你搜到的每一篇博客都能照抄。拿不准就选这个。 |
 
 Ubuntu 和 Debian 那一页完全一样。AlmaLinux、Rocky、CentOS、Fedora 也一样，
-把 `apt` 换成 `dnf` 就是。能装的系统的完整清单在第 2 节。
+把 `apt` 换成 `dnf` 就是。能装的系统的完整清单在第 2 节；[Alpine 第 1 节](alpine.md)把两边的占用逐行拆开了 —— 内存花在哪、硬盘花在哪、以及多大的容器该选哪个。
 
 你也不是只能用别人给你的那个：重装成另一个系统只要一分钟，`/data` 会保留。
 

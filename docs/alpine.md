@@ -1,9 +1,11 @@
 # Using Alpine
 
-Alpine is the small one. A container built from it carries a 36 MB filesystem
-where Debian carries 164 MB, and idles on about a megabyte of memory — so on
-the same box you sold or rented, more of the disk and more of the RAM is left
-for the thing you actually came to run.
+Alpine is the small one. A container built from it carries a **36 MB**
+filesystem where Debian carries **164 MB**, and boots three processes that
+between them hold **168 KB** of memory where Debian boots seven holding
+**6.5 MB** — so on the same box you were sold, more of the disk and more of
+the RAM is left for the thing you actually came to run. §1 is the full
+accounting, measured rather than claimed.
 
 It costs you something for that, and the cost is real: **it is not the Linux
 most instructions on the internet are written for.** No systemd, no `apt`, no
@@ -22,25 +24,98 @@ here is the Alpine half.
 
 ---
 
-## 1. Alpine or Debian
+## 1. What the system itself costs
 
-Measured on a fresh container of each, built from the images this panel
-publishes:
+Every figure below was measured on a fresh container of each, built from the
+images this panel publishes, sitting idle with nothing installed. Same host,
+same limits, same minute.
 
 | | Alpine 3.24 | Debian 13 |
 |---|---|---|
-| Filesystem, before you install anything | **36 MB** | 164 MB |
-| Memory in use at an idle boot | **~1 MB** | ~10 MB |
+| **Filesystem, nothing installed** | **36 MB** | **164 MB** |
+| **Charged to your memory limit at idle** | **15 MB** | **105 MB** |
+| — of that, page cache the kernel gives back under pressure | 14 MB | 94 MB |
+| — of that, memory you do not get back | **0.9 MB** | **10 MB** |
+| Processes running | 3 | 7 |
 | Package manager | `apk` | `apt` |
 | Init | busybox init + OpenRC | systemd |
 | C library | musl | glibc |
-| Logs | files in `/var/log` | journald, and files |
+| Logs | plain files | journald, plus files |
 
-What that buys, in the only terms that matter: on a container sold with 1 GB
-of disk, Alpine leaves you **128 MB more of it**, and on one sold with 256 MB
-of memory the difference at boot is a tenth of everything you have.
+Two of those rows need a sentence, because "how much memory does an idle
+container use" has two honest answers.
 
-What it costs:
+**105 MB is what the panel and `dashboard` show you.** It is `memory.current`
+for your cgroup, and most of it is page cache — the binaries and files the
+system has read, kept around in case they are read again. Under pressure the
+kernel drops it without anybody noticing. **10 MB is what you actually lose**:
+anonymous memory the daemons allocated, plus the kernel's own bookkeeping for
+them. Both numbers are real; the first is what you will see, the second is
+what you can never spend on something else.
+
+### Where the memory goes
+
+The private (anonymous) memory of every process on an idle container, which is
+the part that cannot be reclaimed:
+
+| Job | Alpine | Debian |
+|---|---|---|
+| PID 1 | busybox `init` — **52 KB** | `systemd` — **2,772 KB** |
+| System log | busybox `syslogd` — **64 KB** | `systemd-journald` 1,132 KB + `rsyslogd` 636 KB — **1,768 KB** |
+| Scheduled jobs | busybox `crond` — **52 KB** | `cron` — **200 KB** |
+| Logins and sessions | *nothing running* | `systemd-logind` 1,116 KB + `dbus-daemon` 468 KB — **1,584 KB** |
+| A console nobody is on | *nothing running* | `agetty` — **236 KB** |
+| **Total** | **168 KB** | **6,560 KB** |
+
+Alpine's three processes are **the same binary**. `init`, `syslogd` and
+`crond` are all `/bin/busybox`, so the ~900 KB of program text behind them is
+mapped once and shared three ways — which is why three daemons cost less than
+one of Debian's.
+
+Debian's list is longer because systemd's promise is larger. `logind` tracks
+sessions and seats, `dbus` carries the messages between them, `journald` keeps
+an indexed binary log you can query by unit and time. On a laptop those are
+worth having. In a container you SSH into as root, `logind` and the console
+getty are managing things that are not there.
+
+### Where the disk goes
+
+| | Alpine | Debian |
+|---|---|---|
+| Package index — the list of what exists | **2.9 MB** (`/var/cache/apk`) | **20.5 MB** (`/var/lib/apt/lists`) |
+| Package database — what you have installed | **0.1 MB** (`/lib/apk/db`) | **5.9 MB** (`/var/lib/dpkg`) |
+| Logs, two minutes after first boot | **0 MB** | **8.1 MB** (the journal's first file) |
+| The init system's own files | ~1 MB | 5.5 MB (`/usr/lib/systemd`) |
+| Everything else — the programs | ~32 MB | ~124 MB |
+
+That 20.5 MB of `apt` index is worth knowing about: it is not something you
+installed, it is refreshed rather than deleted, and on a container sold with
+1 GB of disk it is 2% of everything you have, permanently.
+
+**The journal is the one that can surprise you.** It sizes itself at 10% of
+the filesystem — on the container measured here that is a cap of **1.9 GB**,
+and it starts at 8 MB before you have done anything. Capping it is one file;
+see [Debian §5](debian.md).
+
+### So which one, for what
+
+| Your container | Take |
+|---|---|
+| **Disk under about 2 GB** | **Alpine.** 128 MB is 13% of a 1 GB disk and you have not installed anything yet. This is the argument that does not go away. |
+| **Memory 256 MB or less** | **Alpine.** The 9 MB of unreclaimable difference is 4% of a 256 MB box, and the 80 MB of cache Debian wants is memory your own program is not getting. |
+| **1 GB of memory and 10 GB of disk or more** | Either. The difference is a rounding error; take [Debian](debian.md) for the ecosystem. |
+| **You will install vendor agents, MongoDB, aaPanel, or anything shipped as a downloaded binary** | **Debian.** See §11 — this is not about size, it is about whether the thing runs at all. |
+| **You are running many containers on one machine** | Alpine, and the argument compounds: thirty idle Alpine containers is under half a gigabyte of memory and a gigabyte of disk. |
+
+One thing the table cannot show, and it matters: **Alpine does not make your
+software smaller.** nginx uses about 9 MB of private memory on either system —
+measured, master plus four workers, same configuration. What Alpine gives you
+is a smaller box underneath it. If the thing you run needs 400 MB, it needs
+400 MB on both.
+
+### What it costs
+
+None of the above is free, and the bill is not paid in megabytes:
 
 - **Some software has no Alpine build at all.** MongoDB and aaPanel are the
   two you are most likely to want; both publish glibc binaries only, and
@@ -702,6 +777,43 @@ Two specific cases worth naming, because they come up constantly:
 Go, Rust, PHP, Java, nginx, PostgreSQL, MariaDB, Redis: no trouble at all.
 Rust here even produces fully static binaries by default, which is a small
 bonus.
+
+### And what it does not cost you: memory
+
+The two libraries manage memory differently, and it is worth knowing which of
+those differences shows up on your bill and which just looks alarming.
+
+**A program uses the same memory on both.** nginx, master plus four workers,
+same configuration: about 9 MB of private memory on Alpine and about 9 MB on
+Debian. Allocating 250 MB and freeing it again returns all of it to the kernel
+on both. Alpine shrinks the system around your program; it does not shrink
+your program.
+
+**Where they really differ is address space, which is not memory.** glibc
+gives every thread an 8 MB stack and lets it have its own malloc arena; musl
+is far more frugal. The same Python script holding twenty idle threads,
+measured on both:
+
+| | Alpine (musl) | Debian (glibc) |
+|---|---|---|
+| Virtual size, 0 threads | 10 MB | 15 MB |
+| Virtual size, 20 threads | **52 MB** | **1,490 MB** |
+| Resident, 0 → 20 threads | 7.2 → 7.6 MB | 9.2 → 9.7 MB |
+
+A gigabyte and a half of address space, and under half a megabyte of actual
+memory behind it. **Your limit counts resident memory, not address space**, so
+none of that 1.5 GB is charged to you and none of it can OOM you. What it does
+mean is that `top`'s **VIRT** column on a threaded Debian program is a number
+to ignore; **RES** is the one your quota is about.
+
+**The one place musl's frugality can hurt** is that smaller stack. Measured
+with the same interpreter on both, a thread gets 2 MB of stack here against
+Debian's 8 MB. Code that recurses deeply, or puts a large array on the stack
+instead of the heap, has a quarter of the room and overflows where it would
+not have on Debian — and a stack overflow arrives as a bare segfault with
+nothing in any log. If a threaded program of yours dies that way here and
+nowhere else, that is the first thing to suspect, and setting an explicit
+stack size where you create the thread is the fix.
 
 ---
 

@@ -9,12 +9,28 @@ if your container says Ubuntu 24.04, read on.
 That is the whole pitch. It is a fine default, and if you are not sure which
 system you want, this is the one to want.
 
-The trade is size: a Debian container's filesystem is about **164 MB** before
-you install anything, against **36 MB** for [Alpine](alpine.md), and it idles
-on roughly ten megabytes of memory rather than one. On a container sold with a
-generous disk that is noise. On one sold with 512 MB of disk it is a quarter
-of everything you have, and [Using Alpine](alpine.md) is the page that makes
-the case for the other side.
+The trade is size, and it is worth seeing the actual figures before you decide
+it does not matter. Measured on a fresh container of each, idle, nothing
+installed:
+
+| | Debian 13 | Alpine 3.24 |
+|---|---|---|
+| Filesystem | **164 MB** | 36 MB |
+| Charged to your memory limit at idle | **105 MB** | 15 MB |
+| — of that, memory you do not get back | **10 MB** | 0.9 MB |
+| Processes running | 7 | 3 |
+
+Most of that 105 MB is page cache the kernel hands back the moment anything
+needs it; the 10 MB is the part that is really gone. Where it goes: `systemd`
+2.8 MB, `journald` 1.1 MB, `logind` 1.1 MB, `rsyslogd` 0.6 MB, `dbus` 0.5 MB,
+`agetty` 0.2 MB, `cron` 0.2 MB. On the disk side, 20.5 MB is the `apt` package
+index and 5.9 MB is the `dpkg` database — neither of which you installed.
+
+On a container with a gigabyte of memory and ten of disk, all of that is
+noise, and you should take Debian without thinking about it. On one sold with
+256 MB of memory or a 1 GB disk it is real, and [Using Alpine](alpine.md) §1
+is the page that makes the other case, with the same numbers broken down
+further.
 
 This page assumes you have read [using your container](using-your-container.md)
 — how you got one, what a reinstall does, what the five limits are. Everything
@@ -349,8 +365,34 @@ grep -i error /var/log/syslog
 
 `logrotate` is installed and runs daily, so none of this grows into your disk
 quota — but a log file your own program writes is not rotated unless you drop
-a config for it into `/etc/logrotate.d/`. The journal caps itself, so it does
-not need one.
+a config for it into `/etc/logrotate.d/`.
+
+### Cap the journal before it caps you
+
+The journal caps itself, but not at a number anybody chose for a container: it
+takes **10% of the filesystem**. On the container these figures were measured
+on that works out at a ceiling of **1.9 GB**, and it starts at 8 MB two
+minutes after first boot, before you have run anything.
+
+```sh
+journalctl --disk-usage         # what it is holding right now
+journalctl --vacuum-size=100M   # cut it down to size, now
+```
+
+To make it stick, one line under the `[Journal]` section that is already in
+`/etc/systemd/journald.conf` (everything in there ships commented out):
+
+```
+[Journal]
+SystemMaxUse=100M
+```
+
+then `systemctl restart systemd-journald`. It says the new ceiling out loud —
+`System Journal … is 8M, max 100M` — in its own first log line. On a container
+with a small disk
+this is worth doing on day one — 100 MB of journal is still weeks of history
+for anything you are likely to run, and it is the difference between a log
+that fits and one that eats a tenth of what you were sold.
 
 A service you wrote does not need a log file at all: write to stdout, let
 systemd catch it, and read it with `journalctl -u`.

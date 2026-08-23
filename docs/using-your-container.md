@@ -20,12 +20,12 @@ instead.
 
 | If you want | Pick |
 |---|---|
-| **To squeeze the most out of a small box** | **[Alpine](alpine.md)** — 36 MB of filesystem, about a megabyte of memory at idle. No systemd, no `apt`, no glibc, so instructions written for anything else have to be translated. That page is the translation, and it is honest about what it costs. |
-| **An ordinary Linux, nothing to learn** | **[Debian](debian.md)** — 164 MB, `apt`, `systemctl`, `journalctl`. Every blog post you find works as written. Pick this one if you are not sure. |
+| **To squeeze the most out of a small box** | **[Alpine](alpine.md)** — 36 MB of filesystem and 15 MB of memory at an idle boot, against Debian's 164 MB and 105 MB. No systemd, no `apt`, no glibc, so instructions written for anything else have to be translated. That page is the translation, and it is honest about what it costs. |
+| **An ordinary Linux, nothing to learn** | **[Debian](debian.md)** — bigger, and `apt`, `systemctl`, `journalctl`. Every blog post you find works as written. Pick this one if you are not sure. |
 
 Ubuntu reads exactly like the Debian page. AlmaLinux, Rocky, CentOS and Fedora
 read like it too, with `dnf` in place of `apt`. The full list of what you can
-install is in §2.
+install is in §2, and [Alpine §1](alpine.md) breaks the two footprints down line by line — where the memory goes, where the disk goes, and which size of container each one suits.
 
 You are not stuck with what you were handed: reinstalling onto another system
 takes a minute and keeps `/data`.
