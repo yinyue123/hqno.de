@@ -104,7 +104,7 @@ see [Debian §5](debian.md).
 | **Disk under about 2 GB** | **Alpine.** 128 MB is 13% of a 1 GB disk and you have not installed anything yet. This is the argument that does not go away. |
 | **Memory 256 MB or less** | **Alpine.** The 9 MB of unreclaimable difference is 4% of a 256 MB box, and the 80 MB of cache Debian wants is memory your own program is not getting. |
 | **1 GB of memory and 10 GB of disk or more** | Either. The difference is a rounding error; take [Debian](debian.md) for the ecosystem. |
-| **You will install vendor agents, MongoDB, aaPanel, or anything shipped as a downloaded binary** | **Debian.** See §11 — this is not about size, it is about whether the thing runs at all. |
+| **You were handed a compiled program to run** — a vendor agent, a game server, a trading bot, anything that arrived as a binary rather than as source | **Check §11 first.** Half of them run here untouched and half do not, and the answer depends on how it was built, not on what it does. MongoDB and aaPanel are known noes. |
 | **You are running many containers on one machine** | Alpine, and the argument compounds: thirty idle Alpine containers is under half a gigabyte of memory and a gigabyte of disk. |
 
 One thing the table cannot show, and it matters: **Alpine does not make your
@@ -121,10 +121,13 @@ None of the above is free, and the bill is not paid in megabytes:
   two you are most likely to want; both publish glibc binaries only, and
   `app-setup` refuses them here with a sentence saying so rather than failing
   four minutes into an install.
-- **Precompiled binaries you download yourself usually will not run.** A
-  release tarball built for glibc dies with `no such file or directory` — a
-  famously unhelpful message for a binary that is plainly right there.
-  See §11.
+- **A compiled binary somebody else built may not run** — one built against
+  glibc dies with `not found`, a famously unhelpful message for a file that is
+  plainly right there. This does **not** apply to PHP, Python, Node, Java or
+  shell, which do not care what libc is underneath; nor to most Go binaries,
+  which carry no libc at all. **§11 is a table of what you were handed and
+  whether it runs**, and it is the section to read first if you rented this
+  box to run somebody else's software.
 - **`systemctl` does not exist.** Every service instruction you find has to be
   translated. §6 is the table.
 
@@ -729,50 +732,93 @@ one as plain text.
 
 ---
 
-## 11. What musl actually costs you
+## 11. Running somebody else's program
 
-Alpine uses musl where nearly every other distribution uses glibc. Source you
-compile here is fine. Binaries somebody else compiled are the problem.
+Alpine uses musl where nearly every other distribution uses glibc. If you
+rented this box to run something you did not write, that one sentence is the
+only thing on this page that can stop you — so here is the whole answer,
+sorted by what you were actually handed.
 
-**The error you will see**, and it is a bad one:
+| What you were given | Here |
+|---|---|
+| A **shell script** | **Yes.** Mind the shebang: `#!/bin/sh` is busybox here, so a script full of bashisms needs `#!/bin/bash`. |
+| A **PHP** application — WordPress, Typecho, a folder of `.php` | **Yes**, no difference whatsoever. `app-setup install lnmp`, copy it in, done. |
+| A **Python** program — `.py` files and a `requirements.txt` | **Yes.** See the note below about wheels. |
+| A **Node.js** program — source and a `package.json` | **Yes.** See the note below about native modules. |
+| A **Java** `.jar` | **Yes.** The JVM is a distro package here (`app-setup install java`), and a `.jar` does not care what is underneath it. |
+| A **Go** binary from a releases page | **Almost always yes.** Go links statically by default, so most published Go binaries carry no libc at all and run anywhere. |
+| A **Rust** binary from a releases page | **The `-musl` build yes, the `-gnu` build no.** The file name tells you which one you downloaded. |
+| Any other **compiled binary** — C, C++, or Go built with cgo | **Check before you commit.** Statically linked: yes. Linked against glibc: not without help — read on. |
+| A **`.deb` or `.rpm`** | **No.** `apk` cannot read either format. Look for the project's own tarball, or its Alpine package. |
+| A **Docker image** | **No — and not on Debian either.** Running a container inside your container is not supported here: a tenant gets no `CAP_NET_ADMIN` and there is no `/dev/net/tun`, so a nested runtime has no way to give it a network. What you *can* do is become it — reinstall this container **from** that image. See [building your own image](building-your-own-image.md). |
+| A **`curl … \| sh` installer** | **Depends on what it downloads**, which is usually a glibc binary. Read the script first, or just run it and find out. |
+
+The short version: **anything that runs on an interpreter or a virtual
+machine — PHP, Python, Node, Java, Ruby, shell — does not care which libc is
+underneath, and Alpine costs you nothing.** The question only arises for a
+compiled binary that somebody else built, and half of those are statically
+linked and fine too.
+
+Two interpreter cases that do come up, both about compiling rather than about
+running:
+
+- **Python.** `pip install` on a package with no pure-Python version
+  downloads a ready-made wheel on Debian and compiles from source here,
+  unless the project publishes `musllinux` wheels (many now do). Compiling
+  needs headers, which is exactly why `app-setup install python` pulls
+  `python3-dev` and `build-base` in with it. Install it that way and `pip`
+  behaves.
+- **Node.** Alpine's own `nodejs` package is current, so
+  `app-setup install nodejs` gives you a musl build and `npm install` works.
+  What falls back to compiling is a package shipping a prebuilt `.node`, and
+  that wants `build-base` too.
+
+### Checking a binary before you trust it
+
+Two commands, before you build anything around it:
+
+```sh
+file ./some-tool
+ldd  ./some-tool
+```
+
+| What they say | What it means |
+|---|---|
+| `statically linked` | runs anywhere, including here. Nothing to think about. |
+| `interpreter /lib64/ld-linux-x86-64.so.2` | built for glibc — read the next section |
+| `interpreter /lib/ld-musl-x86_64.so.1` | built for musl — it is already yours |
+| `ldd` says `Not a valid dynamic program` | static, same as the first row |
+
+### The error, if you skip the check
 
 ```
 ./some-tool: not found
 ```
 
 The file is right there and `ls` proves it. What is missing is
-`/lib64/ld-linux-x86-64.so.2` — the glibc loader the binary asks for — and the
-kernel reports that absence as if the program itself were absent.
+`/lib64/ld-linux-x86-64.so.2` — the glibc loader the binary asks the kernel
+for — and the kernel reports that absence as if the program itself were
+absent. It is the single most confusing message on this system, and this is
+all it ever means.
 
-```sh
-file ./some-tool        # "dynamically linked, interpreter /lib64/ld-linux-…"  → glibc
-ldd ./some-tool         # "Not a valid dynamic program"                        → glibc
-```
-
-What to do, in the order worth trying:
+### What to do about a glibc binary, in order
 
 1. **Look for the package.** `apk search <name>` — Alpine packages far more
    than people expect, and a distribution package is built against musl by
    definition.
-2. **Look for a musl or static build** on the project's releases page. Go and
-   Rust projects almost always publish one; a statically linked binary needs
-   no loader at all and runs anywhere.
-3. **Build it from source.** `apk add build-base` gets you a compiler.
-4. **Give up and use Debian** for that one thing. This is a legitimate answer,
-   and reinstalling costs you a minute.
-
-Two specific cases worth naming, because they come up constantly:
-
-- **Python.** `pip install` on a package with no pure-Python version
-  downloads a ready-made wheel on Debian and compiles from source here,
-  unless the project publishes `musllinux` wheels (many now do). That needs a
-  compiler and headers, which is exactly why `app-setup install python` pulls
-  `python3-dev` and `build-base` in with it. Install it that way and `pip`
-  behaves.
-- **Node.** Alpine's own `nodejs` package is current, so `app-setup install
-  nodejs` gives you a musl build and `npm install` works. What breaks is an
-  npm package shipping a prebuilt `.node` binary; those fall back to
-  compiling, which again wants `build-base`.
+2. **Try `apk add gcompat`.** It is 87 KB and it makes glibc binaries load.
+   Measured: a glibc `echo` copied in from a Debian container answers
+   `not found` on a stock image and runs correctly the moment `gcompat` is
+   installed. **It is not a guarantee** — it supplies libc and nothing else,
+   so a binary that also wants `libselinux.so.1` or glibc's `libstdc++` still
+   fails, now with a message naming the library it could not find. One
+   command, worth the try.
+3. **Look for a musl or static build** on the project's releases page. Go and
+   Rust projects almost always publish one, and a static binary needs no
+   loader at all.
+4. **Build it from source.** `apk add build-base` gets you a compiler.
+5. **Use Debian for that one thing.** A perfectly good answer; the reinstall
+   costs a minute and keeps `/data`. §12.
 
 Go, Rust, PHP, Java, nginx, PostgreSQL, MariaDB, Redis: no trouble at all.
 Rust here even produces fully static binaries by default, which is a small

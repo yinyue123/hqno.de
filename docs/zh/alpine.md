@@ -96,7 +96,7 @@ Debian 那一列长，是因为 systemd 承诺的事更多。`logind` 管会话�
 | **硬盘不到 2 GB 左右** | **Alpine。** 128 MB 是 1 GB 硬盘的 13%，而你还什么都没装。这条理由不会随时间消失。 |
 | **内存 256 MB 或更少** | **Alpine。** 那 9 MB 拿不回来的差别是 256 MB 的 4%，而 Debian 想吃掉的那 80 MB 缓存，是你自己的程序没吃到的内存。 |
 | **内存 1 GB、硬盘 10 GB 以上** | 都行。差别是零头，冲着生态选 [Debian](debian.md)。 |
-| **你要装厂商的 agent、MongoDB、aaPanel，或者任何以「下载一个二进制」方式发布的东西** | **Debian。** 见第 11 节 —— 这不是大小问题，是那东西到底跑不跑得起来的问题。 |
+| **别人扔给你一个编译好的程序要你跑** —— 厂商的 agent、游戏服务端、交易机器人，任何以二进制而不是源码形式到你手里的东西 | **先看第 11 节。** 它们里有一半在这儿原样能跑、有一半不能，而答案取决于它是怎么编出来的，不取决于它是干什么的。MongoDB 和 aaPanel 是已知不行的两个。 |
 | **你在一台机器上跑很多个容器** | Alpine，而且这条会叠加：三十个空转的 Alpine 容器加起来不到半 GB 内存、1 GB 硬盘。 |
 
 有一件表里体现不出来、但很重要的事：**Alpine 不会让你的软件变小。**
@@ -111,9 +111,12 @@ nginx 在两个系统上都占大约 9 MB 私有内存 —— 实测的，主进
 - **有些软件根本没有 Alpine 版本。** 你最可能想要的两个是 MongoDB 和 aaPanel，
   它们只发布 glibc 二进制。`app-setup` 在这里会直接拒绝并说明原因，
   而不是装到第四分钟才失败。
-- **你自己下载的预编译程序通常跑不起来。** 为 glibc 编译的发布包会以
-  `no such file or directory` 结束 —— 对一个明明就在那儿的文件来说，
-  这个提示出了名地没用。见第 11 节。
+- **别人编译好的二进制不一定跑得起来。** 对着 glibc 编的那种会以
+  `not found` 结束 —— 对一个明明就在那儿的文件来说，这个提示出了名地没用。
+  这一条**不适用于** PHP、Python、Node、Java、shell，它们不在乎底下是哪个
+  libc；也基本不适用于 Go 的二进制，它们通常根本不带 libc。
+  **第 11 节是一张「你拿到的是什么、在这儿跑不跑得起来」的表**，
+  如果你租这台盒子就是为了跑别人的软件，那一节是你该先读的。
 - **没有 `systemctl`。** 你找到的每一条服务相关的说明都要翻译一遍。
   第 6 节就是那张对照表。
 
@@ -670,46 +673,84 @@ ip -s link show tap0
 
 ---
 
-## 11. musl 到底让你付出什么
+## 11. 跑别人的程序
 
-Alpine 用 musl，而几乎所有别的发行版用 glibc。你自己编译的源码没问题，
-别人编译好的二进制才是问题。
+Alpine 用 musl，而几乎所有别的发行版用 glibc。如果你租这台盒子就是为了跑
+一个不是你写的东西，那这一句话是这一页上唯一可能挡住你的事 ——
+所以下面按「你到底拿到了个什么」把答案列全。
 
-**你会看到的报错**，而且它很坑：
+| 你拿到的是 | 在这儿 |
+|---|---|
+| 一个 **shell 脚本** | **能跑。** 注意第一行：这里的 `#!/bin/sh` 是 busybox，满是 bash 语法的脚本要写 `#!/bin/bash`。 |
+| 一个 **PHP** 程序 —— WordPress、Typecho、一堆 `.php` | **能跑**，没有任何区别。`app-setup install lnmp`，把文件拷进去，完事。 |
+| 一个 **Python** 程序 —— `.py` 加 `requirements.txt` | **能跑。** wheel 那件事见下面。 |
+| 一个 **Node.js** 程序 —— 源码加 `package.json` | **能跑。** 原生模块那件事见下面。 |
+| 一个 **Java** 的 `.jar` | **能跑。** JVM 在这儿就是个发行版的包（`app-setup install java`），而 `.jar` 不在乎底下是什么。 |
+| 从 releases 页下的 **Go** 二进制 | **几乎一定能。** Go 默认静态链接，所以绝大多数公开发布的 Go 二进制根本不带 libc，哪儿都能跑。 |
+| 从 releases 页下的 **Rust** 二进制 | **带 `-musl` 的能，带 `-gnu` 的不能。** 文件名就写着你下的是哪个。 |
+| 别的 **编译好的二进制** —— C、C++，或者开了 cgo 编的 Go | **先查一下再说。** 静态链接的：能。链的 glibc：得想办法 —— 往下看。 |
+| 一个 **`.deb` 或 `.rpm`** | **不能。** `apk` 读不了这两种格式。去找项目自己的 tarball，或者它的 Alpine 包。 |
+| 一个 **Docker 镜像** | **不能 —— Debian 上也不能。** 在容器里再跑容器这件事这里不支持：租户拿不到 `CAP_NET_ADMIN`，也没有 `/dev/net/tun`，所以嵌套的运行时没办法给它配网络。但你可以让这个容器**变成**它 —— 用那个镜像重装本容器。见[自己做镜像](building-your-own-image.md)。 |
+| 一句 **`curl … \| sh` 的安装脚本** | **看它下载什么**，通常是个 glibc 二进制。先把脚本读一遍，或者直接跑跑看。 |
+
+一句话总结：**凡是跑在解释器或虚拟机上的东西 —— PHP、Python、Node、Java、
+Ruby、shell —— 都不在乎底下是哪个 libc，Alpine 一分钱不收你。**
+只有「别人编译好的二进制」才需要问这个问题，而这里面还有一半是静态链接的，
+也没事。
+
+有两种解释器场景确实会遇到，但它们是「要编译」的问题，不是「跑不跑得起来」的问题：
+
+- **Python。** 一个没有纯 Python 版本的包，`pip install` 在 Debian 上会下载
+  现成的 wheel，在这里则要从源码编 —— 除非项目发布了 `musllinux` 的 wheel
+  （现在很多都发了）。编译要头文件，
+  这正是 `app-setup install python` 会把 `python3-dev` 和 `build-base`
+  一起带上的原因。这样装，`pip` 就正常了。
+- **Node。** Alpine 自己的 `nodejs` 包是跟得上游的，所以
+  `app-setup install nodejs` 给你的是 musl 构建，`npm install` 能跑。
+  会退回到现场编译的是那种自带预编译 `.node` 的包，它同样需要 `build-base`。
+
+### 在你信任一个二进制之前，先查两下
+
+在围着它搭任何东西之前，两条命令：
+
+```sh
+file ./some-tool
+ldd  ./some-tool
+```
+
+| 它说 | 意思是 |
+|---|---|
+| `statically linked` | 哪儿都能跑，这里也一样。不用想了。 |
+| `interpreter /lib64/ld-linux-x86-64.so.2` | 是给 glibc 编的 —— 看下一小节 |
+| `interpreter /lib/ld-musl-x86_64.so.1` | 是给 musl 编的 —— 它本来就是你的 |
+| `ldd` 说 `Not a valid dynamic program` | 静态的，和第一行一个意思 |
+
+### 不查的话你会看到的报错
 
 ```
 ./some-tool: not found
 ```
 
 文件明明就在那儿，`ls` 都能看见。缺的是
-`/lib64/ld-linux-x86-64.so.2` —— 这个二进制点名要的 glibc 加载器 ——
+`/lib64/ld-linux-x86-64.so.2` —— 这个二进制向内核点名要的 glibc 加载器 ——
 而内核把「加载器不在」报告成了「程序本身不在」的样子。
+这是这个系统上最容易让人误解的一句话，而它永远只有这一个意思。
 
-```sh
-file ./some-tool        # "dynamically linked, interpreter /lib64/ld-linux-…"  → glibc
-ldd ./some-tool         # "Not a valid dynamic program"                        → glibc
-```
-
-按值得尝试的顺序，你可以：
+### 碰上 glibc 二进制怎么办，按顺序
 
 1. **先找包。** `apk search <名字>` —— Alpine 打包的东西比大家以为的多得多，
    而发行版的包按定义就是对着 musl 编的。
-2. **找 musl 版或静态版**，在项目的 releases 页上。Go 和 Rust 的项目几乎一定
-   有一个；静态链接的二进制根本不需要加载器，哪里都能跑。
-3. **自己从源码编。** `apk add build-base` 给你一套编译器。
-4. **放弃，这一样东西用 Debian。** 这是个正当答案，重装也就一分钟。
-
-有两种情况值得单独点名，因为它们天天出现：
-
-- **Python。** 一个没有纯 Python 版本的包，`pip install` 在 Debian 上会下载
-  现成的 wheel，在这里则要从源码编 —— 除非项目发布了 `musllinux` 的 wheel
-  （现在很多都发了）。从源码编需要编译器和头文件，
-  这正是 `app-setup install python` 会把 `python3-dev` 和 `build-base`
-  一起带上的原因。这样装，`pip` 就正常了。
-- **Node。** Alpine 自己的 `nodejs` 包是跟得上游的，所以
-  `app-setup install nodejs` 给你的是 musl 构建，`npm install` 能跑。
-  会出问题的是那种自带预编译 `.node` 的 npm 包，它们会退回到现场编译，
-  又一次需要 `build-base`。
+2. **试试 `apk add gcompat`。** 它只有 87 KB，作用是让 glibc 的二进制能被加载。
+   实测：从 Debian 容器里拷过来的一个 glibc 版 `echo`，在原始镜像上回答
+   `not found`，装上 `gcompat` 之后立刻正常运行。
+   **但它不是保票** —— 它只补 libc，别的一概不补，
+   所以一个还要 `libselinux.so.1` 或者 glibc 版 `libstdc++` 的程序照样失败，
+   只不过这次的报错会点名它找不到哪个库。一条命令的事，值得试。
+3. **找 musl 版或静态版**，在项目的 releases 页上。Go 和 Rust 的项目几乎一定
+   有一个，而静态二进制根本不需要加载器。
+4. **自己从源码编。** `apk add build-base` 给你一套编译器。
+5. **这一样东西用 Debian。** 这是个完全正当的答案；重装一分钟，`/data` 保留。
+   见第 12 节。
 
 Go、Rust、PHP、Java、nginx、PostgreSQL、MariaDB、Redis：完全没麻烦。
 Rust 在这里甚至默认产出全静态的二进制，算是个小赠品。
