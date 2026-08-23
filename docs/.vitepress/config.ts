@@ -135,6 +135,7 @@ export default defineConfig({
             items: [
               { text: 'Backing up PostgreSQL', link: '/backup-postgresql' },
               { text: 'Backing up files', link: '/backup-files' },
+              { text: 'Running a proxy or VPN', link: '/proxy' },
             ],
           },
         ],
@@ -198,6 +199,7 @@ export default defineConfig({
             items: [
               { text: '备份 PostgreSQL', link: '/zh/backup-postgresql' },
               { text: '备份文件', link: '/zh/backup-files' },
+              { text: '跑一个代理或 VPN', link: '/zh/proxy' },
             ],
           },
         ],

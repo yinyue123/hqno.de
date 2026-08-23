@@ -179,5 +179,7 @@ a public port it sees the real one, in any protocol, with nothing to configure.
 - [Using your container](using-your-container.md) — the rest of what is yours to
   change.
 - [Quick start](quick-start.md) — domains, DNS and HTTPS, in order.
+- [Running a proxy or VPN](proxy.md) — which shapes need a port at all, and
+  which get in on a name instead.
 - [Running a machine of your own](running-a-machine.md) — the other side of this
   page.

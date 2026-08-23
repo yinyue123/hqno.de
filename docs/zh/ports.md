@@ -163,4 +163,5 @@ title: 公网端口
 
 - [使用你的容器](using-your-container.md) —— 其余归你改的东西。
 - [快速上手](quick-start.md) —— 域名、DNS 和 HTTPS，按顺序走一遍。
+- [跑一个代理或 VPN](proxy.md) —— 哪种形状需要端口，哪种靠一个名字就能进来。
 - [自己跑一台机器](running-a-machine.md) —— 这一页的另一面。
