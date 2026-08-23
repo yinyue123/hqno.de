@@ -14,14 +14,15 @@ title: 自己做镜像
 - [1. 五分钟版本](#_1-五分钟版本)
 - [2. 机器到底要求什么](#_2-机器到底要求什么)
 - [3. 我们的镜像里已经装了什么](#_3-我们的镜像里已经装了什么)
-- [4. 从别的底包开始](#_4-从别的底包开始)
-- [5. 用 GitHub Actions 打包](#_5-用-github-actions-打包)
-- [6. 让机器拉得到它](#_6-让机器拉得到它)
-- [7. 装上去，以及它的代价](#_7-装上去-以及它的代价)
-- [8. 从 GitHub Actions 驱动它](#_8-从-github-actions-驱动它)
-- [9. 贴进去之前先检查](#_9-贴进去之前先检查)
-- [10. 起不来的时候](#_10-起不来的时候)
-- [11. 让 AI 帮你写](#_11-让-ai-帮你写)
+- [4. 一个真实的例子：两个服务、cron，和放在 /data 上的配置](#_4-一个真实的例子-两个服务、cron-和放在-data-上的配置)
+- [5. 从别的底包开始](#_5-从别的底包开始)
+- [6. 用 GitHub Actions 打包](#_6-用-github-actions-打包)
+- [7. 让机器拉得到它](#_7-让机器拉得到它)
+- [8. 装上去，以及它的代价](#_8-装上去-以及它的代价)
+- [9. 从 GitHub Actions 驱动它](#_9-从-github-actions-驱动它)
+- [10. 贴进去之前先检查](#_10-贴进去之前先检查)
+- [11. 起不来的时候](#_11-起不来的时候)
+- [12. 让 AI 帮你写](#_12-让-ai-帮你写)
 
 ---
 
@@ -64,8 +65,8 @@ docker buildx build --platform linux/amd64 -t ghcr.io/you/myapp:v1 --push .
 容器就跑在你的镜像上了，`/data` 还在原地。
 
 后面全是细节：机器要求什么（第 2 节）、从我们的镜像开始你白拿了什么（第 3 节）、
-怎么把构建从笔记本挪进 CI（第 5 节），以及怎么让一次 push 最后变成一个正在运行的
-容器（第 8 节）。
+一个真的在跑、把网站和数据库装在一起的镜像（第 4 节）、怎么把构建从笔记本挪进
+CI（第 6 节），以及怎么让一次 push 最后变成一个正在运行的容器（第 9 节）。
 
 ---
 
@@ -159,6 +160,15 @@ STOPSIGNAL SIGUSR2       # busybox init / OpenRC
 
 ## 3. 我们的镜像里已经装了什么
 
+这些是**机器**，不是应用容器 —— 往里加东西的时候，先记住这一点。包管理器、
+服务管理器、cron 守护进程都在里面，而且都跑着。所以把你自己的软件放进镜像，
+和在一台真机器上做的是同样两步：装上，然后写一个拉起它的服务。
+
+```sh
+apk add nginx                  # Alpine。       其他系统是 apt-get install / dnf install
+rc-update add nginx default    # 开机自启。      其他系统是 systemctl enable nginx
+```
+
 二十个系统、三份配方、一个公开的包 —— `ghcr.io/yinyue123/hqnode:<tag>`。
 整套构建都在[这个站点自己的仓库](https://github.com/yinyue123/hqno.de/tree/main/images)里，
 它就是这一页反复指着的那个「做好的例子」。
@@ -169,32 +179,127 @@ STOPSIGNAL SIGUSR2       # busybox init / OpenRC
 | [`systemd-deb`](https://github.com/yinyue123/hqno.de/blob/main/images/systemd-deb/Dockerfile) | Debian、Ubuntu | apt | systemd | 约 45–60 MB |
 | [`systemd-rpm`](https://github.com/yinyue123/hqno.de/blob/main/images/systemd-rpm/Dockerfile) | AlmaLinux、Rocky、CentOS、Fedora | dnf，CentOS 7 上是 yum | systemd | 约 90–125 MB |
 
-它们在发行版自己的底包之上加了什么 —— 以及这一页存在的理由：这些你到底需不需要：
+在发行版自己的底包之上，这些镜像里还有什么，以及每一样是干什么用的：
 
-| 加了什么 | 需要吗 |
+| 里面有什么 | 它是干什么的 |
 |---|---|
-| 一个 init：`systemd systemd-sysv dbus`，或者 `openrc busybox-openrc busybox-suid` | **需要。** 这就是 `/sbin/init` |
-| `bash`，以及底包自带的 `/bin/sh` | `sh` 需要；`bash` 是舒适度 —— 不过登录 shell 优先用它，人们也默认它在 |
-| `openssh-sftp-server`（RPM 家族里在 `openssh-server` 包内），外加一个软链把 `sftp-server` 放到 `PATH` 上 | 只有要 SFTP 和 `scp` 时 |
-| `shadow` / `passwd`、`sudo`、`su` | `su` 只在非 root 登录时需要。`passwd` 是密码那个 shim 包住的东西 |
-| cron：`cron`、`cronie`、`crond` | 不需要 |
-| `rsyslog` / `syslog`、`logrotate` | 不需要 |
-| `procps` / `procps-ng`、`iproute2`、`iputils`、`curl`、`ca-certificates`、`less`、`nano`、`tzdata` | 不需要。但这是「一个容器」和「一台像样的机器」之间的差别 —— `top` 和 `free` 打出人们预期的东西、`ping` 能用、伸手就有 `curl` |
-| `STOPSIGNAL` | **需要**（第 2 节） |
-| 让 init 适应容器的那几个设置：`rc_sys="lxc"`、`rc_provide="loopback net"`、`/etc/inittab` 里删掉 getty；或者 systemd 把硬件相关的 unit mask 掉 | **基本上需要。** 不改的话 init 会去启动那些在这里根本不可能工作的硬件服务，失败得很大声，一个好好的容器在 `rc-status` 或 `systemctl status` 里看上去像坏了 |
-| sshd 装上了，但是**关着** | 不需要。它在那儿只是为了让想在自己端口上跑一个 sshd 的人少走一步 |
-| 开机刷一次包索引，一天最多一次 | 不需要。但这就是为什么刚登录进去 `apk add nginx` 是能用的，而不是告诉你没这个包 |
-| `app-setup` —— 软件管理器、它的配方和 `/etc/helppage` | 不需要。第 4 节讲怎么把它带走 |
-| `PATH` 上那几个 shim：`passwd`、`poweroff`、`halt`、`dashboard`、`domain`、`reinstall`、`helppage` | 不需要 —— 但只用真正的 `passwd` 改密码是传不到 SSH 网关的，所以去掉这个 shim 之后，shell 密码就只能从面板改了 |
-| `/data` 和里面的一个 README | 不需要。盘是照挂的，跟目录在不在没关系 |
+| 一个 init —— `systemd systemd-sysv dbus`，或者 `openrc busybox-openrc busybox-suid` | 当 PID 1，并且把别的东西都拉起来。`systemctl start` / `enable`，或者 `rc-service` / `rc-update add … default`。这就是 `/sbin/init` |
+| 发行版自己的包管理器 | `apk`、`apt-get`、`dnf`，能用而且是当前的。软件就是从这儿进盒子的 —— 在你的 `Dockerfile` 里是它，登进一个正在跑的容器里也是它 |
+| cron —— `crond`、`cron`、`cronie`，**已经在默认运行级里** | 定时任务，从第一次开机就在跑。`crontab -e`；或者在 Alpine 上把脚本丢进 `/etc/periodic/15min\|hourly\|daily\|weekly\|monthly`，Debian 和 RPM 家族上是 `/etc/cron.d` |
+| `bash` | 人们预期的那个登录 shell。硬要求是 `/bin/sh`（第 2 节），但只要 bash 在，登录拿到的就是它 |
+| `openssh-sftp-server`，外加一个软链把 `sftp-server` 放到 `PATH` 上 | 提供 SFTP —— 从 OpenSSH 9 起 `scp` 说的也是这个协议。网关执行的是容器自己的那一份，所以文件和权限都是容器的 |
+| OpenSSH **客户端** | 往外的那个方向：`git clone git@…`、`rsync -e ssh`、把文件拷到另一台机器 |
+| `shadow` / `passwd`、`sudo`、`su` | 真正的账号体系：改 shell 密码、非 root 登录时用 `sudo`，以及 `su` —— 网关用它把非 root 登录落到那个用户自己的 shell、用户组和环境里 |
+| `rsyslog` / `syslog`、`logrotate` | 服务的输出落到 `/var/log`，并且会轮转，而不是把盘撑满 |
+| `procps` / `procps-ng`、`iproute2`、`iputils`、`curl`、`ca-certificates`、`less`、`nano`、`tzdata` | `top` 和 `free` 打出人们预期的东西而不是 busybox 那套简版、`ip`、`ping`、一个证书齐全的 `curl`、一个分页器、一个编辑器，以及一个可以设的时区 |
+| `STOPSIGNAL` | 说明主机关这个盒子时发哪个信号（第 2 节） |
+| 让 init 适应容器的那几个设置 —— `rc_sys="lxc"`、`rc_provide="loopback net"`、`/etc/inittab` 里删掉 getty；或者 systemd 把硬件相关的 unit mask 掉 | 拦住 init 去启动那些在容器里根本不可能工作的硬件服务。不改的话，一个完全健康的盒子在 `rc-status` 或 `systemctl status` 里满屏是红的 |
+| sshd，装上了但**关着** | 留给想在自己端口上跑一个 sshd 的人：`systemctl enable --now ssh`，或者 `rc-update add sshd default && rc-service sshd start` |
+| 开机刷一次包索引，一天最多一次 | 让刚登录进去的 `apk add nginx` 就能用，而不是回你一句「没有这个包」 |
+| `app-setup`、它的配方，以及 `/etc/helppage` | 那个装 LNMP、WordPress、数据库、备份的菜单，以及 `helppage` 打出来的指南。往里加你自己的条目是[添加你自己的软件（英文）](/app-setup-sources) |
+| `PATH` 上那几个 shim —— `passwd`、`poweroff`、`halt`、`dashboard`、`domain`、`reinstall`、`helppage` | 拿着容器的人得到的那几条命令：一次也会同步到 SSH 网关的改密码、一个关了就真的不再被拉起来的 `poweroff`、看自己配额、加域名，以及在 shell 里重装 |
+| `/data`，里面放一个 README | 重装唯一保留的那块盘的挂载点 |
 
-那张表里写着**不需要**的，你都可以扔掉。里面没有任何一样是面板会去检查的：
-用你的镜像建出来的容器之所以是系统容器，是因为它是怎么被创建的，
-而不是因为镜像声明了什么。
+第 2 节是镜像必须有的那张短清单。上面这些则是你 `FROM` 我们的镜像白拿的东西 ——
+去掉其中任何一样，改变的是这个盒子登进去的手感，不是它能不能启动。
 
 ---
 
-## 4. 从别的底包开始
+## 4. 一个真实的例子：两个服务、cron，和放在 /data 上的配置
+
+五分钟版本是一个服务、没有状态。真实的镜像通常两样都不止一个。下面是一个真在跑的
+镜像的形状 —— 一个 Next.js 站点和它用的 PostgreSQL，装在同一个容器里，
+那个容器一共 384 MB 内存。
+
+```dockerfile
+# ── 在有工具链的地方把应用构建出来 ─────────────────────────────────
+FROM node:24-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# ── 盒子本身 ──────────────────────────────────────────────────────
+FROM ghcr.io/yinyue123/hqnode:alpine-3.24
+
+# 包管理器就在手边。两个服务的运行时；写 postgresql17 而不是不带版本号的包，
+# 是因为更新的大版本打不开上个月那份 dump 所属的数据目录。
+RUN apk add --no-cache nodejs postgresql17 postgresql17-client
+
+# 站点不用 root 跑，这里也没有任何东西要绑特权端口：
+# 域名可以路由到你指定的任意容器端口。
+RUN addgroup -S app && adduser -S -D -H -G app -s /sbin/nologin app
+COPY --from=build --chown=app:app /app/.next/standalone /app
+
+# 一个服务一个 init 脚本，两个都加进默认运行级。
+COPY init.d/app /etc/init.d/app
+COPY init.d/db  /etc/init.d/db
+RUN chmod 0755 /etc/init.d/app /etc/init.d/db; \
+    rc-update add db  default; \
+    rc-update add app default
+
+# 这个底包上 crond 本来就在跑，所以一个每晚的任务就是一个文件。
+RUN printf '#!/bin/sh\nexec /usr/local/sbin/app-backup\n' \
+      > /etc/periodic/daily/app-backup; \
+    chmod 0755 /etc/periodic/daily/app-backup
+```
+
+两个 init 脚本里的一个：
+
+```sh
+#!/sbin/openrc-run
+name="app"
+description="the site"
+
+# 配置放在重装会保留的那块盘上，不在镜像里。
+env_file="/data/app.env"
+if [ -r "$env_file" ]; then set -a; . "$env_file"; set +a; fi
+
+supervisor=supervise-daemon        # OpenRC 版的 Restart=always
+command="/usr/bin/node"
+command_args="/app/server.js"
+command_user="app:app"
+output_log="/var/log/app.log"
+error_log="/var/log/app.log"
+respawn_delay=10
+respawn_max=5
+respawn_period=60
+
+depend() { need net; use db; }
+
+start_pre() {
+    [ -f "$env_file" ] || { eerror "没有 $env_file —— 这个容器还没配置过"; return 1; }
+    checkpath --file --mode 0640 --owner app:app /var/log/app.log
+}
+```
+
+里面有五件事，是「在你笔记本上能跑」和「在别人的机器上能跑」之间的差别：
+
+- **配置放 `/data`，不要写进 `ENV`。** OpenRC 会把交给服务的环境清干净，
+  所以镜像里的 `ENV` 只到 PID 1 为止 —— 实测：设了 `ENV PORT=80`，
+  服务起来用的还是它自己的默认端口。改成在 init 脚本里读一个 env 文件。
+  systemd 那边的 `EnvironmentFile=/data/app.env` 是同一招，而且还有第二个理由：
+  unit 在镜像里，密码不该在。
+- **用 `supervise-daemon`，不要 `start-stop-daemon`。** 后者在进程 fork 的那一刻
+  就把它忘了，于是一次崩溃会让站点一直躺到有人去看。`respawn_period` 里的
+  `respawn_max` 又拦住了「配置根本不可能work」的情况无限重试、把原因埋掉。
+- **按容器自己的限额来配内存，不是按宿主机的。** V8 的堆和 PostgreSQL 的缓冲区
+  默认都从 `/proc/meminfo` 算，而那在容器里是**宿主机**的内存，不是卖给你的 384 MB。
+  改成读 `/sys/fs/cgroup/memory.max` 再据此设上限，否则内核迟早会杀掉盒子里最大的
+  那个进程 —— 那可能正是写到一半的数据库。
+- **不需要 root 的服务就别用 root。** OpenRC 里是 `command_user`，
+  systemd unit 里是 `User=`。
+- **状态放 `/data`，而且只放非放不可的。** 这里是数据目录（`PGDATA=/data/postgresql`）
+  和那个 env 文件。其余一切重装镜像就能重建 —— 这恰恰是重装之所以便宜的原因。
+
+systemd 系的同一个镜像是同样的形状：`apt-get install`、
+`/etc/systemd/system` 下一个服务一个 unit、`systemctl enable`、
+`EnvironmentFile=` 指到 `/data`，以及上面 `supervise-daemon` 那个位置写 `Restart=always`。
+
+---
+
+## 5. 从别的底包开始
 
 `FROM ghcr.io/yinyue123/hqnode:alpine-3.24` 是推荐做法，第 1 节就是理由 ——
 第 2 节里的每一条要求都已经满足，第 3 节里的每一样方便也都白送。但这不是唯一的路，
@@ -251,7 +356,7 @@ RUN mkdir -p /etc/app-setup/local /etc/app-setup/params /etc/app-setup/secrets \
 
 ---
 
-## 5. 用 GitHub Actions 打包
+## 6. 用 GitHub Actions 打包
 
 这里没有一件事非要 runner 不可 —— 在笔记本上 `docker buildx build --push`
 出来的是同一个镜像。用 CI 的理由和一贯的理由一样：装上去的那个镜像，是由一个
@@ -313,12 +418,12 @@ jobs:
 - **两个 tag：一个会动的，一个不会动的。** `:latest` 方便，`:<sha>` 是你想
   确切知道装的是什么时该粘的那个 —— 从面板决定到主机去拉，中间 tag 是会动的。
 - **把 digest 写进 summary。** `steps.build.outputs.digest` 就是那个镜像本身。
-  第 8 节按 digest 安装，那是唯一能确定盒子里跑的正是这次构建产物的办法。
+  第 9 节按 digest 安装，那是唯一能确定盒子里跑的正是这次构建产物的办法。
 
 **然后手动把这个包设成公开，一次就好。** GHCR 上新建的包是私有的，
 而私有的包在机器来拉的时候就是一个 `401`。到包的页面 → **Package settings** →
 **Change visibility** → Public。workflow 里没有任何东西能替你做这件事。
-如果它必须保持私有，看第 6 节。
+如果它必须保持私有，看第 7 节。
 
 ### 这个站点上的镜像是怎么构建的
 
@@ -345,7 +450,7 @@ jobs:
 
 ---
 
-## 6. 让机器拉得到它
+## 7. 让机器拉得到它
 
 **去拉的是机器，不是面板，也不是你的笔记本。** 面板是一整个机群的一个进程，
 从不搬运镜像字节；你粘进去的引用会被转给主机，由主机直接去 registry 取。
@@ -376,7 +481,7 @@ docker.io/library/alpine:3.20                 Docker Hub，写全
 
 ---
 
-## 7. 装上去，以及它的代价
+## 8. 装上去，以及它的代价
 
 同一件事，三扇门。重装对话框，停在填引用的那一栏上：
 
@@ -394,7 +499,7 @@ docker.io/library/alpine:3.20                 Docker Hub，写全
 reinstall ref ghcr.io/you/myapp:v1
 ```
 
-或者走 API，也就是第 8 节：
+或者走 API，也就是第 9 节：
 
 ```sh
 curl -sS --fail-with-body -b jar.txt -X POST "$PANEL/me/containers/$CID/reinstall" \
@@ -424,11 +529,11 @@ curl -sS --fail-with-body -b jar.txt -X POST "$PANEL/me/containers/$CID/reinstal
 流量配额，容器会被暂停 —— 而被暂停的容器是不允许重装的，所以你没法靠再抹一次
 把自己救回来。等配额窗口滚过去，或者等房东调高上限，它才会解开。一个 400 MB 的镜像
 一天重装几次，在配额不大的机器上比人们预期的更快就撞上去 ——
-这也是第 8 节第二种做法的又一个理由。
+这也是第 9 节第二种做法的又一个理由。
 
 ---
 
-## 8. 从 GitHub Actions 驱动它
+## 9. 从 GitHub Actions 驱动它
 
 两种完全不同的活儿，而选错了是这一整页里最常见的浪费。
 
@@ -446,7 +551,7 @@ curl -sS --fail-with-body -b jar.txt -X POST "$PANEL/me/containers/$CID/reinstal
 ### 用你的引用重装
 
 先构建镜像，然后按 digest 安装刚刚构建出来的那一个 ——
-这样即使 tag 在任务和拉取之间动过，也不会装上别的东西。下面这几步要放在第 5 节
+这样即使 tag 在任务和拉取之间动过，也不会装上别的东西。下面这几步要放在第 6 节
 那个构建 job 里、构建之后：`steps.build.outputs.digest` 是那一步的输出。
 
 ```yaml
@@ -531,7 +636,7 @@ tar czf - -C build . | ssh -i key -p "$PORT" "$USER@$HOST" 'tar xzf - -C /opt/ap
 
 ---
 
-## 9. 贴进去之前先检查
+## 10. 贴进去之前先检查
 
 五项检查，每一项都对应一次真的有人踩过的失败：
 
@@ -565,19 +670,19 @@ docker buildx imagetools inspect ghcr.io/you/myapp:v1 --raw \
 
 ---
 
-## 10. 起不来的时候
+## 11. 起不来的时候
 
 容器会停在那儿，根文件系统已经是新的，`/data` 完好。面板会把主机自己的原话显示出来，
 历史里那一行写着是哪个镜像。
 
 再重装一次 —— 这次走**镜像市场**那一栏，让机器装一个它本来就有的东西，
-几秒钟盒子就回来了。然后按第 9 节去查是哪里不对。一个坏镜像不会伤到容器本身：
+几秒钟盒子就回来了。然后按第 10 节去查是哪里不对。一个坏镜像不会伤到容器本身：
 登录、端口、域名、流量计数都在容器外面。
 
 两个例外，别太安心：
 
 - **镜像起不来，下载照样计费。** 字节确实过了网线。
-- **因为超配额被暂停的容器根本不允许重装**（第 7 节）。如果坏镜像和用尽的配额
+- **因为超配额被暂停的容器根本不允许重装**（第 8 节）。如果坏镜像和用尽的配额
   一起来了，盒子就得等到配额窗口滚过去或者房东调高上限。
 
 如果是重装本身失败了 —— registry 挂了、`401`、blob 传到一半断了 ——
@@ -585,7 +690,7 @@ docker buildx imagetools inspect ghcr.io/you/myapp:v1 --raw \
 
 ---
 
-## 11. 让 AI 帮你写
+## 12. 让 AI 帮你写
 
 这件事 AI 做得挺好，因为要求很短、而且不寻常 —— 只要**告诉**它，它就能写对。
 不告诉它，它会写出一个普通的应用容器 Dockerfile，而那正好就是在这里起不来的那种。
@@ -643,4 +748,4 @@ docker buildx imagetools inspect ghcr.io/you/myapp:v1 --raw \
 
 - [使用你的容器（英文）](/using-your-container) —— 重装保留什么，以及住在里面的其他事
 - [添加你自己的软件（英文）](/app-setup-sources) —— 一个 shell 文件，不用做镜像
-- [面板 REST API（英文）](/api) —— 第 8 节用到的每一个调用，完整版
+- [面板 REST API（英文）](/api) —— 第 9 节用到的每一个调用，完整版

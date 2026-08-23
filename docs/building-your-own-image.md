@@ -13,14 +13,15 @@ paste, and the shortest version of it fits on a screen.
 - [1. The five-minute version](#_1-the-five-minute-version)
 - [2. What the machine actually requires](#_2-what-the-machine-actually-requires)
 - [3. What our images already carry](#_3-what-our-images-already-carry)
-- [4. Starting from something that is not ours](#_4-starting-from-something-that-is-not-ours)
-- [5. Building it in GitHub Actions](#_5-building-it-in-github-actions)
-- [6. Getting the machine to pull it](#_6-getting-the-machine-to-pull-it)
-- [7. Installing it, and what it costs](#_7-installing-it-and-what-it-costs)
-- [8. Driving it from GitHub Actions](#_8-driving-it-from-github-actions)
-- [9. Checking it before you paste it](#_9-checking-it-before-you-paste-it)
-- [10. When it does not boot](#_10-when-it-does-not-boot)
-- [11. Getting an AI to write it for you](#_11-getting-an-ai-to-write-it-for-you)
+- [4. A real one: two services, cron, and configuration on /data](#_4-a-real-one-two-services-cron-and-configuration-on-data)
+- [5. Starting from something that is not ours](#_5-starting-from-something-that-is-not-ours)
+- [6. Building it in GitHub Actions](#_6-building-it-in-github-actions)
+- [7. Getting the machine to pull it](#_7-getting-the-machine-to-pull-it)
+- [8. Installing it, and what it costs](#_8-installing-it-and-what-it-costs)
+- [9. Driving it from GitHub Actions](#_9-driving-it-from-github-actions)
+- [10. Checking it before you paste it](#_10-checking-it-before-you-paste-it)
+- [11. When it does not boot](#_11-when-it-does-not-boot)
+- [12. Getting an AI to write it for you](#_12-getting-an-ai-to-write-it-for-you)
 
 ---
 
@@ -66,9 +67,9 @@ minute later the container is running your image, with `/data` still where you
 left it.
 
 Everything after this is detail: what the machine requires (§2), what you
-inherited by starting from ours (§3), how to build it in CI instead of on your
-laptop (§5), and how to make a push to your repository end in a running
-container (§8).
+inherited by starting from ours (§3), a real image with two services and a
+database in it (§4), how to build one in CI instead of on your laptop (§6), and
+how to make a push to your repository end in a running container (§9).
 
 ---
 
@@ -173,6 +174,17 @@ reference, which does read the signal out of your image.
 
 ## 3. What our images already carry
 
+These are **machines**, not app containers, and that is the thing to keep in
+mind while you add to one. A package manager, a service manager and a cron
+daemon are all in there and all running, so putting your own software in an
+image is the same two steps it is on a real machine — install it, then write
+the service that starts it:
+
+```sh
+apk add nginx                  # Alpine.        apt-get install / dnf install elsewhere
+rc-update add nginx default    # starts at boot. systemctl enable nginx elsewhere
+```
+
 Twenty systems, three recipes, one public package —
 `ghcr.io/yinyue123/hqnode:<tag>`. The whole build is in
 [the site's own repository](https://github.com/yinyue123/hqno.de/tree/main/images),
@@ -184,33 +196,137 @@ and it is the worked example this page keeps pointing at.
 | [`systemd-deb`](https://github.com/yinyue123/hqno.de/blob/main/images/systemd-deb/Dockerfile) | Debian, Ubuntu | apt | systemd | ~45–60 MB |
 | [`systemd-rpm`](https://github.com/yinyue123/hqno.de/blob/main/images/systemd-rpm/Dockerfile) | AlmaLinux, Rocky, CentOS, Fedora | dnf, yum on CentOS 7 | systemd | ~90–125 MB |
 
-What each of them adds on top of the distribution's own base image, and — the
-question this page is here for — whether you actually need it:
+What is in one of these beyond the distribution's own base image, and what each
+piece is there to do:
 
-| What is added | Needed? |
+| What is in there | What it does |
 |---|---|
-| an init: `systemd systemd-sysv dbus`, or `openrc busybox-openrc busybox-suid` | **Yes.** This is what `/sbin/init` is |
-| `bash`, and `/bin/sh` from the base | `sh` yes, `bash` is comfort — but a login shell prefers it and people expect it |
-| `openssh-sftp-server` (in `openssh-server` on the RPM side), plus a symlink so `sftp-server` is on `PATH` | Only for SFTP and `scp` |
-| `shadow` / `passwd`, `sudo`, `su` | `su` only for a non-root login. `passwd` is what the password shim wraps |
-| cron: `cron`, `cronie`, `crond` | No |
-| `rsyslog` / `syslog`, `logrotate` | No |
-| `procps` / `procps-ng`, `iproute2`, `iputils`, `curl`, `ca-certificates`, `less`, `nano`, `tzdata` | No. This is the difference between a container and something that feels like a machine — `top` and `free` printing what a person expects, a working `ping`, a `curl` that is there when you reach for it |
-| `STOPSIGNAL` | **Yes** (§2) |
-| container-shaped init settings: `rc_sys="lxc"`, `rc_provide="loopback net"`, no gettys in `/etc/inittab`; or systemd with the hardware units masked | **Effectively yes.** Without them the init tries to start hardware services that cannot work here, fails loudly, and a working container looks broken in `rc-status` or `systemctl status` |
-| sshd installed and **switched off** | No. It is there so a holder who wants their own on a port they own is one command away |
-| a boot-time package-index refresh, at most once a day | No. It is why `apk add nginx` works at a fresh login instead of saying the package does not exist |
-| `app-setup` — the software manager, its recipes and `/etc/helppage` | No. §4 has how to take it with you anyway |
-| the shims that answer to `passwd`, `poweroff`, `halt`, `dashboard`, `domain`, `reinstall`, `helppage` on `PATH` | No — but a password changed with the real `passwd` alone never reaches the SSH gateway, so dropping the shim means the shell password can only be changed from the panel |
-| `/data` and a README in it | No. The disk is mounted whether or not the directory exists |
+| an init — `systemd systemd-sysv dbus`, or `openrc busybox-openrc busybox-suid` | Is PID 1, and runs everything else. `systemctl start` / `enable`, or `rc-service` / `rc-update add … default`. This is what `/sbin/init` is |
+| the distribution's own package manager | `apk`, `apt-get`, `dnf`, working and current. How software gets into the box — in your `Dockerfile`, and at a shell inside a container that is already running |
+| cron — `crond`, `cron`, `cronie` — **already in the default runlevel** | Scheduled jobs, from the first boot. `crontab -e`, or drop a script into `/etc/periodic/15min\|hourly\|daily\|weekly\|monthly` on Alpine, `/etc/cron.d` on Debian and the RPM family |
+| `bash` | The login shell people expect. `/bin/sh` is the requirement (§2); a login takes bash whenever it is there |
+| `openssh-sftp-server`, and a symlink putting `sftp-server` on `PATH` | Serves SFTP — which is also what `scp` speaks since OpenSSH 9. The gateway runs the container's own copy, so the files and permissions are the container's |
+| the OpenSSH **client** | The outbound direction: `git clone git@…`, `rsync -e ssh`, copying a file to another box |
+| `shadow` / `passwd`, `sudo`, `su` | Real accounts: changing the shell password, `sudo` for a non-root login, and `su`, which the gateway uses to land a non-root login in that user's own shell, groups and environment |
+| `rsyslog` / `syslog`, `logrotate` | A service's output lands in `/var/log` and is rotated rather than filling the disk |
+| `procps` / `procps-ng`, `iproute2`, `iputils`, `curl`, `ca-certificates`, `less`, `nano`, `tzdata` | `top` and `free` printing what a person expects instead of busybox's terser applets, `ip`, `ping`, a `curl` with a working trust store, a pager, an editor, and a timezone to set |
+| `STOPSIGNAL` | Names the signal the host sends to shut the box down (§2) |
+| the container-shaped init settings — `rc_sys="lxc"`, `rc_provide="loopback net"`, no gettys in `/etc/inittab`; or systemd with the hardware units masked | Keeps the init from starting hardware services that cannot work in a container. Without them a perfectly healthy box is full of red in `rc-status` or `systemctl status` |
+| sshd, installed and switched **off** | Waiting for a holder who wants their own sshd on a port they own: `systemctl enable --now ssh`, or `rc-update add sshd default && rc-service sshd start` |
+| a package-index refresh at boot, at most once a day | Makes `apk add nginx` work at the first login rather than answering that there is no such package |
+| `app-setup`, its recipes, and `/etc/helppage` | The menu that installs LNMP, WordPress, databases, backups; and the guide `helppage` prints. Putting your own entry in it is [adding your own software](app-setup-sources.md) |
+| the `PATH` shims — `passwd`, `poweroff`, `halt`, `dashboard`, `domain`, `reinstall`, `helppage` | The commands a holder gets: a password change that also reaches the SSH gateway, a `poweroff` that stays off, the box's own allowances, domains, and a reinstall from the shell |
+| `/data`, with a README in it | The mountpoint for the one disk a reinstall keeps |
 
-Everything in that table with a **No** is yours to drop. Nothing in it is
-inspected by the panel: a container built from your image is a system container
-because of how it was created, not because of anything the image declares.
+§2 is the short list an image has to have. Everything above is what you get for
+free by starting `FROM` one of these — dropping any of it changes what the box
+feels like to log into, not whether it boots.
 
 ---
 
-## 4. Starting from something that is not ours
+## 4. A real one: two services, cron, and configuration on /data
+
+The five-minute version is one service and no state. A real image usually has
+several of each. This is the shape of a working one — a Next.js site and the
+PostgreSQL it talks to, in a single container sold with 384 MB of memory.
+
+```dockerfile
+# ── build the app where there is a toolchain ──────────────────────────
+FROM node:24-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# ── the box ──────────────────────────────────────────────────────────
+FROM ghcr.io/yinyue123/hqnode:alpine-3.24
+
+# The package manager is right there. Two services' worth of runtime, and
+# postgresql17 rather than the unversioned package, because a newer major
+# cannot open the cluster last month's dump came from.
+RUN apk add --no-cache nodejs postgresql17 postgresql17-client
+
+# The site does not run as root, and nothing here binds a privileged port:
+# a domain routes to whatever container port you name it.
+RUN addgroup -S app && adduser -S -D -H -G app -s /sbin/nologin app
+COPY --from=build --chown=app:app /app/.next/standalone /app
+
+# One init script per service, both in the default runlevel.
+COPY init.d/app /etc/init.d/app
+COPY init.d/db  /etc/init.d/db
+RUN chmod 0755 /etc/init.d/app /etc/init.d/db; \
+    rc-update add db  default; \
+    rc-update add app default
+
+# crond is already running on this base, so a nightly job is one file.
+RUN printf '#!/bin/sh\nexec /usr/local/sbin/app-backup\n' \
+      > /etc/periodic/daily/app-backup; \
+    chmod 0755 /etc/periodic/daily/app-backup
+```
+
+and one of the two init scripts:
+
+```sh
+#!/sbin/openrc-run
+name="app"
+description="the site"
+
+# The configuration lives on the disk a reinstall keeps, not in the image.
+env_file="/data/app.env"
+if [ -r "$env_file" ]; then set -a; . "$env_file"; set +a; fi
+
+supervisor=supervise-daemon        # OpenRC's Restart=always
+command="/usr/bin/node"
+command_args="/app/server.js"
+command_user="app:app"
+output_log="/var/log/app.log"
+error_log="/var/log/app.log"
+respawn_delay=10
+respawn_max=5
+respawn_period=60
+
+depend() { need net; use db; }
+
+start_pre() {
+    [ -f "$env_file" ] || { eerror "no $env_file — nothing is configured yet"; return 1; }
+    checkpath --file --mode 0640 --owner app:app /var/log/app.log
+}
+```
+
+Five things in there are the difference between an image that runs on your
+laptop and one that runs on somebody else's machine:
+
+- **Configuration goes on `/data`, not into `ENV`.** OpenRC scrubs the
+  environment it hands a service, so an image's `ENV` reaches PID 1 and stops
+  there — measured, with `ENV PORT=80` set and the server still coming up on
+  its own default. Read an env file in the init script instead. systemd's
+  `EnvironmentFile=/data/app.env` is the same move for the same second reason:
+  the unit is inside the image, and the password should not be.
+- **`supervise-daemon`, not `start-stop-daemon`.** The second forgets the
+  process the moment it forks, so a crash leaves the site down until somebody
+  looks. `respawn_max` inside `respawn_period` then stops a configuration that
+  cannot work from retrying forever and burying the reason.
+- **Size a service from the container's limit, not the host's.** V8's heap and
+  PostgreSQL's buffers are both sized from `/proc/meminfo`, which inside a
+  container is the *machine's* memory, not the 384 MB you were sold. Read
+  `/sys/fs/cgroup/memory.max` and cap them from it, or the kernel eventually
+  kills whichever process in the box is largest — which can be the database,
+  mid-write.
+- **Services that need not be root are not root.** `command_user` in OpenRC,
+  `User=` in a systemd unit.
+- **State on `/data`, and only what has to be.** Here that is the cluster
+  (`PGDATA=/data/postgresql`) and the env file. Everything else is rebuilt by
+  reinstalling the image, which is exactly what keeps reinstalling cheap.
+
+The systemd version of the same image is the same shape: `apt-get install`, a
+unit per service in `/etc/systemd/system`, `systemctl enable`,
+`EnvironmentFile=` pointing at `/data`, and `Restart=always` where
+`supervise-daemon` is above.
+
+---
+
+## 5. Starting from something that is not ours
 
 `FROM ghcr.io/yinyue123/hqnode:alpine-3.24` is the recommendation and §1 is why
 — every requirement in §2 is already met and every convenience in §3 comes with
@@ -270,7 +386,7 @@ menu is a separate page: [adding your own software](app-setup-sources.md).
 
 ---
 
-## 5. Building it in GitHub Actions
+## 6. Building it in GitHub Actions
 
 Nothing here needs a runner — `docker buildx build --push` from a laptop
 produces the same image. CI is worth it for the reason it is always worth it:
@@ -336,14 +452,14 @@ Four things in there are worth keeping whatever else you change:
   `:<sha>` is what you paste when you want to know precisely what is installed
   — a tag can move between the panel deciding and the host pulling.
 - **The digest in the summary.** `steps.build.outputs.digest` is the exact
-  image. §8 installs by digest, which is the only way to be certain the box is
+  image. §9 installs by digest, which is the only way to be certain the box is
   running what this job built.
 
 **Then make the package public, once, by hand.** A new package on GHCR is
 private, and a private package is a `401` when the machine tries to pull it.
 Go to the package's page → **Package settings** → **Change visibility** →
 Public. Nothing in the workflow can do this for you. If it must stay private,
-see §6.
+see §7.
 
 ### How the images on this site are built
 
@@ -372,7 +488,7 @@ only on reinstall.
 
 ---
 
-## 6. Getting the machine to pull it
+## 7. Getting the machine to pull it
 
 **The machine pulls, not the panel and not your laptop.** The panel is one
 process for a whole fleet and never carries image bytes; the reference you
@@ -405,7 +521,7 @@ characters. Whitespace around a reference pasted out of a terminal is trimmed.
 
 ---
 
-## 7. Installing it, and what it costs
+## 8. Installing it, and what it costs
 
 Three doors to the same thing. The reinstall dialog, standing on the tab that
 takes a reference:
@@ -424,7 +540,7 @@ or from a shell inside the container:
 reinstall ref ghcr.io/you/myapp:v1
 ```
 
-or from the API, which is §8:
+or from the API, which is §9:
 
 ```sh
 curl -sS --fail-with-body -b jar.txt -X POST "$PANEL/me/containers/$CID/reinstall" \
@@ -459,11 +575,11 @@ traffic quota, the container is suspended — and a suspended container refuses
 to be reinstalled, so you cannot wipe your way back into service. It clears when
 the quota window rolls over or when your host raises the limit. A 400 MB image
 reinstalled a few times a day on a small quota gets there faster than people
-expect, which is one more argument for §8's second recipe.
+expect, which is one more argument for §9's second recipe.
 
 ---
 
-## 8. Driving it from GitHub Actions
+## 9. Driving it from GitHub Actions
 
 Two different jobs, and picking the wrong one is the commonest waste on this
 whole page.
@@ -483,7 +599,7 @@ Reinstall on a release, deploy on a commit.
 
 Build the image, then install exactly what was built, by digest — so a tag that
 moved between the job and the pull cannot install something else. These steps
-go in the same job as §5's build and after it: `steps.build.outputs.digest` is
+go in the same job as §6's build and after it: `steps.build.outputs.digest` is
 that step's output.
 
 ```yaml
@@ -574,7 +690,7 @@ already commands: `dashboard`, `app-setup domain add …` and `passwd`.
 
 ---
 
-## 9. Checking it before you paste it
+## 10. Checking it before you paste it
 
 Five checks, each one a failure someone has already had:
 
@@ -610,21 +726,21 @@ people — the honest test is a reinstall on a container you do not mind losing.
 
 ---
 
-## 10. When it does not boot
+## 11. When it does not boot
 
 The container is left stopped, on the new root, with `/data` intact. The panel
 says the host's own words, and the history line names the image.
 
 Reinstall again — from **the market** tab this time, so the machine installs
 something it already holds and the box comes back in seconds. Then work out
-what was wrong from §9. Nothing about a failed image damages the container: the
+what was wrong from §10. Nothing about a failed image damages the container: the
 login, the ports, the domains and the traffic counter are all outside it.
 
 Two exceptions to that calm:
 
 - **The download is charged even when the image does not boot.** The bytes
   crossed the wire.
-- **A container suspended for quota cannot be reinstalled at all** (§7). If a
+- **A container suspended for quota cannot be reinstalled at all** (§8). If a
   bad image and an exhausted quota arrive together, the box stays down until
   the window rolls over or your host raises the limit.
 
@@ -634,7 +750,7 @@ and nothing is charged.
 
 ---
 
-## 11. Getting an AI to write it for you
+## 12. Getting an AI to write it for you
 
 This works well, because the requirements are short and unusual, and a model
 that is *told* them gets them right. Left alone it will write an ordinary
@@ -702,4 +818,4 @@ AI handles just as well from one file:
   the rest of living in one
 - [Adding your own software](app-setup-sources.md) — one shell file, no image
   to build
-- [Panel REST API](api.md) — every call §8 makes, in full
+- [Panel REST API](api.md) — every call §9 makes, in full
