@@ -478,9 +478,11 @@ done
 | **store-webdav** / **store-ftp** | 一个 Nextcloud 共享，或者一块 FTP 空间 |
 
 **scp 存储源和 hqnode 主机。** 现在的 OpenSSH `scp`（9 以上）走 SFTP，所以对端要有能用的
-`sftp-server` —— 正常的 `openssh-server` 都自带。hqnode 主机不正常：它的 22 端口是 hqnode 网关
-（`SSH-2.0-hqnode`），网关能转发 shell 和 `rsync`，但不提供 SFTP 子系统，所以 `store-scp` 在这里会报
-`sftp-server: No such file or directory`，而同一个端口上的 `store-rsync` 好好的。把 `store-scp`
+`sftp-server` —— 正常的 `openssh-server` 都自带。hqnode 主机不正常：它的 22 端口是 hqnode 网关，
+网关能转发 shell 和 `rsync`，但不提供 SFTP 子系统，所以 `store-scp` 在这里会报
+`sftp-server: No such file or directory`，而同一个端口上的 `store-rsync` 好好的。（网关不会报出自己的
+名字 —— 它应答的是 `SSH-2.0-Go`，或者这台机器自己设的 `server_version` —— 所以认出它靠的是这个报错，
+不是 banner。）把 `store-scp`
 指到那台机器真正的 sshd 上（常常是 36000 这种高位端口），或者干脆用 `store-rsync`。
 
 ## 四个动作

@@ -513,10 +513,12 @@ One store can hold many jobs; a job points at one store.
 
 **The scp store, and hqnode hosts.** Modern OpenSSH `scp` (9+) speaks SFTP, so
 the far end needs a working `sftp-server` — every ordinary `openssh-server` has
-one. An hqnode host is not ordinary: its port 22 is the hqnode gateway
-(`SSH-2.0-hqnode`), which relays a shell and `rsync` but offers no SFTP
-subsystem, so `store-scp` there fails with `sftp-server: No such file or
-directory` while `store-rsync` on the same port is fine. Point `store-scp` at
+one. An hqnode host is not ordinary: its port 22 is the hqnode gateway, which
+relays a shell and `rsync` but offers no SFTP subsystem, so `store-scp` there
+fails with `sftp-server: No such file or directory` while `store-rsync` on the
+same port is fine. (The gateway does not announce itself by name — it answers
+`SSH-2.0-Go`, or whatever `server_version` a host set — so the failure is the
+way you recognise it, not the banner.) Point `store-scp` at
 the machine's real sshd — often a high port such as 36000 — or just use
 `store-rsync`.
 
