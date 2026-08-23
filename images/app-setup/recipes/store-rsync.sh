@@ -140,6 +140,19 @@ do_mkdir() {  # do_mkdir <folder>
 	rs_ssh "mkdir -p '$(rs_path "$1")'" || { err "could not make $(rs_path "$1") on the far end"; return 1; }
 }
 
+# For scripts that drive rsync themselves. `do_put` above is the same three
+# pieces — the ssh command, the user@host, the path — and printing them is what
+# lets somebody write the `--link-dest` mirror without hand-copying flags that
+# have to match what `test` pinned.
+do_sshcmd() { rs_ssh_cmd; printf '\n'; }
+
+do_remote() { # do_remote <folder>
+	local _t
+	_t="$(param target)"
+	[ -n "$_t" ] || { err "no target set — put user@host:/path in Settings"; return 1; }
+	printf '%s:%s\n' "$(rs_user_host "$_t")" "$(rs_path "${1-}")"
+}
+
 do_put() {    # do_put <folder> <localfile>
 	local _n
 	_n="$(basename "$2")"

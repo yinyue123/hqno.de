@@ -3076,6 +3076,10 @@ do_ls()        { err "$BK_ID is not a backup destination"; return 1; }
 do_rm()        { err "$BK_ID is not a backup destination"; return 1; }
 do_test()      { err "$BK_ID is not a backup destination"; return 1; }
 do_showkey()   { info "$BK_ID uses no key"; return 0; }
+# Only the SSH stores have an ssh command to hand out; an S3 or WebDAV store
+# says so rather than printing something a script would then run.
+do_sshcmd()    { err "$BK_ID is not an SSH store — nothing to print"; return 1; }
+do_remote()    { err "$BK_ID is not an SSH store — nothing to print"; return 1; }
 
 # The one function app-setup reads a value out of rather than an exit code.
 #
@@ -3124,6 +3128,18 @@ app_main() {
 		# print it. The step between "app-setup made a key" and "the NAS accepts
 		# it" is the one people stop at, and it is not a step we can take for them.
 		showkey)                      do_showkey ;;
+		# The two a hand-written script needs, and the reason they exist: the
+		# `files` job packs a full tarball every run, so anybody with a large
+		# tree ends up driving rsync themselves (see the size question in
+		# docs/backup-files.md). Rebuilding this store's ssh invocation by hand
+		# is where that goes wrong — the host key `test` pinned lives in the
+		# store's own known_hosts, not in ~/.ssh, so a hand-copied command gets
+		# `Host key verification failed` and the port setting is forgotten
+		# besides. `sshcmd` hands over the exact string this store uses, and
+		# `remote` the user@host:/path a folder resolves to, so a script can be
+		# correct without knowing any of that.
+		sshcmd)                       do_sshcmd ;;
+		remote)                       shift; do_remote "$@" ;;
 		# Moving a populated data directory is stop, move, relink, start, and
 		# it needs both copies to fit at once. It is never done as a side
 		# effect of an install — a recipe that has data in the wrong place

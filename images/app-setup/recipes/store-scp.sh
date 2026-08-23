@@ -137,6 +137,17 @@ sc_pin_host() {
 }
 
 # ------------------------------------------------------------- the verbs --
+# For scripts that drive ssh or scp themselves — the same pieces the verbs
+# below use, printed so a hand-written script cannot get them wrong.
+do_sshcmd() { sc_ssh_cmd; printf '\n'; }
+
+do_remote() { # do_remote <folder>
+	local _t
+	_t="$(param target)"
+	[ -n "$_t" ] || { err "no target set — put user@host:/path in Settings"; return 1; }
+	printf '%s:%s\n' "$(sc_user_host "$_t")" "$(sc_path "${1-}")"
+}
+
 do_mkdir() {  # do_mkdir <folder>
 	sc_ensure_key
 	sc_ssh "mkdir -p '$(sc_path "$1")'" || { err "could not make $(sc_path "$1") on the far end"; return 1; }

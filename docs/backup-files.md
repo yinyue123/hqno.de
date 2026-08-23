@@ -18,8 +18,10 @@ back up and how often).
 > This is the same store, the same five-step test and the same four verb
 > buttons as [Backing up PostgreSQL](/backup-postgresql) — only *what* is saved
 > differs. If you have read that page, most of this is already familiar; skip to
-> [the size question](#the-size-question-full-every-time-or-incremental), which
-> is the one thing files have that a database dump does not.
+> [the size question](#the-size-question-full-every-time-or-incremental) and
+> [two kinds of data, one job](#two-kinds-of-data-one-job) — full-or-incremental,
+> and what to do when one machine holds a few KB of config and 40 GB of images,
+> are the two things files have that a database dump does not.
 
 ---
 
@@ -42,7 +44,7 @@ is putting them back. That is exactly what the `files` recipe is for.
 ### Step 1 — a place to put them
 
 A backup has to live somewhere that is not this container. Cloudflare R2 works
-(the [PostgreSQL page](/backup-postgresql#step-1-get-a-free-r2-bucket) walks
+(the [PostgreSQL page](/backup-postgresql#step-1-—-get-a-free-r2-bucket) walks
 through it, and a job points at a bucket the same way), but files are just as
 often sent to **a machine you already have** — a NAS, a VPS, another box with
 `sshd` on it. That is what this example uses, and there are two cards for it:
@@ -221,7 +223,11 @@ back where it was.
 > filesystem, and there is no single directory to move. What is at those paths
 > now is overwritten, not moved aside — so if it matters, take your own copy
 > first. This is the one way `files` differs from a database restore, and it is
-> the reason it is the one verb that asks you to confirm.
+> why **⟲ Restore** is the one button in the panel that asks you to confirm.
+> Note the asymmetry: the *button* asks, the *command* does not. `app-setup
+> restore files` at a shell prints the list of paths it is about to overwrite
+> and then does it — there is no prompt to answer, so read the list before you
+> press Enter, not after.
 
 That is the whole thing. Everything below is reference — read it when you want
 to change something.
@@ -291,23 +297,28 @@ keep_monthly=6
 
 A few of these earn a word:
 
-<FigRows :rows="[
-  [{ t: 'Paths', tone: 'strong' }, { t: 'comma separated, and globs expand — /var/www/*/uploads is fine. A path listed but not on this machine is warned about, not skipped silently: a typo in a path is indistinguishable from a working backup until the day it is not.', tone: 'mute' }],
-  [{ t: 'Skip', tone: 'strong' }, { t: 'excluded WHILE copying, not after — a node_modules that got copied and then pruned has already cost the disk and the minutes.', tone: 'mute' }],
-  [{ t: 'Stop first', tone: 'strong' }, { t: 'a service to stop for the length of the copy. A plain directory has no consistent snapshot, so if something is writing to it steadily, name it here. Most config directories are not being written at 4am, so this is usually blank.', tone: 'mute' }],
-]" />
+| Field | What it does |
+|---|---|
+| **Paths** | Comma separated, and globs expand — `/var/www/*/uploads` is fine. A path listed but not on this machine is warned about, not skipped silently: a typo in a path is indistinguishable from a working backup until the day it is not. |
+| **Skip** | Excluded *while* copying, not after — a `node_modules` that got copied and then pruned has already cost the disk and the minutes. Patterns are relative: `data/store/uploads` matches, `/data/store/uploads` matches nothing at all. |
+| **Stop first** | A service to stop for the length of the copy. A plain directory has no consistent snapshot, so if something is writing to it steadily, name it here. Most config directories are not being written at 4am, so this is usually blank. |
 
 The **retention** numbers are a ladder, not a count: keep the newest in each
 hour, day, week and month, as long as that period is still inside its budget.
-`0 / 7 / 4 / 6` is a week of dailies, a month of weeklies, half a year of
-monthlies.
+The rungs overlap — last night's archive is the newest daily *and* the newest
+weekly *and* the newest monthly — so the archives you end up with are fewer than
+the four numbers added together. Fed a year of nightly backups, the default
+`0 / 7 / 4 / 6` settles at **fifteen archives, the oldest about five months
+back**; `0 / 7 / 4 / 12` settles at twenty-one, reaching about eleven months.
+Read `keep_monthly` as *calendar months counting back from the newest archive*,
+which is the number to raise when you want a longer history.
 
 ### Two mistakes already prevented
 
-<FigRows :rows="[
-  [{ t: 'Backing up /data would not swallow itself', tone: 'strong' }, { t: 'app-setup writes its own archives under /data/app-setup, and that directory is always excluded — otherwise backing up /data would pack every previous archive into the new one, and each backup would be bigger than the last until the disk filled.', tone: 'mute' }],
-  [{ t: '/, /proc, /sys, /dev, /run are refused', tone: 'strong' }, { t: 'outright — they are not things to put in a backup.', tone: 'mute' }],
-]" />
+| Already handled for you | How |
+|---|---|
+| **Backing up `/data` does not swallow itself** | `app-setup` writes its own archives under `/data/app-setup`, and that directory is always excluded — otherwise backing up `/data` would pack every previous archive into the new one, and each backup would be bigger than the last until the disk filled. |
+| **`/`, `/proc`, `/sys`, `/dev`, `/run` are refused** | Outright — they are not things to put in a backup. |
 
 ## The four verbs, from the menu or a script
 
@@ -331,10 +342,10 @@ rsync store's "sends only what changed" is about resuming *one file's* transfer;
 because each night is a **new** tarball with a new name, rsync sees a brand-new
 file and sends all of it. So the honest picture is:
 
-<FigRows :arrow="1" :head="['If the total is', 'a nightly full backup is']" :rows="[
-  [{ t: 'small — configs, a few MB', tone: 'strong' }, { t: 'exactly right. Do this. The retention ladder keeps a handful of tiny files and you never think about it.', tone: 'ok' }],
-  [{ t: 'large — tens of GB of uploads', tone: 'strong' }, { t: 'wasteful: you store and send the whole tree every time, times however many copies the ladder keeps.', tone: 'mute' }],
-]" />
+| If the total is | a nightly full backup is |
+|---|---|
+| **small** — configs, a few MB | **exactly right. Do this.** The retention ladder keeps a handful of tiny files and you never think about it. |
+| **large** — tens of GB of uploads | wasteful: you store and send the whole tree every time, times however many copies the ladder keeps. |
 
 For the small case — which is most containers, and certainly the `code` example
 above at 8KB — stop here; full is the simple, correct answer.
@@ -347,7 +358,7 @@ already live in an S3 bucket. `Skip` them. The backup you do not take is the
 cheapest one there is.
 
 **2. Keep fewer.** Drop the retention ladder to `keep_daily=2, keep_weekly=0,
-keep_monthly=0` and you hold two full copies instead of seventeen. Often that is
+keep_monthly=0` and you hold two full copies instead of fifteen. Often that is
 the whole fix.
 
 **3. A true incremental mirror, with rsync `--link-dest`.** When you really do
@@ -359,20 +370,43 @@ changes by 200 MB a day keeps thirty daily snapshots in ~46 GB, not 1.2 TB:
 
 ```sh
 #!/bin/sh
-# /usr/local/bin/snapshot — an incremental mirror, using the key app-setup made.
+# /usr/local/bin/snapshot — dated snapshots that share unchanged files.
 set -eu
-SRC=/data/                                  # trailing slash: contents, not the dir
-DEST=root@192.0.2.10                         # a real OpenSSH far end
-BASE=/backups/thisbox                        # snapshots live under here
-KEY=/etc/app-setup/secrets/backup_ed25519
+SRC=/data/store/uploads/       # trailing slash: contents, not the dir
+SSH=$(app-setup sshcmd store-rsync)          # the store's own ssh invocation
+DEST=$(app-setup remote store-rsync snapshots)   # user@host:/base/snapshots
+HOST=${DEST%%:*}; DIR=${DEST#*:}
 today=$(date -u +%Y%m%d)
-rsync -a --delete \
-  -e "ssh -i $KEY -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes" \
-  --link-dest="$BASE/latest" \
-  --exclude='app-setup/'  --exclude='*.log' \
-  "$SRC" "$DEST:$BASE/$today/"
-ssh -i "$KEY" "$DEST" "ln -sfn $BASE/$today $BASE/latest"
+$SSH "$HOST" "mkdir -p '$DIR'"
+rsync -a --delete -e "$SSH" \
+  --link-dest="$DIR/latest" \
+  --exclude='*.log' \
+  "$SRC" "$HOST:$DIR/$today/"
+$SSH "$HOST" "ln -sfn '$DIR/$today' '$DIR/latest'"
 ```
+
+The first two lines are the whole trick, and they are why this is short:
+
+| Command | Prints |
+|---|---|
+| `app-setup sshcmd store-rsync` | the exact `ssh …` this store uses — its key, **its port**, and `UserKnownHostsFile` pointing at the host key `test` pinned |
+| `app-setup remote store-rsync <folder>` | the `user@host:/path` that folder resolves to under the store's target |
+
+> **Do not hand-copy those flags.** Writing `ssh -i /etc/app-setup/secrets/backup_ed25519
+> -o StrictHostKeyChecking=yes` yourself looks right and fails with `No ED25519
+> host key is known … Host key verification failed`, because `app-setup test`
+> pinned the far end's key into the *store's own* known_hosts, not into root's
+> `~/.ssh/known_hosts`. A store on a non-standard port fails a second way, by
+> silently dialling 22. `sshcmd` is there so a script cannot get either wrong.
+>
+> The `mkdir -p` is not optional either: `rsync` creates only the *last*
+> component of a destination path, so sending to `…/snapshots/20260823/` when
+> only the base exists dies with `mkdir "…" failed: No such file or directory`.
+>
+> On its **first** run only, it also prints `--link-dest arg does not exist:
+> …/latest`. That is expected and harmless — there is no previous snapshot to
+> hard-link against yet, so the first night is a full copy. It exits 0 and the
+> message does not come back.
 
 Point cron at it (`app-setup install cron`, or a line in `/etc/crontabs/root`),
 and every `$BASE/<date>/` is a full directory tree you can browse and copy back
@@ -386,6 +420,136 @@ cost of the packaging the `files` job gives you for free on a small one.
 > actually hurts** — the disk it fills or the bandwidth it costs is a number you
 > can see, and `app-setup archives files` shows you the size. Only then is the
 > `--link-dest` mirror worth its extra moving parts.
+
+And most of the time it is not one answer or the other, because a machine holds
+both kinds of thing at once. That is the next section.
+
+## Two kinds of data, one job
+
+Most machines hold both at once: a few MB of configuration you want a long
+history of, and tens of GB of uploads or images you only want *a* copy of. They
+pull in opposite directions, and the first thing to know is that you cannot
+give each its own settings — **there is one `files` job per machine.** Its
+settings are one file, `/etc/app-setup/params/files.conf`: one list of paths,
+one schedule, one retention ladder. Whatever you choose there applies to
+everything listed in it.
+
+So the split is not two jobs. It is: **the small, precious things go in the
+`files` job; the big, replaceable ones stay out of it and are mirrored
+separately.**
+
+<FigRows :head="['', 'configs — a few MB', 'images, uploads — tens of GB']" :rows="[
+  [{ t: 'saved by', tone: 'mute' }, { t: 'the files job', tone: 'strong' }, { t: 'rsync, straight', tone: 'strong' }],
+  [{ t: 'in files.conf', tone: 'mute' }, { t: 'listed in paths', tone: 'mute' }, { t: 'listed in exclude', tone: 'mute' }],
+  [{ t: 'each run sends', tone: 'mute' }, { t: 'the whole tree, packed — it is tiny', tone: 'mute' }, { t: 'only what changed', tone: 'mute' }],
+  [{ t: 'history', tone: 'mute' }, { t: 'months, seventeen restore points', tone: 'ok' }, { t: 'one current copy, or dated snapshots', tone: 'mute' }],
+  [{ t: 'putting it back', tone: 'mute' }, { t: 'app-setup restore files', tone: 'mute' }, { t: 'rsync the other way', tone: 'mute' }],
+]" />
+
+### The small half: configs, kept for months
+
+This is what the `files` job is *for*, and the defaults already do it. Fed a
+year of nightly backups, the default ladder `0 / 7 / 4 / 6` settles at fifteen
+archives whose oldest is about five months back — and for a few KB of config
+that costs nothing worth measuring. Want closer to a year? `keep_monthly=12` is
+the only number that changes; it settles at twenty-one archives reaching back
+about eleven months:
+
+```ini
+# /etc/app-setup/params/files.conf — configs, a year of history
+paths=/etc/myapp, /data/code.yaml
+exclude=*.log, *.tmp
+schedule=daily
+keep_daily=7          # every one of the last week
+keep_weekly=4         # then a month of week-ends
+keep_monthly=12       # then ~a year of month-ends
+prune_remote=off      # and the far end keeps every one, forever
+```
+
+Two things about that ladder are worth knowing before you trust it with months:
+
+| The thing to know | Why it matters |
+|---|---|
+| **It counts back from the newest archive, not from the clock** | A machine that was off for six weeks comes back and still has its whole daily rung — retention here is how much history to keep, not how old a file may be. That is the behaviour you want on the day the machine has been down and you most need the history. |
+| **`prune_remote=off` means the far end is never pruned at all** | And it is the default. The ladder trims the disk on *this* machine; every archive ever uploaded stays on the far end. For a few KB a night that is a feature — history is free and you keep all of it, well past the five months the local ladder holds. Turn it on only when the disk on the far end is the thing you are worried about. |
+| **Turning `prune_remote=on` clears a backlog slowly, on purpose** | It deletes at most one ladder's worth per run — the four `keep_` numbers added together, seventeen by default — then says `stopped after 17 deletions` and leaves the rest. A far end holding three hundred old archives takes many nights to come down, and that is the guard working: a misconfigured folder deletes seventeen files you can still recover, not all of them. |
+
+So for the config half the honest answer is: leave it alone. Nightly, the
+default ladder, `prune_remote` off — that already is *"full backups going back
+months"*, and the archives are small enough that nothing about it needs
+defending.
+
+### The large half: images and uploads, kept as a mirror
+
+Big files that you would not cry over — user uploads, photos, generated
+thumbnails, media somebody else could re-supply — want the opposite treatment:
+no dated tarballs, no seventeen copies, just something that is not this
+machine. Two moves.
+
+**First, get them out of the job.** Whatever is in `paths` gets packed in full
+every night, so a directory that must not be in the tarball has to be excluded
+— either by not listing its parent, or by naming it in `Skip`.
+
+> **The `Skip` trap: no leading slash.** The copy runs from `/` with relative
+> names, so a pattern that begins with `/` matches nothing — and it fails
+> *silently*: the directory you meant to leave out is in the archive anyway,
+> and the only symptom is a backup that is mysteriously large. Write the path
+> without its leading slash, or just the directory's name.
+>
+> ```ini
+> exclude=data/store/uploads, *.log     # right — this matches
+> exclude=uploads                       # also right — matches by name
+> exclude=/data/store/uploads           # wrong — excludes nothing at all
+> ```
+>
+> Measured on the same 200-image tree, changing nothing but that one line: the
+> leading-slash version packed a **20,412,339-byte** archive with all 200 images
+> still in it; without the slash, **338 bytes** and none.
+
+**Then mirror them with rsync directly**, and pick how much history the big
+tree actually needs — this is the one real decision:
+
+| What you want back | Use |
+|---|---|
+| The files **as they are now** | **a plain mirror** — one copy on the far end, always current. 40 GB stays 40 GB, forever. |
+| The files **as they were on some past day** | **rsync `--link-dest`** — dated snapshots that share unchanged files. 40 GB + 200 MB/day ≈ 46 GB for thirty of them. Measured small: three snapshots of a 19.5 MB tree read as 58.3 MB of files and occupy 19.7 MB of disk. |
+
+For "not that important", the plain mirror is the whole answer, and it is one
+line — using the key `app-setup` already made, so there is nothing new to set
+up:
+
+```sh
+#!/bin/sh
+# /usr/local/bin/mirror-uploads — one current copy, no history.
+set -eu
+SRC=/data/store/uploads/       # trailing slash: contents, not the dir
+SSH=$(app-setup sshcmd store-rsync)
+DEST=$(app-setup remote store-rsync uploads)
+$SSH "${DEST%%:*}" "mkdir -p '${DEST#*:}'"
+rsync -a --delete -e "$SSH" "$SRC" "$DEST/"
+```
+
+Same two commands doing the work as in the snapshot script above, and the same
+reason: no key path, no port, no host key flag and no IP address written out by
+hand, so nothing here goes stale when the store's settings change.
+
+After the first run — which sends the whole tree once — each night sends only
+the files that changed, because this time rsync is comparing *the same paths* on
+both ends rather than a new tarball with a new name. Measured on a 200-file,
+19.5 MB tree in a container: the first run moves 19.5 MB, and a run after one
+100 KB file changed moves **106 KB**. That is the difference between this and
+the `files` job, and it is the entire reason to reach for it.
+
+> **`--delete` cuts both ways.** A file deleted here disappears there on the
+> next run — that is what makes it a mirror and what keeps it at 40 GB. It
+> protects you against a dead disk, not against an accidental `rm` you notice a
+> week later. If that second one matters, this is the case for the
+> `--link-dest` snapshots [above](#the-size-question-full-every-time-or-incremental),
+> or drop `--delete` and clean up by hand.
+
+Put it on the same timer as everything else (`app-setup install cron`, or a
+line in `/etc/crontabs/root`), and restoring is the same command with the two
+ends swapped.
 
 ## Every config file, in full
 

@@ -763,6 +763,17 @@ static void exec_recipe(const char *script, const char *verb)
 	_exit(127);
 }
 
+/* The same, with one argument handed through to the recipe — `remote <folder>`
+ * needs it, and a NULL folder collapses back to the two-argument form because
+ * the first NULL ends the list either way. */
+static void exec_recipe_arg(const char *script, const char *verb, const char *arg)
+{
+	if (geteuid() != 0 && have_cmd("sudo"))
+		execlp("sudo", "sudo", "-E", "/bin/sh", script, verb, arg, (char *)NULL);
+	execl("/bin/sh", "sh", script, verb, arg, (char *)NULL);
+	_exit(127);
+}
+
 static int run_capture(const char *script, const char *verb, char *out, size_t cap,
                        int timeout_s, int want_stderr)
 {
@@ -4858,6 +4869,31 @@ static int cli_run(const char *verb, int argc, char **argv)
 	return rc;
 }
 
+/* `sshcmd` and `remote` exist to be captured — `SSH=$(app-setup sshcmd
+ * store-rsync)` — so neither may go through run_stream, which tees into a log
+ * and frames what it prints. Straight fork/exec with stdout inherited, exactly
+ * one store, and an optional folder passed through to the recipe. */
+static int cli_print_verb(const char *verb, int argc, char **argv)
+{
+	if (argc < 1) {
+		fprintf(stderr, "app-setup: %s needs a store id, e.g. store-rsync\n", verb);
+		return 2;
+	}
+	Pkg *p = find_pkg(argv[0]);
+	if (!p) { fprintf(stderr, "app-setup: no such software: %s\n", argv[0]); return 1; }
+	g_env_pkg = p;
+	pid_t pid = fork();
+	if (pid < 0) { perror("fork"); g_env_pkg = NULL; return 1; }
+	if (pid == 0) {
+		child_env();
+		exec_recipe_arg(p->path, verb, argc > 1 ? argv[1] : NULL);
+	}
+	int status = 0;
+	while (waitpid(pid, &status, 0) < 0 && errno == EINTR) { }
+	g_env_pkg = NULL;
+	return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+}
+
 static int cli_status(int argc, char **argv)
 {
 	if (argc == 0) return cli_list(NULL);
@@ -5153,6 +5189,10 @@ static void usage(FILE *f)
 	  "  app-setup archives <id>      the archives this job has, here and there\n"
 	  "  app-setup verify <id>        open the newest one and check it loads\n"
 	  "  app-setup test <id>          a backup destination's five-step check\n"
+	  "  app-setup sshcmd <store>     the ssh command that store uses, for a\n"
+	  "                               script that drives rsync itself\n"
+	  "  app-setup remote <store> [folder]\n"
+	  "                               the user@host:/path a folder resolves to\n"
 	  "  app-setup dump <id>...       one plain .sql (or .rdb) file you can read\n"
 	  "  app-setup load <id>...       feed the newest one back in\n"
 	  "  app-setup set <id> [k=v ...] show or change a recipe's settings\n"
@@ -7319,6 +7359,14 @@ int main(int argc, char **argv)
 	 * and `app-setup list backup` — a category and a recipe with one id
 	 * between them — has to keep meaning the tab. */
 	else if (!strcmp(cmd, "archives")) rc = na ? cli_run("list", na, aa) : (usage(stderr), 2);
+	/* For scripting against an SSH store. The `files` job packs a full tarball
+	 * every run, so anybody with a large tree drives rsync themselves — and
+	 * rebuilding the store's ssh invocation by hand is where that goes wrong,
+	 * because the host key `test` pinned lives in the store's own known_hosts
+	 * and not in ~/.ssh. These print what the store itself uses, so a script
+	 * does not have to know. */
+	else if (!strcmp(cmd, "sshcmd")) rc = cli_print_verb("sshcmd", na, aa);
+	else if (!strcmp(cmd, "remote")) rc = cli_print_verb("remote", na, aa);
 	else if (!strcmp(cmd, "domain")) rc = cli_domain(na, aa);
 	else if (!strcmp(cmd, "dashboard")) rc = cli_dashboard(na, aa);
 	else if (!strcmp(cmd, "reinstall")) rc = cli_reinstall(na, aa);
