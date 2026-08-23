@@ -117,6 +117,9 @@ RUN printf '%s\n' \
     systemctl enable app
 ```
 
+这两种怎么写才算写好 —— init 脚本、unit，以及围着它们的那些命令 ——
+是[使用 Alpine](alpine.md) 和[使用 Debian](debian.md) 这两页的事。
+
 你**也可以**把 `/sbin/init` 换成你自己的程序 —— 那只是一个路径而已 ——
 但那样它就是 PID 1，该有的责任一样不少：没有服务、没有 cron、没有 `systemctl`，
 僵尸进程你自己收，停止信号你自己处理，不处理就每次都被杀。面板照样把它显示成系统容器，
@@ -296,6 +299,7 @@ start_pre() {
 systemd 系的同一个镜像是同样的形状：`apt-get install`、
 `/etc/systemd/system` 下一个服务一个 unit、`systemctl enable`、
 `EnvironmentFile=` 指到 `/data`，以及上面 `supervise-daemon` 那个位置写 `Restart=always`。
+两个家族各自怎么管服务，在[使用 Alpine](alpine.md) 和[使用 Debian](debian.md) 里一条条写着。
 
 ---
 

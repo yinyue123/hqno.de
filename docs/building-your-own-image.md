@@ -124,6 +124,10 @@ RUN printf '%s\n' \
     systemctl enable app
 ```
 
+Writing either one properly — the init script, the unit, and the commands
+around them — is what [Using Alpine](alpine.md) and [Using Debian](debian.md)
+are for.
+
 You *can* make `/sbin/init` your own program — it is only a path — but then it
 is PID 1 with everything that implies: no services, no cron, no `systemctl`,
 you reap your own zombies, and you handle the stop signal yourself or every
@@ -322,7 +326,8 @@ laptop and one that runs on somebody else's machine:
 The systemd version of the same image is the same shape: `apt-get install`, a
 unit per service in `/etc/systemd/system`, `systemctl enable`,
 `EnvironmentFile=` pointing at `/data`, and `Restart=always` where
-`supervise-daemon` is above.
+`supervise-daemon` is above. Both families, service by service, are on
+[Using Alpine](alpine.md) and [Using Debian](debian.md).
 
 ---
 
