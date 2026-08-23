@@ -111,9 +111,20 @@ root@box:~# app-setup set files \
     store=r2 schedule=daily
 root@box:~# app-setup install files
   ==> measuring
-  ok  3 paths, 16.0K
+  ok  4 paths, 20.0K
   ok  scheduled daily, minute 51
   ok  ready — press ▶ Back up now to take one
+```
+
+三项填进去，报的是 **4** —— 通配符已经展开成两个文件了。这个数字就是你检查通配符有没有匹配对的
+办法：再往 `/etc/myapp/` 放一个 `extra.conf`，重跑 `install`，它会说 `5 paths`。列了但机器上没有的
+路径，它会警告，并且不计进这个数：
+
+```
+root@box:~# app-setup set files paths='/data/code.yaml, /etc/typo'
+root@box:~# app-setup install files
+  !   listed but not on this machine: /etc/typo
+  ok  1 path, 4.0K
 ```
 
 ## 第 5 步 · 现在就备一次
@@ -127,18 +138,18 @@ root@box:~# app-setup backup files
   ==> copying /etc/myapp/log.conf
   ==> packing files_20260823055612.tgz
   ok  /data/app-setup/backups/files/files_20260823055612.tgz  (4.0K)
-  ==> uploading files_20260823055612.tgz to s3:box/files
+  ==> uploading files_20260823055612.tgz to r2:box/files
   ok  uploaded
 
 root@box:~# app-setup archives files
   on this machine   /data/app-setup/backups/files/
     files_20260823055612.tgz    4.0K   2026-08-23 05:56 UTC
-  on s3             box/files/
+  on r2             box/files/
     files_20260823055612.tgz           2026-08-23 05:56 UTC
   1 here, 1 there.
 ```
 
-通配符展开了 —— `/etc/myapp/*.conf` 变成两行 `copying`。对一下数：**填进去 3 个路径，存下来 4 个文件。**
+`/etc/myapp/*.conf` 变成两行 `copying` —— 和上一步那个路径数展开出来的是同一回事。
 
 真出事之前，这一步值得跑一次：
 
@@ -156,7 +167,7 @@ root@box:~# rm -rf /etc/myapp /data/code.yaml /data/store
 root@box:~# rm -rf /data/app-setup/backups/files
 
 root@box:~# app-setup restore files
-  ==> fetching files_20260823055612.tgz from s3:box/files
+  ==> fetching files_20260823055612.tgz from r2:box/files
   This puts back, overwriting what is there now:
       /data
       /data/store
@@ -203,7 +214,7 @@ root@box:~# app-setup set files keep_daily=7 keep_weekly=4 keep_monthly=12
 ```
 root@box:~# app-setup set files prune_remote=on
 root@box:~# app-setup backup files
-  ==> pruning s3:box/files
+  ==> pruning r2:box/files
   !   stopped after 17 deletions — that is more than one ladder's worth.
       287 kept there
 ```
@@ -221,10 +232,6 @@ paths=/etc/myapp/*.conf, /data/code.yaml, /data/store, /opt/thing, /var/lib/thin
 三条能省事的规则：
 
 ```ini
-# 列了但机器上没有的路径，它会明着警告，不会悄悄跳过：
-#   ! listed but not on this machine: /etc/typo
-# 因为打错的路径和正常的备份，在出事那天之前长得一模一样。
-
 # 「跳过」是在拷贝的时候就排掉，不是拷完再删：
 exclude=*.log, *.tmp, node_modules, .git
 

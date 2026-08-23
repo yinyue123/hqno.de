@@ -118,9 +118,21 @@ root@box:~# app-setup set files \
     store=r2 schedule=daily
 root@box:~# app-setup install files
   ==> measuring
-  ok  3 paths, 16.0K
+  ok  4 paths, 20.0K
   ok  scheduled daily, minute 51
   ok  ready — press ▶ Back up now to take one
+```
+
+**Four**, from three entries — the glob already resolved to two files. That
+number is how you check a glob matched what you meant: drop another
+`/etc/myapp/extra.conf` in, run `install` again, and it says `5 paths`. A path
+that is not there is warned about and left out of the count:
+
+```
+root@box:~# app-setup set files paths='/data/code.yaml, /etc/typo'
+root@box:~# app-setup install files
+  !   listed but not on this machine: /etc/typo
+  ok  1 path, 4.0K
 ```
 
 ## Step 5 — take one now
@@ -134,19 +146,19 @@ root@box:~# app-setup backup files
   ==> copying /etc/myapp/log.conf
   ==> packing files_20260823055612.tgz
   ok  /data/app-setup/backups/files/files_20260823055612.tgz  (4.0K)
-  ==> uploading files_20260823055612.tgz to s3:box/files
+  ==> uploading files_20260823055612.tgz to r2:box/files
   ok  uploaded
 
 root@box:~# app-setup archives files
   on this machine   /data/app-setup/backups/files/
     files_20260823055612.tgz    4.0K   2026-08-23 05:56 UTC
-  on s3             box/files/
+  on r2             box/files/
     files_20260823055612.tgz           2026-08-23 05:56 UTC
   1 here, 1 there.
 ```
 
-The glob expanded — two `copying` lines for `/etc/myapp/*.conf`. Check the
-count: **3 paths in, 4 files saved.**
+Two `copying` lines for `/etc/myapp/*.conf` — the same expansion the path
+count showed you a step ago.
 
 Worth doing once, before you need it for real:
 
@@ -165,7 +177,7 @@ root@box:~# rm -rf /etc/myapp /data/code.yaml /data/store
 root@box:~# rm -rf /data/app-setup/backups/files
 
 root@box:~# app-setup restore files
-  ==> fetching files_20260823055612.tgz from s3:box/files
+  ==> fetching files_20260823055612.tgz from r2:box/files
   This puts back, overwriting what is there now:
       /data
       /data/store
@@ -218,7 +230,7 @@ deletes at most one ladder's worth per run:
 ```
 root@box:~# app-setup set files prune_remote=on
 root@box:~# app-setup backup files
-  ==> pruning s3:box/files
+  ==> pruning r2:box/files
   !   stopped after 17 deletions — that is more than one ladder's worth.
       287 kept there
 ```
@@ -237,10 +249,6 @@ paths=/etc/myapp/*.conf, /data/code.yaml, /data/store, /opt/thing, /var/lib/thin
 Three rules that save time:
 
 ```ini
-# A path that is not on this machine is WARNED about, not skipped silently:
-#   ! listed but not on this machine: /etc/typo
-# because a typo and a working backup look identical until the day they do not.
-
 # Skip is applied WHILE copying, not after:
 exclude=*.log, *.tmp, node_modules, .git
 
