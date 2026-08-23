@@ -114,6 +114,7 @@ export default defineConfig({
             items: [
               { text: 'Using your container', link: '/using-your-container' },
               { text: 'Backing up PostgreSQL', link: '/backup-postgresql' },
+              { text: 'Backing up files', link: '/backup-files' },
               { text: 'Public ports', link: '/ports' },
               { text: 'Building your own image', link: '/building-your-own-image' },
               { text: 'Adding your own software', link: '/app-setup-sources' },
@@ -168,6 +169,7 @@ export default defineConfig({
             items: [
               { text: '使用你的容器（英文）', link: '/using-your-container' },
               { text: '备份 PostgreSQL', link: '/zh/backup-postgresql' },
+              { text: '备份文件（英文）', link: '/backup-files' },
               { text: '公网端口', link: '/zh/ports' },
               { text: '自己做镜像（英文）', link: '/building-your-own-image' },
               { text: '添加你自己的软件（英文）', link: '/app-setup-sources' },
