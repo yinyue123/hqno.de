@@ -116,6 +116,11 @@ root@box:~# app-setup test store-rsync
   [{ t: '建目录、写、读、删 全过了 —— root@192.0.2.10:/tmp', tone: 'ok' }],
 ]" />
 
+> **关于 post-quantum 密钥交换的那堆警告不是失败。** 容器里的 OpenSSH 客户端比较新，对端的
+> `sshd` 比较旧的话，*每一次*连接都会打一行 `WARNING: connection is not using a post-quantum
+> key exchange algorithm` —— 所以五步测试会看到五遍，每次备份也会看到。这不代表出问题：传输照常
+> 是加密和认证过的。等对端的 OpenSSH 够新了它自己就没了。
+
 第一次测试还会**把对端的 host key 钉住**，并把指纹打出来；之后每次连接都要求它对得上，host key
 变了会明着报错，而不是悄悄信任。没过完这五步的存储源，下一步会拒绝使用 —— 这是故意的。
 
@@ -466,8 +471,38 @@ rsync -a --delete -e "$SSH" "$SRC" "$DEST/"
 > 也重要，那就正是上面
 > [`--link-dest` 快照](#到底多大-每次全量-还是增量)的用武之地，或者把 `--delete` 去掉，自己手动清理。
 
-跟别的东西挂在同一个定时上就行（`app-setup install cron`，或者往 `/etc/crontabs/root` 里加一行），
-恢复就是把这条命令的两端换个位置。
+跟别的东西挂在同一个定时上就行（`app-setup install cron`，或者往 `/etc/crontabs/root` 里加一行）。
+
+### 大的那一半怎么拿回来
+
+这一半没有 **⟲ 恢复** 按钮，所以命令值得在*需要它的那天之前*就写下来。两个都是把 `rsync` 的两端
+调过来，而且都不带 `--delete` —— 恢复不该把「本地有、备份里没有」的文件删掉。想让目录和备份
+一模一样，再自己加上。
+
+**从镜像恢复** —— 拿回它最后一次跑的时候的样子：
+
+```sh
+SSH=$(app-setup sshcmd store-rsync)
+DEST=$(app-setup remote store-rsync uploads)
+mkdir -p /data/store/uploads
+rsync -a -e "$SSH" "$DEST/" /data/store/uploads/
+```
+
+**从快照恢复** —— 拿回某一天的样子。先问对端有哪些天，列出来的 `latest` 是那个符号链接，不是某一天：
+
+```sh
+SSH=$(app-setup sshcmd store-rsync)
+DEST=$(app-setup remote store-rsync snapshots)
+$SSH "${DEST%%:*}" "ls -1 ${DEST#*:}"        # 20260101  20260102  latest
+rsync -a -e "$SSH" "$DEST/20260101/" /data/store/uploads/
+```
+
+对着真的对端验过：同一个 `img1.jpg`，从 `20260101` 拿回来是 `dcfc3913…`，从 `20260102` 拿回来是
+`7fd99c87…` —— 留不止一天，图的就是这个。
+
+> **镜像只新到它最后一次跑的那一刻**，这就是你选它时接受的那笔交易。同一次测试里，有个文件后来
+> 改过，而镜像里还是*改之前*的版本 —— 因为还没再跑过一次镜像。快照每一天也是这个性质，区别在于
+> 快照那边，昨天还在，你回得去。
 
 ## 全部的配置文件
 

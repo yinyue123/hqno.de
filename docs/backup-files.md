@@ -135,6 +135,13 @@ backup dies at its first `mkdir`:
   [{ t: 'folder, write, read and delete all worked — root@192.0.2.10:/tmp', tone: 'ok' }],
 ]" />
 
+> **Warnings about post-quantum key exchange are not a failure.** A container
+> with a current OpenSSH client talking to an older `sshd` prints `WARNING:
+> connection is not using a post-quantum key exchange algorithm` on *every*
+> connection — so a five-step test shows it five times, and every backup shows
+> it too. Nothing is wrong: the transfer is encrypted and authenticated as
+> normal. It goes away when the far end's OpenSSH is new enough.
+
 The first test also **pins the far end's host key** and prints its fingerprint;
 every connection after that requires it to match, and a changed host key fails
 loudly rather than being trusted quietly. A store that has never passed all five
@@ -548,8 +555,44 @@ the `files` job, and it is the entire reason to reach for it.
 > or drop `--delete` and clean up by hand.
 
 Put it on the same timer as everything else (`app-setup install cron`, or a
-line in `/etc/crontabs/root`), and restoring is the same command with the two
-ends swapped.
+line in `/etc/crontabs/root`).
+
+### Getting the large half back
+
+This is the half that has no **⟲ Restore** button, so it is worth having the
+command written down *before* the day you need it. Both are one `rsync` with
+the ends swapped, and neither carries `--delete` — a restore should not remove
+files that exist here and not in the backup. Add it only if you want the
+directory to match the backup exactly.
+
+**From the mirror** — the files as of its last run:
+
+```sh
+SSH=$(app-setup sshcmd store-rsync)
+DEST=$(app-setup remote store-rsync uploads)
+mkdir -p /data/store/uploads
+rsync -a -e "$SSH" "$DEST/" /data/store/uploads/
+```
+
+**From a snapshot** — the files as of a particular day. Ask the far end which
+days it has first; `latest` in that listing is the symlink, not a day:
+
+```sh
+SSH=$(app-setup sshcmd store-rsync)
+DEST=$(app-setup remote store-rsync snapshots)
+$SSH "${DEST%%:*}" "ls -1 ${DEST#*:}"        # 20260101  20260102  latest
+rsync -a -e "$SSH" "$DEST/20260101/" /data/store/uploads/
+```
+
+Verified against a real far end: the same `img1.jpg` came back as
+`dcfc3913…` from `20260101` and `7fd99c87…` from `20260102`, which is the
+whole point of keeping more than one day.
+
+> **A mirror is only as current as its last run**, and that is the trade you
+> took when you chose it. In the same test the mirror still held the *previous*
+> version of a file that had changed since — because nothing had run the mirror
+> again yet. Snapshots have the same property per day; the difference is that
+> with snapshots yesterday is still there to go back to.
 
 ## Every config file, in full
 
