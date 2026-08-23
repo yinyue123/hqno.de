@@ -2,14 +2,14 @@
 
 Twenty containers on one machine, one address between them. This page is about
 how a connection from outside finds **yours**: §2 and §3 are what to actually
-type, §4 to §6 are why those are the only two ways.
+type, §5 to §7 are why those are the only two ways.
 
 Everything else — what you run, how you configure it, who you give it to — is
 inside your box and is yours.
 
 (One class of thing does not start here at all: the kind that creates a network
 interface of its own. Not many people use it, but if you were going to, jump to
-§9 first and save an afternoon.)
+§10 first and save an afternoon.)
 
 ---
 
@@ -59,7 +59,7 @@ app-setup domain del example.com    # stop answering for one
 **This command's default is the opposite one, which is worth remembering:**
 without `self-hosted` you get a machine-issued certificate and a machine that
 decrypts. For this page's purpose you have to type `self-hosted` yourself. (The
-panel and the API default the other way, to passthrough — §6 is why that
+panel and the API default the other way, to passthrough — §7 is why that
 difference matters.)
 
 A wildcard is `*.example.com`, first label only.
@@ -104,7 +104,7 @@ Every field is in the [Panel REST API](api.md).
 
 **You cannot open one**, and it is not a permission that was withheld: `POST`
 and `DELETE` were never registered under `/me/containers/{cid}/ports`, so a
-write there is a 404 from the router. §5 is why.
+write there is a 404 from the router. §6 is why.
 
 ### Your side: ask, then check
 
@@ -163,7 +163,56 @@ and nothing outside can connect.
 
 ---
 
-## 4. How a name gets sorted out
+## 4. The whole path, and where this page stops
+
+<svg class="fig" viewBox="0 0 660 186" role="img" aria-label="The whole path of one connection: a visitor reaches the machine, the machine sends it into your container by name or by number, and the program you run there connects out to somewhere on the internet">
+  <defs><marker id="px5" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path class="ink" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+  <text class="t" x="14" y="20">the whole path of one connection</text>
+  <rect class="box" x="14" y="42" width="96" height="62" rx="4"/>
+  <text class="c" x="62" y="79">a visitor</text>
+  <path class="ln" d="M110,73 H136" marker-end="url(#px5)"/>
+  <rect class="box" x="144" y="42" width="164" height="62" rx="4"/>
+  <text class="t c" x="226" y="64">the machine</text>
+  <text class="s c" x="226" y="84">:443 → by name</text>
+  <text class="s c" x="226" y="100">:31000 → by number</text>
+  <path class="ln" d="M308,73 H334" marker-end="url(#px5)"/>
+  <rect class="mine" x="342" y="42" width="156" height="62" rx="4"/>
+  <text class="t c" x="420" y="66">your container</text>
+  <text class="s c" x="420" y="87">the program you run</text>
+  <path class="lnA" d="M498,73 H524" marker-end="url(#px5)"/>
+  <rect class="box" x="532" y="42" width="114" height="62" rx="4"/>
+  <text class="c" x="589" y="68">somewhere on</text>
+  <text class="c" x="589" y="88">the internet</text>
+  <path class="rule" d="M336,118 V160"/>
+  <text class="s c" x="175" y="142">§1–3: the machine gets it to your door</text>
+  <text class="s c" x="495" y="142">from here right: inside the box, yours</text>
+</svg>
+
+The two hops on the left are §1 to §3: the machine matches a name or a number
+and puts the connection at your container's door. Up to there it is the
+panel's and the machine's business, and it is the only stretch with rules
+about how it can be done.
+
+**Past that door it is yours.** Which program runs in there, how you configure
+it, how you make it come back up after a restart — this page does not say, and
+recommends no software.
+
+Both reasons are practical: things in this category change versions quickly, so
+a configuration written down here is stale in a few months; and which one, used
+how, depends on what you want it for and which rules you have to keep (§11).
+
+Three ways to get there, all fine: read that software's own documentation, ask
+an AI, or just try it in the container — it is a whole Linux, you are root, and
+you can install anything (except the class in §10).
+
+The parts that are about the **system** in the container are on this site:
+[Using Alpine](alpine.md) and [Using Debian](debian.md) cover installing
+packages, starting a program at boot, reading logs and checking memory —
+whatever you end up running, you will need those.
+
+---
+
+## 5. How a name gets sorted out
 
 The first thing a TLS client sends has a short **plaintext** stretch at the
 front, and in it is the name of the server it is asking for.
@@ -223,7 +272,7 @@ Three things follow:
   why §2 was yours to do without asking.
 - **The machine holds no key.** It never decrypted anything, so there was never
   a moment it could have read anything. The certificate lives in your container
-  — as long as the mode is right. §6.
+  — as long as the mode is right. §7.
 - **The name has to resolve to the machine.** That is the A record §2 opened
   with.
 
@@ -232,7 +281,7 @@ instead, looked up in the same table.
 
 ---
 
-## 5. Why a protocol of your own costs a number
+## 6. Why a protocol of your own costs a number
 
 A connection arrives. The machine has to decide which container it belongs to,
 and it has to decide **before** it knows what any of the bytes mean.
@@ -283,7 +332,7 @@ perfectly look identical from outside. Test it with the client that will use it.
 
 ---
 
-## 6. Get the mode wrong and the rest was pointless
+## 7. Get the mode wrong and the rest was pointless
 
 This is the difference between the two modes in §2, and the one choice on this
 page that still looks fine when it is wrong.
@@ -331,7 +380,7 @@ container, and the private key stays there.
 
 ---
 
-## 7. Two things that cost people an afternoon
+## 8. Two things that cost people an afternoon
 
 - **Bind `0.0.0.0`, not `127.0.0.1`.** Both paths above reach your service from
   outside the container's own loopback. A service on `127.0.0.1` answers you
@@ -345,7 +394,7 @@ container, and the private key stays there.
 
 ---
 
-## 8. What the machine can see
+## 9. What the machine can see
 
 Not a promise about intentions. The shape of the path, which you can check:
 
@@ -371,9 +420,9 @@ Two honest limits, because a page that left them out would be selling something:
 
 ---
 
-## 9. One class of thing does not run here
+## 10. One class of thing does not run here
 
-Everything above is the userspace kind: an ordinary program holding an ordinary
+Everything in the nine sections above is the userspace kind: an ordinary program holding an ordinary
 socket — accept a connection, do something with the bytes, open an outbound
 connection. That is what nearly everyone uses, and it runs like any other
 program.
@@ -391,7 +440,7 @@ no nftables, no tun, no kernel-side VPN in a container.
 
 ---
 
-## 10. The law is yours to know
+## 11. The law is yours to know
 
 This page says how a machine moves bytes. What you run on top of it, who uses
 it, and where it lands are yours — and so is knowing which rules apply.
@@ -409,4 +458,4 @@ advice, and nobody has checked it on your behalf.
 - [Quick start](quick-start.md), step 6 — adding a domain and pointing DNS, with
   a picture per step.
 - [Panel REST API](api.md) — every call behind domains, routes and ports.
-- [Running a machine of your own](running-a-machine.md) — the other side of §8.
+- [Running a machine of your own](running-a-machine.md) — the other side of §9.
