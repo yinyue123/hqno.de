@@ -74,7 +74,7 @@ ssh-keygen -lf ~/.ssh/id_ed25519.pub  # 面板回显的那串 SHA256:…
 
 ---
 
-## 2. 装软件
+## 2. 包管理
 
 ### 短的版本
 
@@ -145,21 +145,50 @@ app-setup doctor              # 这个容器在 app-setup 眼里是什么样
 把你自己的软件加进这个菜单，就是往 `/etc/app-setup/` 丢一个 shell 脚本 ——
 见[添加你自己的软件](/app-setup-sources)（英文）。
 
-### 编辑器，以及其它你以为一定有的东西
+### 装完之后：跑起来，以及开机自启
 
-镜像做得精简，所以你第一时间去摸的东西有几样不在里面：
+装上不等于跑起来。Debian 自己的包一般装完就会自己启动、也自己设好了开机自启，
+但你自己编的、下载的、写的都不会 —— 一条命令两件事都办了：
 
-| | 自带 | 怎么拿到 |
+```sh
+apt install nginx                # 装
+systemctl enable --now nginx     # 现在跑起来，并且每次开机都跑
+```
+
+`--now` 是最容易漏的那一半。不加它，`systemctl enable` 只写下「**下次**开机
+启动」的那个软链，而 `systemctl start` 只管**这一次**。两边分别怎么查：
+
+```sh
+systemctl is-active nginx     # 现在跑没跑
+systemctl is-enabled nginx    # 重启之后还会不会起来
+```
+
+`app-setup` 装东西时两件事都替你做了。完整的服务那一章是第 4 节 ——
+停止、取消自启、以及自己写一个。
+
+---
+
+## 3. 常用工具
+
+镜像做得精简，你要用的小程序有不少不在里面。下面是一个全新容器里有什么，
+以及没有的怎么补：
+
+| 用来 | 已经有 | 值得再装 |
 |---|---|---|
-| `nano` | 有 | |
-| `vim` `vi` | **没有** | `apt install vim`，或 `app-setup install vim` |
-| `curl` `less` | 有 | |
-| `wget` `unzip` `xz` `bzip2` | 没有 | `app-setup install essentials` |
-| `ping` `ip` `ss` | 有 | |
-| `dig` `traceroute` `mtr` `tcpdump` `netstat` | 没有 | `app-setup install nettools` |
-| `htop` | 没有 | `apt install htop`，或 `app-setup install htop` |
-| `git` | 没有 | `apt install git`，或 `app-setup install git` |
-| `bash` `sudo` `cron` | 有 | |
+| 改文件 | `nano` | `vim` —— `app-setup install vim` |
+| 看和找 | `less` `grep` `find` `awk` `sed` `tail` `watch` | |
+| 压缩解压 | `tar` `gzip` | `unzip` `xz` `bzip2` —— `app-setup install essentials`；`zip` —— `apt install zip` |
+| 下载 | `curl` | `wget` —— 同一张卡 |
+| 查网络 | `ping` `ip` `ss` `openssl` | `dig` `netstat` `traceroute` `mtr` `tcpdump` —— `app-setup install nettools` |
+| 看进程和占用 | `top` `ps` `free` `df` `du` `pkill` | `htop` `ncdu` `atop` —— `app-setup install htop` |
+| 连到别的机器 | `ssh` `scp` `sftp` | `rsync` —— `app-setup install rsync` |
+| 编译东西 | | `git` `make` `gcc` —— `app-setup install git`，再 `buildtools` |
+| 断线不丢的会话 | | `tmux` 或 `screen` —— `app-setup install tmux` |
+| shell | `bash` `sudo` `cron` `crontab` | `zsh` + Oh My Zsh —— `app-setup install zsh` |
+
+**这里连 `vi` 都没有**，一个精简版都没有 —— 镜像只带了 `nano`，
+所以顺手敲 `vi 某个文件` 得到的是 *command not found*。
+`apt install vim` 就解决了，这也是很多人在这里做的第一件事。
 
 任何你打算长住的容器，这两张卡都值得先装上：
 
@@ -170,7 +199,7 @@ app-setup install nettools     # ping dig traceroute mtr tcpdump netstat ss
 
 ---
 
-## 3. 服务
+## 4. 服务
 
 这里 systemd 就是 PID 1，所以就是你已经会的那一套：
 
@@ -250,8 +279,6 @@ EDITOR=vim crontab -e
 
 systemd 的 timer 也能用，你更喜欢的话。
 
----
-
 ### 日志里两行不是问题的东西
 
 一个健康的容器上，`systemctl --failed` 会显示一条：
@@ -272,7 +299,7 @@ ignoring: Operation not permitted
 
 ---
 
-## 4. 日志
+## 5. 日志
 
 一切都进 journal，`journalctl` 是读它的方式：
 
@@ -308,7 +335,7 @@ grep -i error /var/log/syslog
 
 ---
 
-## 5. 进程、内存、硬盘
+## 6. 进程、内存、硬盘
 
 ```sh
 top                     # 交互式；`q` 退出
@@ -329,11 +356,11 @@ systemd-cgtop           # 同样的东西，按服务分组
 因为内核没有按容器算的负载；而 `top` 里的 `%CPU` 是相对你自己的核数。
 
 容器自己看不到的那些 —— 流量、到期、域名、公网端口 ——
-敲 `dashboard`（第 7 节）。
+敲 `dashboard`（第 8 节）。
 
 ---
 
-## 6. 把网站放到公网上
+## 7. 把网站放到公网上
 
 ### 没有防火墙，你也不需要
 
@@ -419,7 +446,7 @@ domain add example.com 80
 
 ---
 
-## 7. 在容器里看流量、限额和到期
+## 8. 在容器里看流量、限额和到期
 
 ```sh
 dashboard              # 全部：盒子、CPU、内存、硬盘、流量、
@@ -464,7 +491,7 @@ Network
 
 ---
 
-## 8. `/data`，以及重装
+## 9. `/data`，以及重装
 
 **`/data` 是能活下来的那部分。** 其余的一切都是「镜像 + 你对它的改动」，
 而重装换掉的正好就是那部分。数据库、上传的文件、任何丢了你会难受的东西：

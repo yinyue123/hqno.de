@@ -118,11 +118,12 @@ that is a different thing and you install it: `apk add openssh`.
 
 ---
 
-## 3. `apk`, in one screen
+## 3. Managing packages
 
-`apk` is faster than `apt` and shorter to type. The index is already fetched
-for you — a boot-time job refreshes it at most once a day — so `apk add nginx`
-works on a container you have just logged into for the first time.
+`apk` is Alpine's package manager. It is faster than `apt` and shorter to
+type. The index is already fetched for you — a boot-time job refreshes it at
+most once a day — so `apk add nginx` works on a container you have just logged
+into for the first time.
 
 | What you want | Alpine | (Debian, for comparison) |
 |---|---|---|
@@ -156,6 +157,34 @@ Names differ from Debian's in a few places that will catch you once each:
 **`--no-cache` is for Dockerfiles, not for you.** It skips writing the index
 to disk, which is a win when you are building an image and a small loss when
 you are living in one. Plain `apk add` is what you want at a prompt.
+
+### After it installs: start it, and start it at boot
+
+Installing something does not run it, and running it does not bring it back
+after a reboot. Those are three separate commands here:
+
+```sh
+apk add nginx                 # install it
+rc-service nginx start        # run it now
+rc-update add nginx default   # run it at every boot
+```
+
+**The last two are not one command.** systemd folds them into
+`systemctl enable --now`; OpenRC does not. Starting a service does not add it
+to a runlevel, and adding it to a runlevel does not start it. This is the
+single most common way something "installed and working" is gone after the
+first restart.
+
+Check either of them:
+
+```sh
+rc-service nginx status    # is it running right now
+rc-update show default     # what comes back at boot
+```
+
+`app-setup` does both for you when it installs something, so a package from
+the menu is already running and already in the runlevel. §6 is the full
+service chapter — stopping, disabling, writing one of your own.
 
 ---
 
@@ -214,30 +243,30 @@ Adding your own software to the menu is one shell script dropped into
 
 ---
 
-## 5. An editor, and the other things you assumed were there
+## 5. The everyday tools
 
-The image ships small on purpose, so some of what you reach for first is not
-in it:
+The image ships small on purpose. Most of what you reach for is in it anyway,
+because busybox carries a lot of small programs for very little disk — this is
+what a fresh container has, and what to type when it does not:
 
-| | Ships | Get it with |
+| For | Already there | Worth adding |
 |---|---|---|
-| `vi` | yes — busybox's, which is terse but real | |
-| `nano` | yes | |
-| `vim` | no | `apk add vim`, or `app-setup install vim` |
-| `curl` `wget` `less` | yes | |
-| `tar` `gzip` `bzip2` `unzip` | yes — busybox's | |
-| `xz` | no | `app-setup install essentials` |
-| `ping` `ip` `ss` `netstat` | yes | |
-| `dig` `traceroute` `mtr` `tcpdump` | no | `app-setup install nettools` |
-| `htop` | no | `apk add htop`, or `app-setup install htop` |
-| `git` | no | `apk add git`, or `app-setup install git` |
-| `bash` | yes, and it is your login shell | |
-| `sudo` | yes | |
+| Editing a file | `vi` (busybox's), `nano` | `vim` — `app-setup install vim` |
+| Reading and searching | `less` `grep` `find` `awk` `sed` `tail` `watch` `xxd` | |
+| Archives | `tar` `gzip` `bzip2` `unzip` | `xz` — `app-setup install essentials`; `zip` — `apk add zip` |
+| Downloading | `curl` `wget` | |
+| Network trouble | `ping` `ip` `ss` `netstat` `nslookup` `traceroute` `nc` | `dig` `mtr` `tcpdump` — `app-setup install nettools` |
+| Processes and usage | `top` `ps` `free` `df` `du` `lsof` `killall` `tree` | `htop` `ncdu` `atop` — `app-setup install htop` |
+| Reaching another box | `ssh` `scp` `sftp` | `rsync` — `app-setup install rsync` |
+| Building things | | `git` `make` `gcc` — `app-setup install git`, then `buildtools` |
+| A session that survives a dropped SSH | | `tmux` or `screen` — `app-setup install tmux` |
+| Shell | `bash` (your login shell), `sudo`, `crontab` | `zsh` + Oh My Zsh — `app-setup install zsh` |
 
 Alpine is ahead of Debian on several rows of that table, which is not what
-anybody expects from the smaller image: busybox ships `vi`, `unzip`, `bzip2`
-and `netstat` as applets that cost a few kilobytes each, and the Debian image
-has none of the four.
+anybody expects from the smaller image: busybox ships `vi`, `wget`, `unzip`,
+`bzip2`, `netstat`, `nslookup`, `traceroute`, `nc`, `killall`, `lsof` and
+`tree` as applets costing a few kilobytes each, and the Debian image has none
+of the eleven.
 
 The two cards worth installing on any container you plan to live in:
 
@@ -246,9 +275,18 @@ app-setup install essentials   # curl wget unzip tar xz bzip2 less procps-ng
 app-setup install nettools     # ping dig traceroute mtr tcpdump netstat ss
 ```
 
-`vi` being busybox's is the one that surprises people. It opens, it edits, it
-saves; it has no syntax highlighting, no split windows and a much smaller set
-of commands. If you type `vim` and get *not found*, that is why.
+Two rows come with a catch worth knowing before you hit it:
+
+- **`vi` is busybox's.** It opens, it edits, it saves; no syntax
+  highlighting, no split windows, a much smaller set of commands. If you type
+  `vim` and get *not found*, that is why.
+- **Busybox applets take fewer flags than the real programs.** The common
+  ones are there — `netstat -tlnp` prints what you expect — but an obscure
+  switch copied off a blog post may simply not exist. `ps`, `top`, `free` and
+  `watch` are the exception: the image installs real `procps-ng` for those,
+  so `ps aux` and `ps -ef --forest` behave the way they do everywhere else.
+  When something refuses a flag, `<tool> --help` here is short, and reading
+  it is faster than guessing.
 
 ---
 
@@ -277,14 +315,9 @@ reputation.
 `/etc/init.d/nginx restart` works too, and is the same thing `rc-service`
 does. There is no `service` command here; that is Debian's.
 
-**Start and enable are two separate acts on Alpine**, where systemd folds them
-into `enable --now`. Starting something does not make it come back after a
-reboot, and adding it to a runlevel does not start it now. Do both:
-
-```sh
-rc-service nginx start
-rc-update add nginx default
-```
+As §3 said: **start and enable are two separate acts**, where systemd folds
+them into `enable --now`. Whenever you start something you meant to keep, add
+it to the runlevel in the same breath.
 
 ### Reading the board
 

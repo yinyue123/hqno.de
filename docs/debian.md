@@ -81,7 +81,7 @@ that is a separate thing: `apt install openssh-server`.
 
 ---
 
-## 2. Installing software
+## 2. Managing packages
 
 ### The short version
 
@@ -158,21 +158,54 @@ and its files but moves your uploads to `/root/` first, and says so.
 Adding your own software to the menu is one shell script dropped into
 `/etc/app-setup/` — see [adding your own software](app-setup-sources.md).
 
-### An editor, and the other things you assumed were there
+### After it installs: start it, and start it at boot
 
-The image ships lean, so a few things you reach for first are not in it:
+Installing something does not run it. Debian's own packages usually start
+themselves on install and set themselves to come back at boot, but anything
+you build, download or write does not — and one command covers both:
 
-| | Ships | Get it with |
+```sh
+apt install nginx                # install it
+systemctl enable --now nginx     # run it now, and at every boot
+```
+
+`--now` is the half people forget. Without it, `systemctl enable` only writes
+the symlink that starts it *next* time, and `systemctl start` only runs it
+*this* time. Check either:
+
+```sh
+systemctl is-active nginx     # is it running right now
+systemctl is-enabled nginx    # will it come back after a restart
+```
+
+`app-setup` does both for you when it installs something. §4 is the full
+service chapter — stopping, disabling, writing one of your own.
+
+---
+
+## 3. The everyday tools
+
+The image ships lean, and a fair number of the small programs you reach for
+are not in it. This is what a fresh container has, and what to type when it
+does not:
+
+| For | Already there | Worth adding |
 |---|---|---|
-| `nano` | yes | |
-| `vim` `vi` | **no** | `apt install vim`, or `app-setup install vim` |
-| `curl` `less` | yes | |
-| `wget` `unzip` `xz` `bzip2` | no | `app-setup install essentials` |
-| `ping` `ip` `ss` | yes | |
-| `dig` `traceroute` `mtr` `tcpdump` `netstat` | no | `app-setup install nettools` |
-| `htop` | no | `apt install htop`, or `app-setup install htop` |
-| `git` | no | `apt install git`, or `app-setup install git` |
-| `bash` `sudo` `cron` | yes | |
+| Editing a file | `nano` | `vim` — `app-setup install vim` |
+| Reading and searching | `less` `grep` `find` `awk` `sed` `tail` `watch` | |
+| Archives | `tar` `gzip` | `unzip` `xz` `bzip2` — `app-setup install essentials`; `zip` — `apt install zip` |
+| Downloading | `curl` | `wget` — same card |
+| Network trouble | `ping` `ip` `ss` `openssl` | `dig` `netstat` `traceroute` `mtr` `tcpdump` — `app-setup install nettools` |
+| Processes and usage | `top` `ps` `free` `df` `du` `pkill` | `htop` `ncdu` `atop` — `app-setup install htop` |
+| Reaching another box | `ssh` `scp` `sftp` | `rsync` — `app-setup install rsync` |
+| Building things | | `git` `make` `gcc` — `app-setup install git`, then `buildtools` |
+| A session that survives a dropped SSH | | `tmux` or `screen` — `app-setup install tmux` |
+| Shell | `bash` `sudo` `cron` `crontab` | `zsh` + Oh My Zsh — `app-setup install zsh` |
+
+**There is no `vi` at all**, not even a small one — the image ships `nano` and
+nothing else, so the muscle memory of typing `vi somefile` gets you *command
+not found*. `apt install vim` is the fix, and it is the first thing many
+people do here.
 
 The two cards worth installing on any container you plan to live in:
 
@@ -183,7 +216,7 @@ app-setup install nettools     # ping dig traceroute mtr tcpdump netstat ss
 
 ---
 
-## 3. Services
+## 4. Services
 
 systemd is PID 1 here, so this is the ordinary thing you already know:
 
@@ -287,7 +320,7 @@ anything you run. Ignore them.
 
 ---
 
-## 4. Logs
+## 5. Logs
 
 Everything goes to the journal, and `journalctl` is how you read it:
 
@@ -324,7 +357,7 @@ systemd catch it, and read it with `journalctl -u`.
 
 ---
 
-## 5. Processes, memory, disk
+## 6. Processes, memory, disk
 
 ```sh
 top                     # interactive; `q` quits
@@ -347,11 +380,11 @@ because the kernel has no per-container one; and `%CPU` in `top` is against
 your own cores.
 
 For what the container cannot see on its own — traffic against the quota,
-expiry, domains, public ports — type `dashboard` (§7).
+expiry, domains, public ports — type `dashboard` (§8).
 
 ---
 
-## 6. Putting a website on the internet
+## 7. Putting a website on the internet
 
 ### There is no firewall, and you do not need one
 
@@ -447,7 +480,7 @@ config leaves the old one running rather than taking your site down.
 
 ---
 
-## 7. Traffic, limits and expiry, from inside
+## 8. Traffic, limits and expiry, from inside
 
 ```sh
 dashboard              # everything: box, cpu, memory, disk, traffic,
@@ -496,7 +529,7 @@ one as plain text.
 
 ---
 
-## 8. `/data`, and reinstalling
+## 9. `/data`, and reinstalling
 
 **`/data` is the part that survives.** Everything else is the image plus your
 changes to it, and a reinstall replaces exactly that. Databases, uploads,

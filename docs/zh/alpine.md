@@ -109,10 +109,11 @@ ssh-keygen -lf ~/.ssh/id_ed25519.pub  # 面板回显的那串 SHA256:…
 
 ---
 
-## 3. `apk`，一屏讲完
+## 3. 包管理
 
-`apk` 比 `apt` 快，也短。索引已经替你取好了 —— 开机时有个任务会刷新它，
-每天最多一次 —— 所以你第一次登录进来直接 `apk add nginx` 就能装上。
+`apk` 是 Alpine 的包管理器，比 `apt` 快，也短。索引已经替你取好了 ——
+开机时有个任务会刷新它，每天最多一次 —— 所以你第一次登录进来直接
+`apk add nginx` 就能装上。
 
 | 你要做的 | Alpine | （Debian 对照） |
 |---|---|---|
@@ -144,6 +145,32 @@ ssh-keygen -lf ~/.ssh/id_ed25519.pub  # 面板回显的那串 SHA256:…
 
 **`--no-cache` 是给 Dockerfile 用的，不是给你用的。** 它跳过把索引写到硬盘，
 构建镜像时是赚的，住在里面时是小亏。在提示符下你要的就是普通的 `apk add`。
+
+### 装完之后：跑起来，以及开机自启
+
+装上不等于跑起来，跑起来也不等于重启之后还在。这里是三条分开的命令：
+
+```sh
+apk add nginx                 # 装
+rc-service nginx start        # 现在跑起来
+rc-update add nginx default   # 每次开机都跑
+```
+
+**后两条不是一条。** systemd 把它们合成了 `systemctl enable --now`，
+OpenRC 没有：启动一个服务不会把它加进 runlevel，把它加进 runlevel
+也不会让它现在就跑。「装好了、也在跑」的东西重启一次就没了，
+绝大多数是栽在这里。
+
+两边分别怎么查：
+
+```sh
+rc-service nginx status    # 现在跑没跑
+rc-update show default     # 开机会起来哪些
+```
+
+`app-setup` 装东西时两件事都替你做了，所以从菜单里装的包，
+装完就在跑，也已经在 runlevel 里。完整的服务那一章是第 6 节 ——
+停止、取消自启、以及自己写一个。
 
 ---
 
@@ -198,28 +225,28 @@ packages    apk
 
 ---
 
-## 5. 编辑器，以及其它你以为一定有的东西
+## 5. 常用工具
 
-镜像是刻意做小的，所以你第一时间去摸的东西有些不在里面：
+镜像是刻意做小的。但你要用的东西大部分还是在的 —— busybox 用很少的硬盘
+带了一大堆小程序。下面是一个全新容器里有什么，以及没有的怎么补：
 
-| | 自带 | 怎么拿到 |
+| 用来 | 已经有 | 值得再装 |
 |---|---|---|
-| `vi` | 有 —— busybox 的，简陋但能用 | |
-| `nano` | 有 | |
-| `vim` | 没有 | `apk add vim`，或 `app-setup install vim` |
-| `curl` `wget` `less` | 有 | |
-| `tar` `gzip` `bzip2` `unzip` | 有 —— busybox 的 | |
-| `xz` | 没有 | `app-setup install essentials` |
-| `ping` `ip` `ss` `netstat` | 有 | |
-| `dig` `traceroute` `mtr` `tcpdump` | 没有 | `app-setup install nettools` |
-| `htop` | 没有 | `apk add htop`，或 `app-setup install htop` |
-| `git` | 没有 | `apk add git`，或 `app-setup install git` |
-| `bash` | 有，而且它就是你的登录 shell | |
-| `sudo` | 有 | |
+| 改文件 | `vi`（busybox 的）、`nano` | `vim` —— `app-setup install vim` |
+| 看和找 | `less` `grep` `find` `awk` `sed` `tail` `watch` `xxd` | |
+| 压缩解压 | `tar` `gzip` `bzip2` `unzip` | `xz` —— `app-setup install essentials`；`zip` —— `apk add zip` |
+| 下载 | `curl` `wget` | |
+| 查网络 | `ping` `ip` `ss` `netstat` `nslookup` `traceroute` `nc` | `dig` `mtr` `tcpdump` —— `app-setup install nettools` |
+| 看进程和占用 | `top` `ps` `free` `df` `du` `lsof` `killall` `tree` | `htop` `ncdu` `atop` —— `app-setup install htop` |
+| 连到别的机器 | `ssh` `scp` `sftp` | `rsync` —— `app-setup install rsync` |
+| 编译东西 | | `git` `make` `gcc` —— `app-setup install git`，再 `buildtools` |
+| 断线不丢的会话 | | `tmux` 或 `screen` —— `app-setup install tmux` |
+| shell | `bash`（就是你的登录 shell）、`sudo`、`crontab` | `zsh` + Oh My Zsh —— `app-setup install zsh` |
 
 这张表里有好几行 Alpine 反而比 Debian 强，这不是大家对「更小的镜像」的预期：
-busybox 把 `vi`、`unzip`、`bzip2`、`netstat` 都做成了 applet，一个才几 KB，
-而 Debian 镜像这四个一个都没有。
+busybox 把 `vi`、`wget`、`unzip`、`bzip2`、`netstat`、`nslookup`、
+`traceroute`、`nc`、`killall`、`lsof`、`tree` 都做成了 applet，一个才几 KB，
+而 Debian 镜像这十一个一个都没有。
 
 任何你打算长住的容器，这两张卡都值得先装上：
 
@@ -228,8 +255,16 @@ app-setup install essentials   # curl wget unzip tar xz bzip2 less procps-ng
 app-setup install nettools     # ping dig traceroute mtr tcpdump netstat ss
 ```
 
-`vi` 是 busybox 的这一点最让人措手不及。它能开、能改、能存；没有语法高亮，
-没有分屏，命令集小得多。你敲 `vim` 得到 *not found*，原因就在这儿。
+有两行带着坑，值得先知道：
+
+- **`vi` 是 busybox 的。** 它能开、能改、能存；没有语法高亮，没有分屏，
+  命令集小得多。你敲 `vim` 得到 *not found*，原因就在这儿。
+- **busybox 的 applet 认的参数比真程序少。** 常用的都在 ——
+  `netstat -tlnp` 打出来的就是你预期的那样 —— 但你从某篇博客上抄来的
+  冷门参数可能根本不存在。`ps`、`top`、`free`、`watch` 是例外：
+  镜像为这几个装了真正的 `procps-ng`，所以 `ps aux` 和 `ps -ef --forest`
+  和别处一模一样。哪个工具不认参数了，在这里 `<工具> --help` 很短，
+  读一遍比猜快。
 
 ---
 
@@ -257,14 +292,9 @@ app-setup install nettools     # ping dig traceroute mtr tcpdump netstat ss
 `/etc/init.d/nginx restart` 也行，和 `rc-service` 是同一件事。
 这里没有 `service` 命令，那是 Debian 的。
 
-**在 Alpine 上「启动」和「开机自启」是两件事**，systemd 把它们合成了
-`enable --now`。启动它不会让它重启后还在，把它加进 runlevel 也不会让它现在就跑。
-两条都要：
-
-```sh
-rc-service nginx start
-rc-update add nginx default
-```
+像第 3 节说的：**「启动」和「开机自启」在这里是两件事**，
+systemd 把它们合成了 `enable --now`。凡是你打算留着的服务，
+启动的同时顺手把它加进 runlevel。
 
 ### 看盘
 
