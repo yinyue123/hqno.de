@@ -485,33 +485,100 @@ rc-update add local default      # 只需一次 —— `local` 默认不在任�
 | `/var/log/apk.log` | 你装过卸过的每一个包，带时间 |
 | `/var/log/<服务>/` | 服务自己写的，比如 `nginx/access.log`、`nginx/error.log` |
 | `/var/log/<名字>.log` | 你自己写的服务的 `output_log`（第 6 节） |
+| `/var/log/<名字>.log-20260825-021500.gz` | 昨天那份，以及再往前六天 |
 
 ```sh
 tail -f /var/log/messages           # 跟着系统日志
 grep -i error /var/log/messages     # 第一件该试的事
 tail -100 /var/log/rc.log           # 某个服务开机没起来的原因
 logger "我自己的一行"                # 从脚本里往里写
+zcat /var/log/myapp.log-2026*.gz | grep -i error    # 在前几天的日志里翻
 ```
 
-`logrotate` 装了，也从 cron 里跑，所以这些不会撑爆你的硬盘限额。
-但你自己加的服务不会被轮转，除非你往 `/etc/logrotate.d/` 里丢一个文件。
-在小容器上，这件事值得在你加服务那天做，而不是硬盘满那天：
+### 日志是自动切的
+
+一个每来一个请求就写一行的程序，能把容器的硬盘写满，而硬盘一满，上面所有东西
+都停。所以镜像里带了一条规则，`crond` 每天 02:00 跑一次 `logrotate`：
+
+```
+/var/log/*.log
+/var/log/messages {
+	daily            rotate 7            # 留一周，之后就没了
+	compress         copytruncate
+}
+```
+
+**故意用通配符**：你明天加的服务，只要像别人一样写 `/var/log/<名字>.log`，
+出现那天就自动被切 —— 不用写文件，也不用记着这回事。规则本身在
+`/etc/logrotate.d/hqnode`，想改成留几天或者别的时间就改它。
+
+用 `copytruncate` 而不是常规的「改名 + 建新的」，是因为被照看的程序会一直开着
+自己的日志文件、永远不会重开：文件在它脚底下被改了名，它就继续往老文件里写 ——
+新文件永远是空的，硬盘照样满，只不过满在一个你已经不看的文件上。
+
+想看它会干什么，或者让它立刻干：
 
 ```sh
+logrotate -d /etc/logrotate.conf    # 空跑：会切哪些，有没有报错
+logrotate -f /etc/logrotate.conf    # 立刻切一次
+```
+
+### 哪些不在里面 —— 这才是会咬人的部分
+
+**日志写在别处的程序。** 通配符只管 `/var/log/*.log`，仅此而已。一个往
+`/app/logs/app.log`、`~/output.log` 或者自己目录里写的程序，没有任何东西在切它，
+而这正是硬盘被写满最常见的原因。两个办法，第一个更好：
+
+```sh
+# 1. 让它跟别人写到一块儿去 —— 在服务脚本里（第 6 节）：
+output_log="/var/log/myapp.log"
+error_log="/var/log/myapp.log"
+
+# 2. 它非要写自己的路径，那就给那个路径加一条规则：
 cat > /etc/logrotate.d/myapp <<'EOF'
-/var/log/myapp.log {
-	weekly
-	rotate 4
+/app/logs/*.log {
+	daily
+	rotate 7
 	compress
 	missingok
 	notifempty
 	copytruncate
 }
 EOF
+logrotate -d /etc/logrotate.conf    # 先验一遍再信它
 ```
 
-用 `copytruncate` 而不是 `create`，因为被 OpenRC 照看的程序会一直开着自己的
-日志文件，收到信号也不会重开它。
+**子目录。** `/var/log/nginx/*.log` 也不在通配符里 —— 用目录的那些软件包自己带
+规则，nginx 就是个例子。
+
+**不要给已经在 `/var/log/*.log` 里的文件再写一条规则。** logrotate 不接受同一个
+文件被两条规则收，而且它不是只跳过重复那条 —— 它**把发现重复的那整个文件跳过**，
+整次运行的退出码还是非 0：
+
+```
+error: myapp:1 duplicate log entry for /var/log/myapp.log
+error: found error in file myapp, skipping
+```
+
+而每天那个外壳脚本会把非 0 的运行报进 syslog，写成 `ALERT exited abnormally` ——
+于是你每晚收到一条抱怨，为的是一条本来就不需要的规则。`/var/log/*.log` 底下的
+东西已经有人管了。
+
+### 硬盘已经在满的时候
+
+```sh
+df -h /                             # 到底多严重
+du -sh /var/log/* | sort -h | tail  # 最大的几个日志
+du -xsh /* 2>/dev/null | sort -h | tail   # 或者根本不是日志的锅
+```
+
+要从一个**正在被程序写着**的文件里把空间拿回来，**清空它，别删它**：
+
+```sh
+: > /var/log/greedy.log             # 对：空间立刻回来
+rm /var/log/greedy.log              # 错：程序还攥着那个 fd，空间要等它重启
+                                    # 才回来，而且这期间它的输出全丢了
+```
 
 ---
 

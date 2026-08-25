@@ -524,34 +524,107 @@ either a relief or a nuisance depending on where you came from.
 | `/var/log/apk.log` | every package you have installed or removed, with timestamps |
 | `/var/log/<service>/` | what that service writes itself — `nginx/access.log`, `nginx/error.log` |
 | `/var/log/<name>.log` | the `output_log` of a service you wrote (§6) |
+| `/var/log/<name>.log-20260825-021500.gz` | yesterday's, and the six days before it |
 
 ```sh
 tail -f /var/log/messages           # follow the system log
 grep -i error /var/log/messages     # the first thing to try
 tail -100 /var/log/rc.log           # why a service did not come up at boot
 logger "a line of my own"           # write into it from a script
+zcat /var/log/myapp.log-2026*.gz | grep -i error    # the same, in last week's
 ```
 
-`logrotate` is installed and runs from cron, so these do not grow into your
-disk quota. A service you add yourself is not rotated unless you drop a file
-into `/etc/logrotate.d/` for it — on a small container that is worth doing the
-day you add it, not the day the disk fills:
+### They are cut for you
+
+A program that writes a line per request will fill a container's disk, and a
+full disk stops everything on it. So the image ships a rule and `crond` runs
+`logrotate` at 02:00:
+
+```
+/var/log/*.log
+/var/log/messages {
+	daily            rotate 7            # a week, then it is gone
+	compress         copytruncate
+}
+```
+
+It is a **glob on purpose**: a service you add tomorrow writes
+`/var/log/<name>.log` like everything else and is cut from the day it appears,
+with nothing to write and nothing to remember. `/etc/logrotate.d/hqnode` is the
+file, if you want to change the seven days or the schedule.
+
+`copytruncate` rather than the usual rename-and-create, because a supervised
+program holds its log file open and never reopens it: renamed out from under
+it, it goes on writing into the old file — the new one stays empty forever and
+the disk fills anyway, from a file you are no longer looking at.
+
+To see what it would do, or to make it do it now:
 
 ```sh
+logrotate -d /etc/logrotate.conf    # dry run: what it would cut, and any errors
+logrotate -f /etc/logrotate.conf    # do it now
+```
+
+### What is not covered, which is the part that bites
+
+**A program that logs somewhere else.** The glob is `/var/log/*.log` and
+nothing more. Something writing to `/app/logs/app.log`, `~/output.log`, or its
+own directory is not cut by anything, and that is the usual way a disk fills.
+Two fixes, and the first is better:
+
+```sh
+# 1. make it log where everything else does — in a service script (§6):
+output_log="/var/log/myapp.log"
+error_log="/var/log/myapp.log"
+
+# 2. or, if it insists on its own path, give that path a rule:
 cat > /etc/logrotate.d/myapp <<'EOF'
-/var/log/myapp.log {
-	weekly
-	rotate 4
+/app/logs/*.log {
+	daily
+	rotate 7
 	compress
 	missingok
 	notifempty
 	copytruncate
 }
 EOF
+logrotate -d /etc/logrotate.conf    # check it before trusting it
 ```
 
-`copytruncate` rather than `create` because an OpenRC-supervised program holds
-its log file open and will not reopen it on a signal.
+**Subdirectories.** `/var/log/nginx/*.log` is not in the glob either — packages
+that use a directory ship their own rule for it, and nginx's is a good example.
+
+**Do not write a rule for a file that is already inside `/var/log/*.log`.**
+logrotate refuses a file claimed by two rules, and it does not just skip the
+duplicate — it skips **the whole file it found it in** and the run exits
+non-zero:
+
+```
+error: myapp:1 duplicate log entry for /var/log/myapp.log
+error: found error in file myapp, skipping
+```
+
+Since the daily wrapper reports a non-zero run into syslog as `ALERT exited
+abnormally`, you get a complaint every night for a rule that was not needed in
+the first place. Anything under `/var/log/*.log` is already handled.
+
+### When the disk is already filling
+
+```sh
+df -h /                             # how bad it is
+du -sh /var/log/* | sort -h | tail  # the biggest logs
+du -xsh /* 2>/dev/null | sort -h | tail   # or it is not the logs at all
+```
+
+To reclaim space from a file a running program is writing, **empty it, do not
+delete it**:
+
+```sh
+: > /var/log/greedy.log             # right: the space comes back at once
+rm /var/log/greedy.log              # wrong: the program still holds the fd,
+                                    # the space stays gone until it restarts,
+                                    # and its output goes nowhere
+```
 
 ---
 
