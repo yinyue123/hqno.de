@@ -82,6 +82,73 @@ RUN set -eux; \
     rc-update add crond default; \
     rc-update add syslog boot
 
+# Something has to cut the logs, and nothing did.
+#
+# The binary is installed (see the apk list) and crond runs
+# /etc/periodic/daily/logrotate at 02:00 — what was missing is a rule matching
+# anything this image's model produces. Two things write to /var/log here and
+# neither was covered:
+#
+#   /var/log/<service>.log   OpenRC's supervise-daemon redirects a service's
+#                            stdout and stderr into one of these. Every image
+#                            built on this one does it, because that is what
+#                            `supervisor=supervise-daemon` means — and an app
+#                            that logs a line per connection fills a holder's
+#                            disk quota in days.
+#   /var/log/messages        busybox syslogd's, and SYSLOGD_OPTS is "-t" with
+#                            no -s or -b, so it never rotated either. The
+#                            supervisor's own events are in there: what was
+#                            started, stopped, signalled, respawned.
+#
+# A glob rather than a list, deliberately: an image built on this one adds
+# services this file has never heard of, and they are covered the day they
+# appear. /var/log/nginx/*.log and friends are left to the packages that ship
+# them — a subdirectory does not collide with this glob.
+#
+# The three settings that are not taste:
+#
+#   copytruncate   supervise-daemon holds each file open and never reopens it.
+#                  The default — rename, create a new one — leaves it writing
+#                  into the renamed inode: the new file empty forever, the old
+#                  one still growing where nobody looks. The opposite risk, a
+#                  daemon whose fd is not O_APPEND writing at its old offset
+#                  into a sparse hole, was checked on a running node rather
+#                  than assumed.
+#   dateformat     the global logrotate.conf says `dateext`, whose names are
+#                  accurate to the day, so a second rotation on the same date
+#                  fails with "destination … already exists" — and one failing
+#                  rule takes the whole 02:00 run's exit code with it, which
+#                  /etc/periodic/daily/logrotate reports into syslog as
+#                  "ALERT exited abnormally". With the time in the name two
+#                  forced rotations two seconds apart both exit 0.
+#   daily/7        against the global weekly/4. A container's disk is a quota
+#                  someone paid for, and a week of daily files is what you want
+#                  when something broke on Tuesday.
+#
+# The distro's own two rules go for the same exit-code reason: logrotate
+# refuses a file claimed twice — `duplicate log entry for /var/log/rc.log` —
+# and skips the whole file it found that in. Both name files this glob already
+# covers.
+RUN set -eux; \
+    printf '%s\n' \
+      '/var/log/*.log' \
+      '/var/log/messages {' \
+      '	daily' \
+      '	dateformat -%Y%m%d-%H%M%S' \
+      '	rotate 7' \
+      '	compress' \
+      '	delaycompress' \
+      '	missingok' \
+      '	notifempty' \
+      '	copytruncate' \
+      '}' \
+      > /etc/logrotate.d/hqnode; \
+    chmod 0644 /etc/logrotate.d/hqnode; \
+    rm -f /etc/logrotate.d/acpid /etc/logrotate.d/openrc; \
+    # A rule logrotate cannot parse, or one that duplicates another, does
+    # nothing at 02:00 and says so only in syslog. It says so here instead.
+    logrotate -d /etc/logrotate.conf >/dev/null
+
 # There is no sshd here, so there is nothing to generate host keys for and no
 # `sshd-keygen` service any more. Both went with it, and this comment is what
 # is left of them: a container that grows one later (`apk add openssh`) gets
