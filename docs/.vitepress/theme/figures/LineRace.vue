@@ -52,6 +52,8 @@ const props = withDefaults(
     /** and when something was — `{n}` is the count */
     lost?: string;
     sec?: string;
+    /** the outcome, in what a visitor would actually notice */
+    verdict?: string;
     note?: string;
     replay?: string;
     alt?: string;
@@ -65,6 +67,7 @@ const props = withDefaults(
     clean: 'nothing lost',
     lost: '{n} pieces lost',
     sec: 's',
+    verdict: 'the upper line streams 4K without pausing; the lower one cannot open a page at 9pm',
     note: 'a lost piece has to be sent again — which is why the lower one is not merely slower',
     replay: 'play again',
     alt: 'Two lines carrying the same page. On the optimised line the pieces pass straight through the gateway and the page finishes in about two and a half seconds. On the ordinary line they pile up behind the gateway, some are dropped and have to be sent again, and the page takes more than twice as long.',
@@ -74,7 +77,7 @@ const props = withDefaults(
 /* ── the frame ────────────────────────────────────────────────────────── */
 
 const W = 660;
-const H = 230;
+const H = 248;
 const X0 = 166; // where a piece leaves the machine
 const GATE = 300;
 const X1 = 436; // where it reaches the visitor
@@ -365,7 +368,8 @@ onBeforeUnmount(() => {
         <circle v-for="n in POOL" :key="n" class="ink" cx="-20" :cy="CYB" r="4.5" opacity="0" />
       </g>
 
-      <text class="s" x="14" :y="H - 8">{{ note }}</text>
+      <text class="t" x="14" y="220">{{ verdict }}</text>
+      <text class="s" x="14" y="238">{{ note }}</text>
     </svg>
     <button class="race-btn" type="button" @click="replayNow">{{ replay }}</button>
   </div>

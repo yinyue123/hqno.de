@@ -12,19 +12,28 @@ is what a visitor in China gets:
   clean="nothing lost"
   lost="{n} pieces lost"
   sec="s"
+  verdict="the upper line streams 4K without a pause; the lower one cannot open a page at all at 9pm"
   note="a lost piece has to be sent again — which is why the lower one is not merely slower"
   replay="play again"
   alt="Two lines carrying the same page. On the optimised line the pieces pass straight through the gateway and the page finishes in about two and a half seconds, losing nothing. On the ordinary line they pile up behind the gateway, the ones that no longer fit are dropped and have to be sent again, and the page takes more than twice as long."
 />
 
 The quick one is a **three-network optimised** line; the other is an ordinary
-one. Same hardware, same cable out of the rack, same distance to the visitor.
-The whole difference is that one door in the middle.
+one. Same hardware, same cable out of the rack, same distance to the visitor —
+the only difference is that one door in the middle.
+
+Here is what that door is worth to a customer of yours in China:
+
+| The same site | optimised | ordinary |
+|---|---|---|
+| **Daytime** | opens at once | usable, a bit slow |
+| **8pm to midnight** | still opens at once. 4K video seeks anywhere and plays through | images stall half-loaded, pages spin until they time out — the site simply does not open |
+
+And 8pm to midnight is when people shop.
 
 Which is the problem with selling to both sides of the world: no single machine
 is good at both. The ones that are fast into China are small and expensive, and
-the ones that are big and cheap are the lower line — they crawl at exactly the
-hours people shop.
+the ones that are big and cheap are the lower line.
 
 **So rent two, and put the small fast one in front.** That is the whole idea,
 and the rest of this page is why it works and how to build it.
