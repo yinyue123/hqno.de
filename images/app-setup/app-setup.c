@@ -2852,6 +2852,35 @@ static void screen_progress(Pkg *p, const char *verb, const char *title_override
 				snprintf(msg, sizeof msg, S(T_FAILED), pkg_name(p), r.rc, logpath);
 			}
 			message(S(T_BROKEN), msg);
+		} else if (title_override && *title_override && r.nlog) {
+			/* A `# action:` button is pressed to be *told* something —
+			 * Test the origin, Refresh, Back up now. Its answer is what it
+			 * printed, and this screen breaks the instant the child exits, so
+			 * on a verb that takes half a second the output goes past in a
+			 * flash and a box says it is in a file. That is the whole button
+			 * wasted: somebody pressed "Test the origin" and got a path to go
+			 * and read instead of an answer. Page what it said, the way
+			 * `# button:` verbs have always been paged.
+			 *
+			 * Install and the service verbs keep the one-line box: their answer
+			 * really is "it finished", and their output is five hundred lines
+			 * of a package manager. */
+			char out[16384];
+			size_t n = 0, room = sizeof out - 200;
+			int i = r.nlog;
+			/* Backwards for the first line to keep, so a long scan is trimmed
+			 * at the front rather than at the verdict. */
+			while (i > 0) {
+				size_t len = strlen(runner_line(&r, i - 1)) + 1;
+				if (n + len > room) break;
+				n += len; i--;
+			}
+			n = 0;
+			for (; i < r.nlog; i++)
+				n += (size_t)snprintf(out + n, sizeof out - n, "%s\n",
+				                      runner_line(&r, i));
+			snprintf(out + n, sizeof out - n, "\n%s\n", logpath);
+			pager(title, out);
 		} else {
 			snprintf(msg, sizeof msg, S(T_FINISHED), title, logpath);
 			message(S(T_DONE), msg);
