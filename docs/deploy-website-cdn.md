@@ -471,6 +471,32 @@ If that is not a `200`, stop here. Nothing downstream can be right.
 
 ### Step 4 — nginx on the front node
 
+**The short way, if you would rather not type eighty lines.** app-setup has
+this whole step as one entry — `cdn`, on the Web servers tab. Install it, and
+fill in three fields:
+
+```sh
+app-setup install cdn
+```
+
+| Field | Here |
+|---|---|
+| Origin | `origin.example.com` |
+| Origin port | `443` |
+| Domain on this node | `www.example.com,example.com` |
+
+It writes the same file this section writes, from those answers. It caches
+files only — images, video, styles, scripts — and passes every page, PHP file
+and API call straight through, which is the setting nothing private can leak
+through; turning on page caching is a second, deliberate decision and
+`app-setup docs cdn` says what to check first. The file it writes ends in eight
+worked examples, commented out: never caching an API, slicing video for
+seeking, WordPress and WooCommerce, hotlink protection.
+
+The rest of this section is that same config written by hand. It is worth
+reading once whichever way you got it — everything that goes wrong in §10 is
+one of these lines.
+
 In the front node's container:
 
 ```sh
