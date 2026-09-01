@@ -174,6 +174,16 @@ static const L T_FINISHED  = {"%s finished. The full output is in %s",
                              "%s 完成了。完整输出在 %s"};
 static const L T_FAILED    = {"%s failed — exit %d. The log is %s",
                              "%s 失败，退出码 %d。日志在 %s"};
+/* The same dialog, for the common case where the recipe said why before it
+ * gave up. `die` is the last thing most failures print, and it is already a
+ * whole sentence aimed at the person reading it — "no origin yet. Open
+ * Settings and type the domain or IP of the machine your website is on."
+ * Leaving that in the log and showing only an exit code turns a recipe's own
+ * instruction into a dead end: the box says something went wrong, and the one
+ * thing that would fix it is three commands away. The log path stays, because
+ * the sentence is rarely the whole story. */
+static const L T_FAILEDWHY = {"%s failed — %s\n\nExit %d. The full log is %s",
+                             "%s 失败了 —— %s\n\n退出码 %d，完整日志在 %s"};
 static const L T_VERB_INS  = {"Installing %s", "正在安装 %s"};
 static const L T_VERB_REM  = {"Uninstalling %s", "正在卸载 %s"};
 static const L T_VERB_STA  = {"Starting %s", "正在启动 %s"};
@@ -2418,6 +2428,28 @@ static const char *runner_line(const Runner *r, int i)
 	return r->log[(r->logtop + i) % LOG_KEEP];
 }
 
+/* The last thing the recipe said before it stopped. common.sh's `err` and
+ * `die` both print "  x  <sentence>", and runner_line_in has already stripped
+ * the escapes and the indent, so the stored line begins with the x. Searching
+ * backwards finds the `die` rather than an earlier `err` the script recovered
+ * from.
+ *
+ * NULL when nothing in the ring has that shape — a recipe that fell over
+ * inside apt says nothing in it, and the plain exit-code dialog is then the
+ * honest thing to show. */
+static const char *runner_last_error(const Runner *r)
+{
+	for (int i = r->nlog - 1; i >= 0; i--) {
+		const char *l = runner_line(r, i);
+		while (*l == ' ' || *l == '\t') l++;
+		if (*l != 'x' || (l[1] != ' ' && l[1] != '\t')) continue;
+		l++;
+		while (*l == ' ' || *l == '\t') l++;
+		if (*l) return l;
+	}
+	return NULL;
+}
+
 /* Recipes only colour when stdout is a terminal, and here it is a pipe — but a
  * package manager underneath may not be so careful, and an escape sequence
  * rendered as literal bytes wrecks the pane. */
@@ -2782,10 +2814,19 @@ static void screen_progress(Pkg *p, const char *verb, const char *title_override
 	if (r.fd >= 0) close(r.fd);
 
 	{
-		char msg[700], logpath[600];
+		char msg[900], logpath[600];
 		snprintf(logpath, sizeof logpath, "%s/%s.log", log_dir(), p->id);
 		if (r.rc != 0) {
-			snprintf(msg, sizeof msg, S(T_FAILED), pkg_name(p), r.rc, logpath);
+			const char *why = runner_last_error(&r);
+			if (why) {
+				/* Trimmed to what the box can hold without pushing the log
+				 * path off the bottom — message() wraps to eight lines. */
+				char cut[400];
+				u8ellipsis(cut, sizeof cut, why, 200);
+				snprintf(msg, sizeof msg, S(T_FAILEDWHY), pkg_name(p), cut, r.rc, logpath);
+			} else {
+				snprintf(msg, sizeof msg, S(T_FAILED), pkg_name(p), r.rc, logpath);
+			}
 			message(S(T_BROKEN), msg);
 		} else {
 			snprintf(msg, sizeof msg, S(T_FINISHED), title, logpath);
