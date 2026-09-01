@@ -19,7 +19,7 @@
 # action: origin | test   | ✓ Test the origin | ✓ 测试源站
 # param: port    | 80     | Origin port | 源站端口 | number
 # param: cache   | static | What to cache | 缓存哪些内容 | static,site,off
-# param: domain  |        | Domain on this node (blank = any) | 本机域名（留空＝全部）
+# param: domain  |        | Domain here (blank = any) | 本机域名（留空＝全部）
 # group: adv | Advanced | 高级 | collapsed
 # param: proto   | auto   | Origin protocol | 回源协议 | auto,http,https
 # param: listen  | 80     | Listen on | 本机监听端口 | number
@@ -72,6 +72,20 @@
 SERVICE="nginx"
 
 CDN_EXTRA=/etc/nginx/cdn.d
+
+# Run from a shell rather than from app-setup, `test` and `purge` have to act
+# on the node as it is actually configured. `sh cdn.sh test` answering "no
+# origin yet" while nginx is happily proxying is a confusing answer, and an
+# "empty the cache" that empties a directory nginx is not using would be worse
+# than having no command at all.
+#
+# app-setup exports APP_SETUP for every recipe it runs, and hands over the
+# form's *live* values with it — including edits somebody has typed but not
+# saved. So the saved file is read only when nothing ran us: it fills a gap,
+# and it never overrides what the form is holding. The header defaults still
+# apply on a machine where the form has never been opened, which is what the
+# authoring contract asks for.
+[ -n "${APP_SETUP-}" ] || param_export cdn
 
 # The two long defaults, repeated from the `# param:` lines above. Giving the
 # default twice is what the authoring contract asks for and it is not
@@ -356,7 +370,8 @@ EOF
     # to it. Both directions, because either one alone is the same bug.
     proxy_cache_bypass \$cdn_private \$http_authorization;
     proxy_no_cache     \$cdn_private \$http_authorization;
-    # HIT / MISS / BYPASS / EXPIRED / STALE. The one header worth curling for.
+    # HIT / MISS / BYPASS / EXPIRED / STALE — and OFF, from the locations
+    # below that never cache. The one header worth curling for.
     add_header X-Cache \$upstream_cache_status always;
 
     # Yours, and never rewritten. A prefix or regex location in here wins over
@@ -373,6 +388,7 @@ EOF
     location / {
         proxy_pass $_pp;
         proxy_cache off;
+        add_header X-Cache OFF always;
     }
 }
 EOF
@@ -385,6 +401,11 @@ EOF
     location ~* ($_nocache) {
         proxy_pass $_pp;
         proxy_cache off;
+        # Without this the response carries no X-Cache at all — nginx drops an
+        # add_header whose value is empty, and \$upstream_cache_status is empty
+        # when the cache was never consulted. "OFF" is the difference between
+        # "deliberately not cached" and "did my config even load".
+        add_header X-Cache OFF always;
     }
 EOF
 		fi
@@ -423,6 +444,7 @@ EOF
     location / {
         proxy_pass $_pp;
         proxy_cache off;
+        add_header X-Cache OFF always;
     }
 }
 EOF
@@ -430,6 +452,35 @@ EOF
 	fi
 
 	cdn_examples "$_pp" >> "$_f"
+}
+
+# Put the plain default site back — the one `install nginx` writes — when this
+# recipe is the thing that took it away and nothing else has claimed it since.
+# Without it nginx answers every request with whatever server block is left
+# over, and when there is none, with a 404 from no site at all. Two callers:
+# uninstall, and an install that nginx refused.
+cdn_default_site_back() {
+	have nginx || return 0
+	[ -f "$(nginx_conf_dir)/app-setup.conf" ] && return 0
+	default_site_holder >/dev/null && return 0
+	mkdir -p "$WEBROOT"
+	cat > "$(nginx_conf_dir)/app-setup.conf" <<EOF
+# written by app-setup — the plain default site, the same one \`install nginx\`
+# writes. The cdn recipe put it back when it stopped serving this address.
+server {
+    listen      80 default_server;
+    listen      [::]:80 default_server;
+    server_name _;
+    root        $WEBROOT;
+    index       index.html index.htm;
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+
+    location ~ /\\. { deny all; }
+}
+EOF
 }
 
 # The eight cases people actually arrive with. Written as comments, in the file
@@ -698,7 +749,7 @@ EOF
 # --------------------------------------------------------------- the verbs --
 
 do_install() {
-	local _o _cache
+	local _o _cache _prev _why
 	_o="$(cdn_origin)"
 	[ -n "$_o" ] || die "no origin yet. Open Settings and type the domain or IP of the machine your website is actually on."
 
@@ -743,14 +794,40 @@ do_install() {
 	fi
 
 	step "writing $(cdn_conf)"
+	_prev=""
+	if [ -f "$(cdn_conf)" ]; then _prev="$(cdn_conf).before"; cp "$(cdn_conf)" "$_prev"; fi
 	cdn_write_conf
 
 	step "checking the config and reloading"
 	svc_enable nginx
 	if nginx_test_reload; then
+		rm -f "$(cdn_conf).before"
 		svc_start nginx 2>/dev/null || true
 	else
-		die "nginx refused the generated config; nothing is being served. The file is $(cdn_conf) and the message above says which line."
+		# Back out, rather than leave a file nginx refuses sitting in the
+		# include directory. `nginx -t` failing is not only a failed reload:
+		# nginx will not *start* on that config either, so the next restart or
+		# reboot takes this container's whole web server with it — over a typo
+		# in one field of a form. Whatever was serving a moment ago goes on
+		# serving, and the settings are still saved for a second attempt.
+		#
+		# Two details that are not decoration. The complaint is read before the
+		# rollback, or it would be an answer about a file that no longer
+		# exists; and `|| true` is there because common.sh sets -e and this
+		# command has just failed by definition — without it the script dies on
+		# this line and none of the rolling back happens. The saved copy ends
+		# in .before rather than .conf, so nginx never includes it.
+		_why="$(nginx -t 2>&1)" || true
+		if [ -n "$_prev" ]; then mv "$_prev" "$(cdn_conf)"; else rm -f "$(cdn_conf)"; fi
+		cdn_default_site_back
+		nginx_test_reload >/dev/null 2>&1 || true
+		if printf '%s' "$_why" | grep -q 'host not found in upstream'; then
+			err "nginx cannot resolve the origin's name: $_o"
+			err "Either it is a typo, or its DNS record does not exist yet. An"
+			err "address works with no DNS at all — and is what §7 of"
+			err "deploy-website-cdn.md uses for exactly this reason."
+		fi
+		die "nginx refused the generated config, so nothing was changed. The message above says which line; the file was rolled back."
 	fi
 
 	ok "$(guess_host) is now in front of $(cdn_scheme)://$(cdn_authority)"
@@ -773,29 +850,7 @@ do_uninstall() {
 
 	rm -f "$(cdn_conf)"
 
-	# Put a default site back before reloading, or nginx on this container
-	# answers everything with whatever is left over — and if what is left over
-	# is nothing, with a 404 from no server block at all.
-	if have nginx && [ ! -f "$(nginx_conf_dir)/app-setup.conf" ] && ! default_site_holder >/dev/null; then
-		mkdir -p "$WEBROOT"
-		cat > "$(nginx_conf_dir)/app-setup.conf" <<EOF
-# written by app-setup when the cdn recipe was removed — the plain default
-# site, the same one \`install nginx\` writes.
-server {
-    listen      80 default_server;
-    listen      [::]:80 default_server;
-    server_name _;
-    root        $WEBROOT;
-    index       index.html index.htm;
-
-    location / {
-        try_files \$uri \$uri/ =404;
-    }
-
-    location ~ /\\. { deny all; }
-}
-EOF
-	fi
+	cdn_default_site_back
 	have nginx && { nginx_test_reload || true; }
 
 	_cache="$(cdn_cache)"
@@ -822,11 +877,14 @@ do_test() {
 	have curl || have wget || ensure_downloader
 
 	step "asking $_url for its front page, as $_host"
+	# An origin that does not answer is the whole point of this verb, and a
+	# curl that exits 7 under common.sh's `set -e` would take the script with
+	# it before a word of diagnosis is printed.
 	if have curl; then
-		_out="$(curl -sS -o /dev/null -D - -k -m 20 -H "Host: $_host" "$_url" 2>&1)"
+		_out="$(curl -sS -o /dev/null -D - -k -m 20 -H "Host: $_host" "$_url" 2>&1)" || true
 	else
 		_out="$(wget -S -O /dev/null --no-check-certificate -T 20 \
-		            --header="Host: $_host" "$_url" 2>&1 | sed 's/^  //')"
+		            --header="Host: $_host" "$_url" 2>&1 | sed 's/^  //')" || true
 	fi
 	_code="$(printf '%s\n' "$_out" | awk '/^HTTP\//{c=$2} END{print c}')"
 
@@ -879,20 +937,27 @@ do_test() {
 	for _i in 1 2; do
 		if have curl; then
 			_out="$(curl -sS -o /dev/null -D - -m 20 -H "Host: $_host" \
-			        "http://127.0.0.1:$(param listen 80)/" 2>&1)"
+			        "http://127.0.0.1:$(param listen 80)/" 2>&1)" || true
 		else
 			_out="$(wget -S -O /dev/null -T 20 --header="Host: $_host" \
-			        "http://127.0.0.1:$(param listen 80)/" 2>&1)"
+			        "http://127.0.0.1:$(param listen 80)/" 2>&1)" || true
 		fi
 		_hdr="$_hdr $(printf '%s\n' "$_out" | awk 'tolower($1)=="x-cache:"{print $2; exit}')"
 	done
 	info "X-Cache:$_hdr"
 	case "$_hdr" in
-		*HIT*)    ok "MISS then HIT is the whole thing working." ;;
-		*BYPASS*) info "BYPASS is correct for a page while \"What to cache\" is static — the"
-		          info "files are what gets cached. Check one: curl -sI http://127.0.0.1:$(param listen 80)/logo.png | grep -i x-cache" ;;
-		*)        info "ask for an image rather than the front page to see a HIT:"
-		          info "  curl -sI -H 'Host: $_host' http://127.0.0.1:$(param listen 80)/logo.png | grep -i x-cache" ;;
+		*HIT*)  ok "MISS then HIT is the whole thing working." ;;
+		# The ordinary answer in the default mode, and it is a pass, not a
+		# shrug: the node is serving and the front page is one of the things
+		# it deliberately does not keep.
+		*OFF*)  ok "OFF is right here: this node is serving, and a page is not"
+		        info "something it caches while \"What to cache\" is static. Ask it for"
+		        info "a file to see the shelf itself:"
+		        info "  curl -sI -H 'Host: $_host' http://127.0.0.1:$(param listen 80)/logo.png | grep -i x-cache" ;;
+		*BYPASS*) info "BYPASS means this request looked like a signed-in one — the cookie"
+		        info "map doing its job. Ask for a file to see a HIT." ;;
+		*)      info "ask for a file rather than the front page to see a HIT:"
+		        info "  curl -sI -H 'Host: $_host' http://127.0.0.1:$(param listen 80)/logo.png | grep -i x-cache" ;;
 	esac
 }
 
@@ -948,6 +1013,8 @@ CDN 前置缓存节点
     app-setup test cdn        测源站通不通，再看本机缓存有没有命中
     curl -sI http://127.0.0.1/logo.png | grep -i x-cache
     第一次 MISS、第二次 HIT，就对了。
+    页面和接口上这个头会是 OFF 或者 BYPASS，也是对的：OFF 是这条路径本来
+    就不缓存，BYPASS 是这个访客带着登录 Cookie。
 
   文件在哪
     $(cdn_conf)
@@ -1017,6 +1084,9 @@ CDN front node
     app-setup test cdn        the origin, then the shelf on this node
     curl -sI http://127.0.0.1/logo.png | grep -i x-cache
     MISS the first time and HIT the second is the whole thing working.
+    On a page or an API the same header says OFF or BYPASS, and that is this
+    working too: OFF means the path never caches, BYPASS means this visitor
+    is carrying a signed-in cookie.
 
   Where things are
     $(cdn_conf)
