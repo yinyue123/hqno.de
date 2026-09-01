@@ -179,18 +179,48 @@ the same few milliseconds, and neither is ever short of capacity out there.
   <text class="s" x="14" y="190">two thousand kilometres of it is fine. It is the last two hundred metres that is sold by the megabit.</text>
 </svg>
 
-Three things are being bought, and only the first is obvious:
+**The queue is at the last door.** Everything entering mainland China from
+outside crosses a gateway. Its capacity is fixed and the three carriers own it.
+An ordinary line queues for whatever is spare; a premium line has a share held
+for it however long the queue is.
 
-- **A share of the gateway.** The capacity into China is finite and the carriers
-  own it. An ordinary line joins the queue for whatever is spare; a premium one
-  has a slice held for it whether the queue is long or not.
-- **A route that does not wander.** An ordinary Hong Kong line can reach a
-  visitor 2,000 km away by going through the United States first, because that
-  was the cheapest transit the seller could buy. You pay for it in
-  milliseconds, every request.
-- **The return leg, specifically.** Getting traffic *out* of your machine is
-  easy and nobody charges much for it. Getting it back *in* to a Chinese visitor
-  along a good path is a product a carrier sells, and it is the expensive half.
+### And the road may not be straight
+
+A cheap Hong Kong line can send your data to the United States and bring it
+back to Shanghai. Not a small detour — about twenty times the distance.
+
+<svg class="fig" viewBox="0 0 660 272" role="img" aria-label="A sketch map: a direct route from Hong Kong to Shanghai is 1,200 km and about 40 ms, while an ordinary line may loop across the Pacific to Los Angeles and back, some 22,000 km and about 300 ms">
+  <defs><marker id="cd4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path class="ink" d="M0,0 L10,5 L0,10 z"/></marker>
+  <marker id="cd5" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path class="f-dot" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+  <text class="t" x="14" y="20">the same two points, two ways round</text>
+  <path class="box" d="M44,74 C52,50 92,38 138,42 C182,46 224,60 240,84 C252,102 250,128 236,148 C220,170 186,182 150,178 C108,173 66,152 50,124 C40,106 38,88 44,74 Z"/>
+  <path class="box" d="M470,86 C486,62 530,52 574,58 C614,64 640,86 636,114 C632,144 606,172 570,180 C534,188 494,176 476,152 C462,132 460,102 470,86 Z"/>
+  <text class="t c" x="140" y="70">mainland China</text>
+  <text class="t c" x="556" y="90">United States</text>
+  <circle class="f-dot" cx="234" cy="94" r="4"/>
+  <text class="s" x="228" y="98" text-anchor="end">Shanghai · your visitor</text>
+  <circle class="f-dot" cx="212" cy="166" r="4"/>
+  <text class="s" x="204" y="170" text-anchor="end">Hong Kong · your machine</text>
+  <circle class="f-dot" cx="486" cy="130" r="4"/>
+  <text class="s" x="498" y="134">Los Angeles</text>
+  <path class="lnA" d="M216,160 C238,142 240,116 232,100" marker-end="url(#cd5)"/>
+  <text class="s a" x="252" y="124">direct · 1,200 km</text>
+  <text class="s a" x="252" y="140">about 40 ms</text>
+  <path class="ln" d="M220,172 C300,236 400,222 480,138" marker-end="url(#cd4)"/>
+  <path class="ln" d="M484,122 C400,30 292,32 242,80" marker-end="url(#cd4)"/>
+  <text class="s c" x="352" y="36">and the answer comes back the same way</text>
+  <text class="s c" x="352" y="232">an ordinary line may go via the US — some 22,000 km, about 300 ms</text>
+  <text class="s" x="14" y="264">Nobody sends you a bill for the detour. You pay it in waiting, on every click.</text>
+</svg>
+
+It happens because the seller bought the cheapest transit available, and what
+that transit does next is not theirs to decide.
+
+So a premium line is three things at once: **a share of the gateway, a route
+that does not wander, and the return leg.** That last one is worth naming
+separately. Getting traffic *out* of your machine is easy and nobody charges
+much for it. Getting it back *in* to a Chinese visitor along a good path is a
+product a carrier prices on its own — and it is the expensive half.
 
 ---
 
@@ -206,7 +236,33 @@ Rough shape, in 2026, and prices move — check the day you buy:
 **Ten to fifty times the price per megabit.** Everything else on this page is a
 consequence of that one number.
 
-Four reasons, and they compound:
+Where does the difference go? Follow the same ¥100 into each:
+
+<svg class="fig" viewBox="0 0 660 216" role="img" aria-label="Two bars splitting the same hundred yuan a month: on an ordinary high-spec box most of it is the machine and little is the line; on a three-network optimised box it is the other way round">
+  <text class="t" x="14" y="20">the same ¥100 a month, and where it actually goes</text>
+  <text class="t" x="14" y="60">ordinary,</text>
+  <text class="t" x="14" y="76">high spec</text>
+  <rect class="box" x="150" y="44" width="388" height="36" rx="4"/>
+  <text class="c" x="344" y="67">the machine · 8 cores, 16 GB</text>
+  <rect class="mine" x="538" y="44" width="68" height="36" rx="4"/>
+  <text class="s a c" x="572" y="67">line</text>
+  <text class="s" x="150" y="100">machine ¥85 · line ¥15 — the bandwidth is oversold, so it is nearly free</text>
+  <text class="t" x="14" y="146">three-network</text>
+  <text class="t" x="14" y="162">optimised</text>
+  <rect class="box" x="150" y="130" width="68" height="36" rx="4"/>
+  <text class="s c" x="184" y="153">machine</text>
+  <rect class="mine" x="218" y="130" width="388" height="36" rx="4"/>
+  <text class="a c" x="412" y="153">the line · 30 Mbps, or 500 GB of quota</text>
+  <text class="s" x="150" y="186">machine ¥15 · line ¥85 — the same small box in an ordinary rack costs ¥15</text>
+  <text class="s" x="14" y="210">The box is cheap. The road is not — so buy only as much road as you will use.</text>
+</svg>
+
+**The machine itself is nearly worthless.** A 1-core, 1 GB box in an ordinary
+rack is about ¥15 a month. Move that identical box into a three-network
+optimised rack and it is ¥100. The extra ¥85 buys no cores, no memory and no
+disk. It is all road.
+
+And the road is priced that way for four reasons, which compound:
 
 <FigRows :arrow="0" :head="['what makes it expensive', 'the everyday version']" :rows="[
   [{ t: 'it is not oversold', tone: 'strong' }, 'a buffet seat versus a table booked in your name'],
@@ -239,11 +295,12 @@ gives you:
 |---|---|---|
 | **What it is good at** | getting bytes into China at 9pm | cores, memory, disk, and traffic that costs almost nothing |
 | **What it is bad at** | everything is small and everything is metered | the four hours a day your Chinese customers are shopping |
-| **What ¥200 a month buys** | 1 core, 1 GB, 500 GB of traffic | 8 cores, 16 GB, 500 GB of disk, terabytes of traffic |
+| **What ¥100 a month buys** | 1 core, 1 GB, 500 GB of traffic | 8 cores, 16 GB, 500 GB of disk, terabytes of traffic |
 
 Your database, your PHP, your image resizing, your build — none of that cares
-what the network is like. It wants cores and memory, and cores and memory on a
-premium-line machine cost several times what they cost next door.
+what the network is like. It wants cores and memory, and on a premium-line
+machine cores and memory carry the road's price whether you use the road or
+not (§5's bars).
 
 So put the site on the cheap machine and buy **only the road** on the expensive
 one.
