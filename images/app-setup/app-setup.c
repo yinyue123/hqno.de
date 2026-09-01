@@ -221,8 +221,8 @@ static const L T_NOLOG     = {"No log yet. One appears at %s the first time some
 static const L T_LOGEMPTY  = {"The log file is empty.", "日志文件是空的。"};
 static const L T_LOGTAIL   = {"── the last %s of %s ──", "── %s／共 %s，只显示末尾 ──"};
 static const L T_NITEMS    = {"%d",           "%d 项"};
-static const L T_HELPFORM  = {"↑↓ field   Space toggle   ←→ choose   Enter save & apply   Esc cancel",
-                             "↑↓ 换行   空格 切换   ←→ 选值   回车 保存并应用   Esc 取消"};
+static const L T_HELPFORM  = {"↑↓ field   ←→ choose   ^U clear   ^W drop last   Enter save & apply   Esc cancel",
+                             "↑↓ 换行   ←→ 选值   ^U 清空   ^W 删掉最后一项   回车 保存并应用   Esc 取消"};
 static const L T_HELPPAGE  = {"↑↓ scroll   Enter / Esc back", "↑↓ 滚动   回车/Esc 返回"};
 static const L T_HELPPICK  = {"↑↓ move   Space tick   Enter done   Esc cancel",
                               "↑↓ 移动   空格 勾选   回车 完成   Esc 取消"};
@@ -585,6 +585,30 @@ static void u8ellipsis(char *dst, size_t cap, const char *src, int cols)
 	u8trunc(dst, cap, src, cols - mw);
 	size_t n = strlen(dst);
 	if (n + strlen(mark) + 1 < cap) strcpy(dst + n, mark);
+}
+
+/* The other end of u8ellipsis: keep the *last* `cols` columns and mark the
+ * front. The form's text fields append and backspace and have no caret to
+ * move, so the cursor is always at the end of the value — and drawing the head
+ * of something longer than its field hides the exact part somebody is typing
+ * into. A hundred-character comma list was being edited blind. */
+static void u8tail(char *dst, size_t cap, const char *src, int cols)
+{
+	if (u8width(src) <= cols) { copy_str(dst, cap, src); return; }
+	const char *mark = g_utf8 ? "…" : "...";
+	int mw = g_utf8 ? 1 : 3;
+	if (cols <= mw) { u8trunc(dst, cap, src, cols); return; }
+
+	/* Walk forward to the first character whose remainder fits. Quadratic in
+	 * the length, and the length is one form field, so it costs nothing and
+	 * saves keeping an index of every character in the string. */
+	int want = cols - mw;
+	const char *q = src;
+	while (*q && u8width(q) > want) { unsigned int c; q = u8next(q, &c); }
+
+	copy_str(dst, cap, mark);
+	size_t n = strlen(dst);
+	if (n < cap) copy_str(dst + n, cap - n, q);
 }
 
 /* Wrap to `cols`, breaking on spaces where there are any and between
@@ -3244,8 +3268,12 @@ static int screen_params(Pkg *p)
 				hit_add(H_BTN, 2000 + scroll + slot, y, fx + u8width(ch) - 1, 1, 1);
 			} else {
 				gfill(y, fx, fieldw, " ", a);
-				char cut[256];
-				u8ellipsis(cut, sizeof cut, pm->value, fieldw - 1);
+				char cut[512];
+				/* Reading the form, the front of a value identifies it. Editing
+				 * one, the only part that matters is the end, because that is
+				 * where the cursor is. So the window follows the focus. */
+				if (focused) u8tail(cut, sizeof cut, pm->value, fieldw - 1);
+				else         u8ellipsis(cut, sizeof cut, pm->value, fieldw - 1);
 				gput(y, fx, cut, a, fieldw - 1);
 				if (focused) {
 					int cw = u8width(cut);
@@ -3380,6 +3408,20 @@ static int screen_params(Pkg *p)
 				size_t n = strlen(pm->value);
 				while (n && ((unsigned char)pm->value[n-1] & 0xC0) == 0x80) n--;
 				if (n) n--;
+				pm->value[n] = '\0';
+			} else if (k == 21) {          /* ^U */
+				/* Replacing a long default is the commonest edit these fields
+				 * get, and without this it is a hundred presses of Backspace.
+				 * readline's key, because it is the one fingers already know. */
+				pm->value[0] = '\0';
+			} else if (k == 23) {          /* ^W */
+				/* Drop the last item. Two of these fields are comma lists that
+				 * people prune rather than retype, so the word this deletes is
+				 * delimited by a comma as well as by a space. */
+				size_t n = strlen(pm->value);
+				while (n && (pm->value[n-1] == ',' || pm->value[n-1] == ' ')) n--;
+				while (n && pm->value[n-1] != ',' && pm->value[n-1] != ' ') n--;
+				while (n && (pm->value[n-1] == ',' || pm->value[n-1] == ' ')) n--;
 				pm->value[n] = '\0';
 			} else if (k >= 32 && k < 256) {
 				if (pm->type == PT_NUMBER && !isdigit(k) && k != '.') continue;
@@ -5187,7 +5229,18 @@ static int cli_screenshot(int n, char **rest)
 				char ch[128];
 				snprintf(ch, sizeof ch, "%s %s %s", AR_L, pm->value, AR_R);
 				gput(y, fx, ch, a0, fieldw);
-			} else gput(y, fx, pm->value, a0, fieldw - 1);
+			} else {
+				/* The same rule the live form uses: the focused row shows the
+				 * end of the value, because that is where the cursor is, and
+				 * every other row shows the front, which is what identifies it.
+				 * Drawn here rather than shared, like the rest of this renderer,
+				 * but drawn the same way — a screenshot of a field the form
+				 * never draws is worse than no screenshot. */
+				char cut[512];
+				if (slot == 0) u8tail(cut, sizeof cut, pm->value, fieldw - 1);
+				else           u8ellipsis(cut, sizeof cut, pm->value, fieldw - 1);
+				gput(y, fx, cut, a0, fieldw - 1);
+			}
 		}
 		scrollbar(row + 1, col + ww - 2, visrows, 0, visrows, nvr, P_SBTHUMBW, P_SBTRACKW);
 		int bw = btn_width(S(T_SAVEAPPLY)) + 2 + btn_width(S(T_SAVE)) + 2 + btn_width(S(T_CANCEL));
