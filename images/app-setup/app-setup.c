@@ -221,8 +221,8 @@ static const L T_NOLOG     = {"No log yet. One appears at %s the first time some
 static const L T_LOGEMPTY  = {"The log file is empty.", "日志文件是空的。"};
 static const L T_LOGTAIL   = {"── the last %s of %s ──", "── %s／共 %s，只显示末尾 ──"};
 static const L T_NITEMS    = {"%d",           "%d 项"};
-static const L T_HELPFORM  = {"↑↓ field   ←→ choose   ^U clear   ^W drop last   Enter save & apply   Esc cancel",
-                             "↑↓ 换行   ←→ 选值   ^U 清空   ^W 删掉最后一项   回车 保存并应用   Esc 取消"};
+static const L T_HELPFORM  = {"↑↓ field   ←→ move / choose   ^U clear   ^W drop word   Enter save & apply   Esc cancel",
+                             "↑↓ 换行   ←→ 移动光标 / 选值   ^U 清空   ^W 删一段   回车 保存并应用   Esc 取消"};
 static const L T_HELPPAGE  = {"↑↓ scroll   Enter / Esc back", "↑↓ 滚动   回车/Esc 返回"};
 static const L T_HELPPICK  = {"↑↓ move   Space tick   Enter done   Esc cancel",
                               "↑↓ 移动   空格 勾选   回车 完成   Esc 取消"};
@@ -3132,6 +3132,100 @@ static int screen_list_popup(const Pkg *owner, Param *pm)
 	}
 }
 
+/* A field being edited is as tall as its value needs, up to this. Nine lines
+ * of a thirty-column field is the whole 256 bytes a value can hold, so on any
+ * terminal wide enough for the ordinary form nothing is ever hidden while
+ * somebody is typing into it. */
+#define PARAM_MAXH 9
+
+/* One line per row, except the text field that has the cursor: that one is as
+ * tall as its value. Everything else on this screen is one line and stays one
+ * line — a chooser, a checkbox and a group header have nothing to expand. */
+static int param_rowh(const Pkg *p, const VisRow *vr, int focused, int fieldw)
+{
+	if (!focused || vr->kind != ROW_PARAM) return 1;
+	const Param *pm = &p->params[vr->idx];
+	if (pm->type != PT_TEXT && pm->type != PT_NUMBER) return 1;
+	int need = u8width(pm->value) + 1;        /* +1 so the caret has a cell */
+	if (need <= fieldw) return 1;
+	int n = (need + fieldw - 1) / fieldw;
+	return n > PARAM_MAXH ? PARAM_MAXH : n;
+}
+
+/* The value, wrapped down the field column. Hard-wrapped at the column rather
+ * than on spaces: these values are comma lists and paths, and a wrap that
+ * moved a comma would move where somebody thinks their cursor is.
+ *
+ * `caret` is a byte offset into `val`. Its cell is drawn in the button colour
+ * rather than replaced by an underscore — an underscore hides the character it
+ * stands on, and that character is the one thing somebody editing is looking
+ * at. Only at the very end of the value, where there is no character to hide,
+ * is the caret an underscore.
+ *
+ * When the value still needs more lines than it has been given, the window
+ * follows the caret rather than the start of the string. */
+static void field_draw(int y, int fx, int fieldw, int rh, int attr,
+                       const char *val, int caret, int show_caret)
+{
+	int line = 0, used = 0, cline = 0, ccol = 0;
+	const char *cch = NULL;
+	size_t cchlen = 0;
+
+	for (const char *q = val; ; ) {
+		int at_caret = ((int)(q - val) == caret);
+		if (at_caret) { cline = line; ccol = used; cch = NULL; cchlen = 0; }
+		if (!*q) break;
+		unsigned int c;
+		const char *nx = u8next(q, &c);
+		int cw = cp_width(c);
+		if (used + cw > fieldw) {
+			line++; used = 0;
+			if (at_caret) { cline = line; ccol = 0; }
+		}
+		if (at_caret) { cch = q; cchlen = (size_t)(nx - q); }
+		used += cw;
+		q = nx;
+	}
+	int nlines = line + 1;
+	if (ccol >= fieldw) { cline++; ccol = 0; if (cline >= nlines) nlines = cline + 1; }
+
+	int top = 0;
+	if (nlines > rh) {
+		top = cline - rh + 1;
+		if (top > nlines - rh) top = nlines - rh;
+		if (top < 0) top = 0;
+	}
+
+	for (int i = 0; i < rh; i++) gfill(y + i, fx, fieldw, " ", attr);
+
+	line = 0; used = 0;
+	for (const char *q = val; *q; ) {
+		unsigned int c;
+		const char *nx = u8next(q, &c);
+		int cw = cp_width(c);
+		if (used + cw > fieldw) { line++; used = 0; }
+		if (line >= top + rh) break;
+		if (line >= top) {
+			char one[8];
+			size_t len = (size_t)(nx - q);
+			if (len < sizeof one) { memcpy(one, q, len); one[len] = '\0';
+				gput(y + line - top, fx + used, one, attr, cw); }
+		}
+		used += cw;
+		q = nx;
+	}
+
+	if (!show_caret) return;
+	if (cline < top || cline >= top + rh) return;
+	if (cch && cchlen < 8) {
+		char one[8];
+		memcpy(one, cch, cchlen); one[cchlen] = '\0';
+		gput(y + cline - top, fx + ccol, one, P_BTNACT, 1);
+	} else {
+		gput(y + cline - top, fx + ccol, "_", attr, 1);
+	}
+}
+
 static int screen_params(Pkg *p)
 {
 	if (!p->nparams) { message(pkg_name(p), S(T_NOPARAM)); return 0; }
@@ -3145,6 +3239,10 @@ static int screen_params(Pkg *p)
 	int nrows = build_param_rows(p, rows);
 
 	int sel = 0, scroll = 0;
+	/* The caret belongs to the field rather than to the form, so moving to
+	 * another row puts it at the end of that row's value — which is where
+	 * typing used to append before there was a caret to put anywhere else. */
+	int caret = 0, lastsel = -1;
 	char title[256];
 	snprintf(title, sizeof title, "%s %s %s", pkg_name(p), MK_DOT, S(T_PARAMS));
 
@@ -3163,6 +3261,12 @@ static int screen_params(Pkg *p)
 		int nitems = nrows + 3;
 		if (sel > B_CANCEL) sel = B_CANCEL;
 
+		if (sel != lastsel) {
+			lastsel = sel;
+			caret = (sel < nrows && rows[sel].kind == ROW_PARAM)
+			        ? (int)strlen(p->params[rows[sel].idx].value) : 0;
+		}
+
 		int labw = 12;
 		for (int i = 0; i < nrows; i++)
 			if (rows[i].kind == ROW_PARAM) {
@@ -3180,18 +3284,31 @@ static int screen_params(Pkg *p)
 		int bw = btn_width(S(T_SAVEAPPLY)) + 2 + btn_width(S(T_SAVE)) + 2 + btn_width(S(T_CANCEL));
 		if (w < bw + 4) { w = bw + 4; if (w > g_w - 2) w = g_w - 2; }
 
-		/* Unclamped, every row gets exactly one line, same as before groups
-		 * and actions existed — clamped, a scrollbar (not a truncated list
-		 * with nothing to say so) takes up the difference. */
-		int h = nrows + 6;
+		/* One line a row, plus however many extra the field being edited
+		 * needs — clamped to the screen, where a scrollbar (not a truncated
+		 * list with nothing to say so) takes up the difference. */
+		int total = 0;
+		for (int i = 0; i < nrows; i++)
+			total += param_rowh(p, &rows[i], i == sel, fieldw);
+		int h = total + 6;
 		if (h > g_h - 2) h = g_h - 2;
 		int visrows = h - 6;
 		if (visrows < 1) visrows = 1;
+		/* Rows are not all one line any more, so "is the cursor on screen"
+		 * is a walk rather than a subtraction. Scrolling one row at a time
+		 * until the whole of the focused row fits keeps an expanded field
+		 * from being cut off at the bottom, which is the case this exists
+		 * for. */
 		if (sel < nrows) {
 			if (sel < scroll) scroll = sel;
-			if (sel >= scroll + visrows) scroll = sel - visrows + 1;
-		}
-		if (scroll > nrows - visrows) scroll = nrows - visrows;
+			while (scroll < sel) {
+				int used = 0;
+				for (int i = scroll; i <= sel; i++)
+					used += param_rowh(p, &rows[i], i == sel, fieldw);
+				if (used <= visrows) break;
+				scroll++;
+			}
+		} else if (scroll > nrows - 1) scroll = nrows - 1;
 		if (scroll < 0) scroll = 0;
 
 		int row = (g_h - h) / 2, col = (g_w - w) / 2;
@@ -3199,10 +3316,12 @@ static int screen_params(Pkg *p)
 		if (col < 0) col = 0;
 		win_box(row, col, w, h, title);
 
-		for (int slot = 0; slot < visrows && scroll + slot < nrows; slot++) {
-			VisRow *vr = &rows[scroll + slot];
-			int y = row + 1 + slot;
-			int focused = (sel == scroll + slot);
+		int y = row + 1;
+		for (int i = scroll; i < nrows && y < row + 1 + visrows; i++) {
+			VisRow *vr = &rows[i];
+			int focused = (sel == i);
+			int rh = param_rowh(p, vr, focused, fieldw);
+			if (y + rh > row + 1 + visrows) rh = row + 1 + visrows - y;
 
 			if (vr->kind == ROW_GROUP) {
 				Group *gr = &p->groups[vr->idx];
@@ -3216,7 +3335,8 @@ static int screen_params(Pkg *p)
 				snprintf(btxt, sizeof btxt, "<%s>", S(gr->folded ? T_SHOW : T_HIDE));
 				int btw = u8width(btxt);
 				gput(y, col + w - 2 - btw, btxt, a, btw);
-				hit_add(H_BODY, scroll + slot, y, col + 1, 1, w - 2);
+				hit_add(H_BODY, i, y, col + 1, 1, w - 2);
+				y += rh;
 				continue;
 			}
 			if (vr->kind == ROW_ACTION) {
@@ -3228,7 +3348,8 @@ static int screen_params(Pkg *p)
 				int a = focused ? P_ENTRYACT : P_WIN;
 				gfill(y, col + 1, w - 2, " ", a);
 				gput(y, col + 2, btxt, a, w - 4);
-				hit_add(H_BODY, scroll + slot, y, col + 1, 1, w - 2);
+				hit_add(H_BODY, i, y, col + 1, 1, w - 2);
+				y += rh;
 				continue;
 			}
 
@@ -3240,7 +3361,7 @@ static int screen_params(Pkg *p)
 
 			int fx = col + 3 + labw;
 			int a = focused ? P_ENTRYACT : P_ENTRY;
-			hit_add(H_BODY, scroll + slot, y, col + 2, 1, labw + 1 + fieldw + 1);
+			hit_add(H_BODY, i, y, col + 2, rh, labw + 1 + fieldw + 1);
 			if (pm->type == PT_BOOL) {
 				int on = !strcmp(pm->value, "on") || !strcmp(pm->value, "1") ||
 				         !strcmp(pm->value, "yes") || !strcmp(pm->value, "true");
@@ -3264,22 +3385,24 @@ static int screen_params(Pkg *p)
 				/* the two arrows are their own targets, so a choice can be
 				 * stepped with the mouse and not only with the keys — keyed
 				 * by row slot now, not param index, since sel is too */
-				hit_add(H_BTN, 1000 + scroll + slot, y, fx, 1, 1);
-				hit_add(H_BTN, 2000 + scroll + slot, y, fx + u8width(ch) - 1, 1, 1);
+				hit_add(H_BTN, 1000 + i, y, fx, 1, 1);
+				hit_add(H_BTN, 2000 + i, y, fx + u8width(ch) - 1, 1, 1);
+			} else if (focused) {
+				/* Whole, over as many lines as it takes. A field somebody is
+				 * typing into is the one place on this screen where hiding
+				 * half the value costs something. */
+				int cr = caret;
+				if (cr > (int)strlen(pm->value)) cr = (int)strlen(pm->value);
+				field_draw(y, fx, fieldw, rh, a, pm->value, cr, 1);
 			} else {
+				/* Read rather than edited: the front of a value is what
+				 * identifies it, and one line a row keeps the form scannable. */
 				gfill(y, fx, fieldw, " ", a);
 				char cut[512];
-				/* Reading the form, the front of a value identifies it. Editing
-				 * one, the only part that matters is the end, because that is
-				 * where the cursor is. So the window follows the focus. */
-				if (focused) u8tail(cut, sizeof cut, pm->value, fieldw - 1);
-				else         u8ellipsis(cut, sizeof cut, pm->value, fieldw - 1);
+				u8ellipsis(cut, sizeof cut, pm->value, fieldw - 1);
 				gput(y, fx, cut, a, fieldw - 1);
-				if (focused) {
-					int cw = u8width(cut);
-					if (cw < fieldw) gput(y, fx + cw, "_", a, 1);
-				}
 			}
+			y += rh;
 		}
 		scrollbar(row + 1, col + w - 2, visrows, scroll, visrows, nrows,
 		          P_SBTHUMBW, P_SBTRACKW);
@@ -3404,29 +3527,59 @@ static int screen_params(Pkg *p)
 			if (k == K_RIGHT || k == ' ') at = (at + 1) % pm->nchoices;
 			copy_str(pm->value, sizeof pm->value, pm->choices[at]);
 		} else {
-			if (k == K_BACK) {
-				size_t n = strlen(pm->value);
-				while (n && ((unsigned char)pm->value[n-1] & 0xC0) == 0x80) n--;
-				if (n) n--;
-				pm->value[n] = '\0';
+			/* A caret, at last. Everything below moves or edits at `caret`
+			 * rather than at the end of the string, and the field draws
+			 * itself around wherever that is. UTF-8 continuation bytes are
+			 * stepped over rather than into: half a character is not a
+			 * position, and leaving the caret inside one would put a Chinese
+			 * label through a paper shredder on the next keypress. */
+			int vlen = (int)strlen(pm->value);
+			if (caret > vlen) caret = vlen;
+			if (caret < 0) caret = 0;
+			if (k == K_LEFT) {
+				if (caret > 0) {
+					caret--;
+					while (caret > 0 && ((unsigned char)pm->value[caret] & 0xC0) == 0x80) caret--;
+				}
+			} else if (k == K_RIGHT) {
+				if (caret < vlen) {
+					caret++;
+					while (caret < vlen && ((unsigned char)pm->value[caret] & 0xC0) == 0x80) caret++;
+				}
+			} else if (k == K_HOME) {
+				caret = 0;
+			} else if (k == K_END) {
+				caret = vlen;
+			} else if (k == K_BACK) {
+				if (caret > 0) {
+					int from = caret - 1;
+					while (from > 0 && ((unsigned char)pm->value[from] & 0xC0) == 0x80) from--;
+					memmove(pm->value + from, pm->value + caret, (size_t)(vlen - caret + 1));
+					caret = from;
+				}
 			} else if (k == 21) {          /* ^U */
 				/* Replacing a long default is the commonest edit these fields
 				 * get, and without this it is a hundred presses of Backspace.
 				 * readline's key, because it is the one fingers already know. */
 				pm->value[0] = '\0';
+				caret = 0;
 			} else if (k == 23) {          /* ^W */
-				/* Drop the last item. Two of these fields are comma lists that
-				 * people prune rather than retype, so the word this deletes is
-				 * delimited by a comma as well as by a space. */
-				size_t n = strlen(pm->value);
+				/* The item before the caret. Two of these fields are comma
+				 * lists that people prune rather than retype, so the word this
+				 * deletes is delimited by a comma as well as by a space. */
+				int n = caret;
 				while (n && (pm->value[n-1] == ',' || pm->value[n-1] == ' ')) n--;
 				while (n && pm->value[n-1] != ',' && pm->value[n-1] != ' ') n--;
 				while (n && (pm->value[n-1] == ',' || pm->value[n-1] == ' ')) n--;
-				pm->value[n] = '\0';
+				memmove(pm->value + n, pm->value + caret, (size_t)(vlen - caret + 1));
+				caret = n;
 			} else if (k >= 32 && k < 256) {
 				if (pm->type == PT_NUMBER && !isdigit(k) && k != '.') continue;
-				size_t n = strlen(pm->value);
-				if (n < sizeof pm->value - 2) { pm->value[n] = (char)k; pm->value[n+1] = '\0'; }
+				if (vlen < (int)sizeof pm->value - 2) {
+					memmove(pm->value + caret + 1, pm->value + caret, (size_t)(vlen - caret + 1));
+					pm->value[caret] = (char)k;
+					caret++;
+				}
 			}
 		}
 	}
