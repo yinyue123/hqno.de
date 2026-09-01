@@ -1,8 +1,29 @@
 # Deploying a website and CDN
 
-You sell to people in China and to people outside it. The problem is that no
-single machine is good at both: the ones that are fast into China are small and
-expensive, and the ones that are big and cheap crawl into China at exactly the
+The same page, sent from two machines in the same building in Hong Kong. This
+is what a visitor in China gets:
+
+<LineRace
+  title="one page, two lines, both starting now"
+  gate="the gateway"
+  machine="your machine"
+  fast="optimised"
+  slow="ordinary"
+  clean="nothing lost"
+  lost="{n} pieces lost"
+  sec="s"
+  note="a lost piece has to be sent again — which is why the lower one is not merely slower"
+  replay="play again"
+  alt="Two lines carrying the same page. On the optimised line the pieces pass straight through the gateway and the page finishes in about two and a half seconds, losing nothing. On the ordinary line they pile up behind the gateway, the ones that no longer fit are dropped and have to be sent again, and the page takes more than twice as long."
+/>
+
+The quick one is a **three-network optimised** line; the other is an ordinary
+one. Same hardware, same cable out of the rack, same distance to the visitor.
+The whole difference is that one door in the middle.
+
+Which is the problem with selling to both sides of the world: no single machine
+is good at both. The ones that are fast into China are small and expensive, and
+the ones that are big and cheap are the lower line — they crawl at exactly the
 hours people shop.
 
 **So rent two, and put the small fast one in front.** That is the whole idea,
@@ -21,10 +42,9 @@ not need any of this.
 
 ## 1. Two roads, the same distance
 
-Two machines sit in the same building in Hong Kong. Same hardware, same cable
-out of the rack. A visitor in Shanghai loads a page from each. One takes 300
-milliseconds and drops a tenth of what it was sent; the other takes 40 and drops
-nothing.
+Put numbers on what you just watched. A visitor in Shanghai asks both machines
+for the same page. One answers in 40 milliseconds and loses nothing; the other
+takes 300 and drops a tenth of what it was sent.
 
 Nothing about the distance changed. What changed is **which road the traffic was
 sold the right to use**.

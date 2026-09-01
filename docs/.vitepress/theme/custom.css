@@ -195,3 +195,41 @@
 .fig .ln { fill: none; stroke: var(--vp-c-text-3); stroke-width: 1.3; }
 .fig .lnA { fill: none; stroke: var(--vp-c-brand-3); stroke-width: 1.6; }
 .fig .rule { fill: none; stroke: var(--vp-c-divider); stroke-width: 1; stroke-dasharray: 3 4; }
+
+/**
+ * The moving figure, `figures/LineRace.vue`.
+ *
+ * `.ok` is after `.fig .s` on purpose: the readout is a muted `.s` while the
+ * page is still loading and turns green the moment it finishes, and both
+ * selectors weigh the same, so the one that wins is the one written last.
+ *
+ * The button is the figure's only control and is deliberately quiet — it is
+ * there for somebody who missed the run or asked for no motion, not something
+ * to press first. Its size is what a thumb needs, not what the label needs.
+ */
+.fig .ok { fill: #3d8168; font-weight: 600; }
+.dark .fig .ok { fill: #6cb79a; }
+
+.race { margin: 28px 0; }
+.race .fig { margin: 0; }
+
+.race-btn {
+  margin-top: 2px;
+  padding: 6px 14px;
+  min-height: 32px;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--vp-c-text-3);
+  font-family: inherit;
+  font-size: 12.5px;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.race-btn:hover {
+  color: var(--vp-c-text-1);
+  border-color: var(--vp-c-text-3);
+  background-color: var(--vp-c-bg-soft);
+}
