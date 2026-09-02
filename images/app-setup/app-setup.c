@@ -1458,6 +1458,12 @@ enum {
 	/* the two things still drawn straight onto the root and needing a
 	 * blue-backed colour: "nothing in this category", and "no recipes at all" */
 	P_ABSENTB, P_WARNB,
+	/* A button that does not have the cursor. Blue text on the window's own
+	 * grey, which is a web page's link and needs no explaining — and which
+	 * this screen already uses for the things that lead somewhere: the window
+	 * title and the selected category. A background would be a second way of
+	 * saying "pressable" for something the colour already says. */
+	P_LINK,
 	/* one cover colour per category — a solid background rather than coloured
 	 * text, so the cover reads as a block of colour the way a thumbnail does —
 	 * and the same background bold for the wordmark printed on it. Indexed by
@@ -1511,6 +1517,7 @@ static const char *SGR[P_COUNT] = {
 	"0;1;30;47",     /* SBTRACKW                                      */
 	"0;1;30;44",     /* ABSENTB   grey on blue                        */
 	"0;1;31;44",     /* WARNB     red on blue                         */
+	"0;1;34;47",     /* LINK      a button, unpressed — bold blue     */
 	"0;37;45",       /* COV0      suites      on magenta              */
 	"0;30;46",       /* COV1      web servers on cyan                 */
 	"0;30;42",       /* COV2      databases   on green                */
@@ -2116,7 +2123,7 @@ static int btn_width(const char *label) { return u8width(label) + 2; }
 
 static void btn_draw(int row, int col, const char *label, int focused, int idx)
 {
-	int a = focused ? P_BTNACT : P_BTN;
+	int a = focused ? P_BTNACT : P_LINK;
 	char t[128];
 	snprintf(t, sizeof t, "<%s>", label);
 	gput(row, col, t, a, btn_width(label));
@@ -3484,7 +3491,7 @@ static int screen_params(Pkg *p)
 				char btxt[32];
 				snprintf(btxt, sizeof btxt, " <%s> ", S(gr->folded ? T_SHOW : T_HIDE));
 				int btw = u8width(btxt);
-				gput(y, col + w - 2 - btw, btxt, focused ? P_BTNACT : P_BTN, btw);
+				gput(y, col + w - 2 - btw, btxt, focused ? P_BTNACT : P_LINK, btw);
 				if (focused) cursor_sweep(y, col + 2, hw, P_ENTRYACT, P_CURSORHOT);
 				hit_add(H_BODY, i, y, col + 1, 1, w - 2);
 				y += rh;
@@ -3501,7 +3508,7 @@ static int screen_params(Pkg *p)
 				snprintf(btxt, sizeof btxt, "<%s>", lbl);
 				int a = focused ? P_ENTRYACT : P_WIN;
 				gfill(y, col + 1, w - 2, " ", a);
-				gput(y, col + 4, btxt, focused ? P_BTNACT : P_BTN, w - 6);
+				gput(y, col + 4, btxt, focused ? P_BTNACT : P_LINK, w - 6);
 				if (focused) cursor_sweep(y, col + 4, u8width(btxt), P_BTNACT, P_CURSORHOT);
 				hit_add(H_BODY, i, y, col + 1, 1, w - 2);
 				y += rh;
@@ -4193,7 +4200,7 @@ static int act_draw(int row, int col, const Action *a, int focused, int maxw)
 	 * form's three buttons have always been drawn on cyan by btn_draw; these
 	 * are the same thing and now look like it. Dim keeps the flat grey,
 	 * because a button that cannot be pressed should not look pressable. */
-	gput(row, col, t, focused ? P_BTNACT : (a->dim ? P_BTNDIM : P_BTN), w);
+	gput(row, col, t, focused ? P_BTNACT : (a->dim ? P_BTNDIM : P_LINK), w);
 	if (focused) cursor_sweep(row, col, w, P_BTNACT, P_CURSORHOT);
 	return w;
 }
@@ -6180,7 +6187,7 @@ static int cli_screenshot(int n, char **rest)
 				gput(y, col + 2, hdr, slot == 0 ? P_ENTRYACT : P_BORDER, u8width(hdr));
 				char btxt[32];
 				snprintf(btxt, sizeof btxt, " <%s> ", S(gr->folded ? T_SHOW : T_HIDE));
-				gput(y, col + ww - 2 - u8width(btxt), btxt, P_BTN, u8width(btxt));
+				gput(y, col + ww - 2 - u8width(btxt), btxt, P_LINK, u8width(btxt));
 				continue;
 			}
 			if (vr->kind == ROW_ACTION) {
@@ -6189,7 +6196,7 @@ static int cli_screenshot(int n, char **rest)
 				                  ? apm->action_label_zh : apm->action_label;
 				char btxt[96];
 				snprintf(btxt, sizeof btxt, "<%s>", lbl);
-				gput(y, col + 4, btxt, slot == 0 ? P_BTNACT : P_BTN, ww - 6);
+				gput(y, col + 4, btxt, slot == 0 ? P_BTNACT : P_LINK, ww - 6);
 				continue;
 			}
 			Param *pm = &p->params[vr->idx];
