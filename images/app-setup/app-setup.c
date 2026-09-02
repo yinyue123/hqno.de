@@ -1480,7 +1480,7 @@ static const char *SGR[P_COUNT] = {
 	"0;30;46",       /* SEL       black on cyan — the row you are on  */
 	"0;34;46",       /* SELDIM    blue on cyan — its second line      */
 	"0;34;47",       /* IDLE      blue on grey — selected, not focused*/
-	"0;30;46",       /* BTN       black on cyan                       */
+	"0;30;47",       /* BTN       black on grey — an unpressed button  */
 	"0;1;4;37;46",   /* BTNACT    the cursor, on a grey window        */
 	"0;30;47",       /* ENTRY     black on grey                       */
 	"0;4;30;46",     /* ENTRYACT  the cursor, in a form field         */
@@ -6036,6 +6036,11 @@ static int cli_doctor(void)
 static int cli_screenshot(int n, char **rest)
 {
 	int w = 100, h = 30, sel = 0, zone = -1, want = 0, vset = 0;
+	/* The app screen has zones of its own, and the cursor sitting on a verb
+	 * is the state its colours were last argued about — so it has to be a
+	 * state this can render. Z_TAB otherwise, which is where the screen
+	 * opens. */
+	int appzone = Z_TAB;
 	const char *cat = NULL, *screen = "home", *pick = NULL;
 	for (int i = 1; i < n; i++) {
 		if (!strcmp(rest[i], "--width") && i + 1 < n) w = atoi(rest[++i]);
@@ -6049,6 +6054,7 @@ static int cli_screenshot(int n, char **rest)
 			if (!strcmp(f, "back"))       { zone = Z_STRIP; want = -1; }
 			else if (!strcmp(f, "lang"))  { zone = Z_STRIP; want = -2; }
 			else if (!strcmp(f, "chips")) { zone = Z_STRIP; want = -3; }
+			else if (!strcmp(f, "verbs"))   appzone = Z_BTN;
 			else                            zone = Z_GRID;
 		}
 		/* So a filtered home screen can be rendered without a terminal, which
@@ -6092,7 +6098,7 @@ static int cli_screenshot(int n, char **rest)
 	          !strcmp(screen, "detail"))) {
 		AppView v;
 		memset(&v, 0, sizeof v);
-		v.zone = Z_TAB;
+		v.zone = appzone;
 		v.tab = v.tsel = sel;
 		app_draw(p, &v);
 		screen = "app";
