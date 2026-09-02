@@ -4861,11 +4861,17 @@ static int g_nchip = 0;
  * a control lying about what it is. */
 #define S_LIST  (g_nchip + 2)
 #define S_CARDS (g_nchip + 3)
-#define S_LEN   (g_nchip + 4)
+/* The search box is a stop like everything else on the bar. Typing reaches it
+ * from anywhere, so focusing it changes nothing functionally — but a control
+ * drawn in a row of controls that the cursor walks straight past reads as
+ * broken, and it is the one place on this screen where showing a caret says
+ * what the screen does. */
+#define S_FIND  (g_nchip + 4)
+#define S_LEN   (g_nchip + 5)
 
 /* the bar and the grid, both recomputed every frame so a resize needs no
  * special case. The grid starts below whatever height the bar wrapped to. */
-static int SB_row[MAX_CATS + 6], SB_col[MAX_CATS + 6], SB_wid[MAX_CATS + 6];
+static int SB_row[MAX_CATS + 7], SB_col[MAX_CATS + 7], SB_wid[MAX_CATS + 7];
 static int SB_rows = 1;
 /* which row of the bar the search box is on, and how wide it may be */
 static int SB_findrow = 0, SB_findw = 40;
@@ -5068,6 +5074,10 @@ static void strip_layout(void)
 	SB_findrow = (SB_findw >= 14) ? 0 : 1;
 	if (SB_findrow) SB_findw = g_w - 2;
 
+	SB_row[S_FIND] = SB_findrow;
+	SB_col[S_FIND] = 1;
+	SB_wid[S_FIND] = SB_findw > 4 ? SB_findw : 4;
+
 	int row = SB_findrow + 1;
 	x = 1;
 	for (int i = 0; i < g_nchip; i++) {
@@ -5153,11 +5163,18 @@ static void draw_find(void)
 	if (xn > 14) gput(y, xn, cnt, P_CHIP, wn);
 	else xn = right;
 
+	int curf = (g_zone == Z_STRIP && g_strip == S_FIND);
 	char left[220];
-	if (g_filter[0]) snprintf(left, sizeof left, " %s  %s_", S(T_FIND), g_filter);
-	else             snprintf(left, sizeof left, " %s  %s", S(T_FIND), S(T_FINDHINT));
-	gput(y, 1, left, g_filter[0] ? P_CHIPSEL : P_ABSENT, xn - 2);
-	hit_add(H_FIND, 0, y, 1, 1, xn - 2);
+	/* The caret is drawn while there is something in the box or while the
+	 * cursor is on it — the second is the only moment this screen gets to say
+	 * "type here" without a sentence. */
+	if (g_filter[0])  snprintf(left, sizeof left, " %s  %s_", S(T_FIND), g_filter);
+	else if (curf)    snprintf(left, sizeof left, " %s  _%s", S(T_FIND), S(T_FINDHINT));
+	else              snprintf(left, sizeof left, " %s  %s", S(T_FIND), S(T_FINDHINT));
+	int fw = xn - 2;
+	gput(y, 1, left, curf ? P_CURSOR : (g_filter[0] ? P_CHIPSEL : P_ABSENT), fw);
+	if (curf) cursor_sweep(y, 1, fw, P_CURSOR, P_CURSORHOT);
+	hit_add(H_FIND, 0, y, 1, 1, fw);
 }
 
 static void draw_strip(void)
@@ -5208,6 +5225,23 @@ static void strip_to(int i)
 
 /* Up and down between the bar's rows, landing on whichever control starts
  * nearest the column already held. Returns 0 when there is no row that way. */
+/* Left and right along the row the cursor is on, to the nearest thing in that
+ * direction. It used to walk the flat index, which put Back between Cards and
+ * the language on a row where they are drawn in a different order — the index
+ * is the order things were declared in, and the bar is read left to right. */
+static void strip_h(int dir)
+{
+	int row = SB_row[g_strip], me = SB_col[g_strip];
+	int best = -1, bestd = 1 << 30;
+	for (int i = 0; i < S_LEN; i++) {
+		if (i == g_strip || SB_row[i] != row) continue;
+		int d = (SB_col[i] - me) * dir;
+		if (d <= 0) continue;
+		if (d < bestd) { bestd = d; best = i; }
+	}
+	if (best >= 0) strip_to(best);
+}
+
 static int strip_step(int dir)
 {
 	int row = SB_row[g_strip] + dir;
@@ -5574,7 +5608,7 @@ static void tui(void)
 			case H_LANG: g_zh = !g_zh; g_zone = Z_STRIP; g_strip = S_LANG; continue;
 			case H_CHIP: g_zone = Z_STRIP; strip_to(idx); continue;
 			case H_VIEW: g_vmode = idx; view_save(); g_cardrow = 0; continue;
-			case H_FIND: continue;   /* the box is always live; nothing to focus */
+			case H_FIND: g_zone = Z_STRIP; g_strip = S_FIND; continue;
 			/* A card opens on a single click, anywhere on it, the way a
 			 * thumbnail does. Moving the cursor there first would be a
 			 * second gesture for something already pointed at. */
@@ -5625,8 +5659,8 @@ static void tui(void)
 		switch (g_zone) {
 		case Z_STRIP:
 			switch (k) {
-			case K_LEFT:  strip_to(g_strip - 1); break;
-			case K_RIGHT: strip_to(g_strip + 1); break;
+			case K_LEFT:  strip_h(-1); break;
+			case K_RIGHT: strip_h(+1); break;
 			case K_HOME:  strip_to(0); break;
 			case K_END:   strip_to(S_BACK); break;
 			/* Up a row of the bar if there is one, and off the top of it to
