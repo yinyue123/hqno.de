@@ -4616,16 +4616,22 @@ static int g_nchip = 0;
 
 /* The bar is chips, then the language switch, then Back — one cursor over all
  * of it, so there is no separate "now you are among the buttons" mode. */
-#define S_LANG (g_nchip)
-#define S_BACK (g_nchip + 1)
-#define S_LEN  (g_nchip + 2)
+#define S_LANG  (g_nchip)
+#define S_BACK  (g_nchip + 1)
+/* The view switch sits on the find row, one below the bar, and is part of
+ * the same cursor: a control drawn as a chip that no arrow key can reach is
+ * a control lying about what it is. */
+#define S_LIST  (g_nchip + 2)
+#define S_CARDS (g_nchip + 3)
+#define S_LEN   (g_nchip + 4)
 
 /* the bar and the grid, both recomputed every frame so a resize needs no
  * special case. The grid starts below whatever height the bar wrapped to. */
-static int SB_row[MAX_CATS + 4], SB_col[MAX_CATS + 4], SB_wid[MAX_CATS + 4];
+static int SB_row[MAX_CATS + 6], SB_col[MAX_CATS + 6], SB_wid[MAX_CATS + 6];
 static int SB_rows = 1;
+/* which row of the bar the search box is on, and how wide it may be */
+static int SB_findrow = 0, SB_findw = 40;
 static int G_cols, G_cardw, G_coverh, G_cardh, G_pitch, G_top, G_rows, G_chiprow;
-static int G_findrow;
 
 /* Case-insensitive substring, byte-wise — which is also correct for the
  * Chinese fields, because a UTF-8 substring of a UTF-8 string is a substring
@@ -4737,15 +4743,9 @@ static void card_layout(void)
 	if (G_cardw > avail) G_cardw = avail;
 
 	G_chiprow = (g_h >= 18) ? 3 : 2;
-	/* the bar, its shadow, the find row, a blank */
-	G_findrow = G_chiprow + SB_rows + 1;
-	G_top = G_findrow + 2;
+	G_top = G_chiprow + SB_rows + 2;          /* the bar, its shadow, a blank */
 	int space = (g_h - 1) - G_top;            /* the help line owns the last row */
-	/* On a screen too short for all of it the blank goes first and the bar's
-	 * shadow second. The find row itself never goes: a search box that is only
-	 * there on a tall terminal is a search box nobody learns about. */
-	if (space < 5) { G_findrow = G_chiprow + SB_rows; G_top = G_findrow + 1;
-	                 space = (g_h - 1) - G_top; }
+	if (space < 5) { G_top = G_chiprow + SB_rows; space = (g_h - 1) - G_top; }
 	if (space < 4) space = 4;
 
 	/* The list is one column of one-row items, which is not a special case
@@ -4801,41 +4801,46 @@ static void draw_lang(int row, int col, int focused)
  * not a control on a toolbar. Rows are cheap; a hidden category is not. */
 static void strip_layout(void)
 {
-	char backl[64];
+	/* Row 0 is the machine's own controls and nothing else — Back in the
+	 * corner it has always had, then the language, then the two views, then
+	 * whatever is left over for the search box. Rows 1 and down are the
+	 * categories, which is where the cursor starts and what somebody is
+	 * usually here to change. Putting the globals together and the categories
+	 * together is the whole of this layout. */
+	char backl[64], lst[48], crd[48];
 	snprintf(backl, sizeof backl, " %s ", S(T_BACK));
-	int backw = u8width(backl);
-	int langw = lang_width();
+	snprintf(lst, sizeof lst, " %s %s ", GL_LIST,  S(T_VLIST));
+	snprintf(crd, sizeof crd, " %s %s ", GL_CARDS, S(T_VCARDS));
+	int backw = u8width(backl), langw = lang_width();
+	int wl = u8width(lst), wc = u8width(crd);
 
-	/* Back is pinned to the top right corner and never moves; the language
-	 * switch sits to its left when there is room for it there. */
-	SB_row[S_BACK] = 0;
-	SB_col[S_BACK] = g_w - backw;
-	SB_wid[S_BACK] = backw;
+	int x = g_w - backw;
+	SB_row[S_BACK]  = 0; SB_col[S_BACK]  = x;  SB_wid[S_BACK]  = backw;
+	x -= langw + 1;
+	SB_row[S_LANG]  = 0; SB_col[S_LANG]  = x;  SB_wid[S_LANG]  = langw;
+	x -= wc + 1;
+	SB_row[S_CARDS] = 0; SB_col[S_CARDS] = x;  SB_wid[S_CARDS] = wc;
+	x -= wl + 1;
+	SB_row[S_LIST]  = 0; SB_col[S_LIST]  = x;  SB_wid[S_LIST]  = wl;
 
-	int lx = g_w - backw - langw - 1;
-	int lang_inline = (lx >= 12);
-	SB_wid[S_LANG] = langw;
-	if (lang_inline) { SB_row[S_LANG] = 0; SB_col[S_LANG] = lx; }
+	/* Too narrow to put the search box beside them: it gets a row of its own
+	 * rather than being dropped. A search box that is only there on a wide
+	 * terminal is a search box nobody learns about. */
+	SB_findw = x - 2;
+	SB_findrow = (SB_findw >= 14) ? 0 : 1;
+	if (SB_findrow) SB_findw = g_w - 2;
 
-	int first = (lang_inline ? lx : g_w - backw) - 1;
-	int full  = g_w - 1;
-
-	int x = 1, row = 0;
+	int row = SB_findrow + 1;
+	x = 1;
 	for (int i = 0; i < g_nchip; i++) {
 		char lab[160];
 		chip_label(i, lab, sizeof lab);
 		int w = u8width(lab) + 2;
-		int limit = row ? full : first;
-		if (x > 1 && x + w > limit) { row++; x = 1; }
+		if (x > 1 && x + w > g_w - 1) { row++; x = 1; }
 		SB_row[i] = row;
 		SB_col[i] = x;
 		SB_wid[i] = w;
 		x += w + 1;
-	}
-	if (!lang_inline) {                 /* too narrow beside Back: own line */
-		if (x > 1 && x + langw > full) { row++; x = 1; }
-		SB_row[S_LANG] = row;
-		SB_col[S_LANG] = x;
 	}
 	SB_rows = row + 1;
 }
@@ -4886,25 +4891,31 @@ static void view_load(void)
 
 static void draw_find(void)
 {
-	int y = G_findrow;
-	gfill(y, 0, g_w, " ", P_CHIP);
-
-	char crd[48], lst[48], cnt[32];
+	/* Painted over the bar draw_strip has already filled, on whichever of its
+	 * rows the layout gave the box. No fill of its own: two things filling the
+	 * same row is how one of them ends up drawing over the other's cursor. */
+	int y = G_chiprow + SB_findrow;
+	char lst[48], crd[48], cnt[32];
 	snprintf(lst, sizeof lst, " %s %s ", GL_LIST,  S(T_VLIST));
 	snprintf(crd, sizeof crd, " %s %s ", GL_CARDS, S(T_VCARDS));
 	snprintf(cnt, sizeof cnt, "%d / %d", g_nview, g_npkg);
-	int wl = u8width(lst), wc = u8width(crd), wn = u8width(cnt);
 
-	int xc = g_w - 1 - wc, xl = xc - wl - 1, xn = xl - wn - 3;
-	if (xn > 12) {
-		gput(y, xn, cnt, P_CHIP, wn);
-		gput(y, xl, lst, g_vmode == V_LIST  ? P_CHIPSEL : P_CHIP, wl);
-		gput(y, xc, crd, g_vmode == V_CARDS ? P_CHIPSEL : P_CHIP, wc);
-		hit_add(H_VIEW, V_LIST,  y, xl, 1, wl);
-		hit_add(H_VIEW, V_CARDS, y, xc, 1, wc);
-	} else xn = g_w - 1;
+	int curl = (g_zone == Z_STRIP && g_strip == S_LIST);
+	int curc = (g_zone == Z_STRIP && g_strip == S_CARDS);
+	int xl = SB_col[S_LIST], xc = SB_col[S_CARDS];
+	gput(0 + G_chiprow, xl, lst, curl ? P_CURSOR : (g_vmode == V_LIST  ? P_CHIPSEL : P_CHIP), SB_wid[S_LIST]);
+	gput(0 + G_chiprow, xc, crd, curc ? P_CURSOR : (g_vmode == V_CARDS ? P_CHIPSEL : P_CHIP), SB_wid[S_CARDS]);
+	if (curl) cursor_sweep(G_chiprow, xl, SB_wid[S_LIST],  P_CURSOR, P_CURSORHOT);
+	if (curc) cursor_sweep(G_chiprow, xc, SB_wid[S_CARDS], P_CURSOR, P_CURSORHOT);
+	hit_add(H_VIEW, V_LIST,  G_chiprow, xl, 1, SB_wid[S_LIST]);
+	hit_add(H_VIEW, V_CARDS, G_chiprow, xc, 1, SB_wid[S_CARDS]);
 
-	char left[200];
+	int wn = u8width(cnt), right = SB_findrow ? g_w - 1 : xl;
+	int xn = right - wn - 2;
+	if (xn > 14) gput(y, xn, cnt, P_CHIP, wn);
+	else xn = right;
+
+	char left[220];
 	if (g_filter[0]) snprintf(left, sizeof left, " %s  %s_", S(T_FIND), g_filter);
 	else             snprintf(left, sizeof left, " %s  %s", S(T_FIND), S(T_FINDHINT));
 	gput(y, 1, left, g_filter[0] ? P_CHIPSEL : P_ABSENT, xn - 2);
@@ -5392,6 +5403,10 @@ static void tui(void)
 			case K_ENTER:
 				if (g_strip == S_BACK) { term_cooked(); return; }
 				if (g_strip == S_LANG) { g_zh = !g_zh; break; }
+				if (g_strip == S_LIST || g_strip == S_CARDS) {
+					g_vmode = (g_strip == S_LIST) ? V_LIST : V_CARDS;
+					view_save(); g_cardrow = 0; break;
+				}
 				if (g_nview) g_zone = Z_GRID;
 				break;
 			}
