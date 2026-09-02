@@ -4831,6 +4831,12 @@ enum { Z_STRIP = 0, Z_GRID };
 static int g_zone = Z_GRID;
 static int g_chip = 1;                /* the category being shown */
 static int g_strip = 1;               /* the cursor's place along the bar */
+/* The bar is two bands — the machine's own controls on the top row, the
+ * categories under them — and the grid is a third. Each keeps its own place,
+ * so walking up to the language switch and back down returns to the category
+ * the cursor was on rather than to whatever sits under the column it left
+ * from. Moving is not choosing; that is what Enter is for. */
+static int g_barsel = -1, g_chipsel = -1;
 static int g_card = 0, g_cardrow = 0;
 static int g_cat = 0;                 /* the category the current chip names */
 static int g_view[MAX_PKGS], g_nview = 0;
@@ -5210,14 +5216,28 @@ static void draw_strip(void)
  * category is not a thing you do anything to — and the grid then goes back to
  * its first card, since landing on card 14 of a category you have only just
  * arrived in is disorienting and there is nothing there you were looking at. */
+/* Move the cursor. Only the cursor — walking onto a category used to select
+ * it, which was harmless while the chips were the only row and became a
+ * trap the moment there was a row above them to walk down from: arriving
+ * from Back landed on whichever chip was under that column and changed what
+ * the screen was showing. Choosing is chip_select, and Enter is what calls
+ * it. */
 static void strip_to(int i)
 {
 	if (i < 0) i = 0;
 	if (i >= S_LEN) i = S_LEN - 1;
 	g_strip = i;
-	if (i >= g_nchip || i == g_chip) return;
+	if (i < g_nchip) g_chipsel = i;
+	else if (SB_row[i] == SB_findrow) g_barsel = i;
+}
+
+static void chip_select(int i)
+{
+	if (i < 0 || i >= g_nchip || i == g_chip) return;
 	g_chip = i;
 	if (g_chipcat[i] >= 0) g_cat = g_chipcat[i];
+	/* A different list is a different place, so the grid's own cursor starts
+	 * over — but only here, where the list actually changed. */
 	g_card = 0;
 	g_cardrow = 0;
 	rebuild_lists();
@@ -5244,8 +5264,18 @@ static void strip_h(int dir)
 
 static int strip_step(int dir)
 {
-	int row = SB_row[g_strip] + dir;
+	int from = SB_row[g_strip];
+	int row = from + dir;
 	if (row < 0 || row >= SB_rows) return 0;
+
+	/* Leaving one band for the other goes back to where that band was left,
+	 * not to the nearest thing under the current column. Within a band —
+	 * chips that wrapped onto two rows — nearest by column is still right. */
+	if (from == SB_findrow && row != SB_findrow) {
+		if (g_chipsel >= 0 && g_chipsel < g_nchip) { strip_to(g_chipsel); return 1; }
+	} else if (from != SB_findrow && row == SB_findrow) {
+		if (g_barsel >= 0 && SB_row[g_barsel] == SB_findrow) { strip_to(g_barsel); return 1; }
+	}
 	int best = -1, bestd = 1 << 30;
 	for (int i = 0; i < S_LEN; i++) {
 		if (SB_row[i] != row) continue;
@@ -5569,7 +5599,7 @@ static void tui(void)
 	rebuild_lists();
 	/* Something is already installed: that is what this visit is probably
 	 * about, so start on that chip rather than on the whole catalogue. */
-	if (g_ninst) strip_to(0);
+	if (g_ninst) { strip_to(0); chip_select(0); }
 
 	for (;;) {
 		term_measure();
@@ -5606,7 +5636,8 @@ static void tui(void)
 			switch (hit_test(g_my, g_mx, &idx)) {
 			case H_BACK: term_cooked(); return;
 			case H_LANG: g_zh = !g_zh; g_zone = Z_STRIP; g_strip = S_LANG; continue;
-			case H_CHIP: g_zone = Z_STRIP; strip_to(idx); continue;
+			/* A click is explicit, so it chooses as well as moves. */
+			case H_CHIP: g_zone = Z_STRIP; strip_to(idx); chip_select(idx); continue;
 			case H_VIEW: g_vmode = idx; view_save(); g_cardrow = 0; continue;
 			case H_FIND: g_zone = Z_STRIP; g_strip = S_FIND; continue;
 			/* A card opens on a single click, anywhere on it, the way a
@@ -5673,6 +5704,7 @@ static void tui(void)
 				if (g_nview) g_zone = Z_GRID;
 				break;
 			case K_ENTER:
+				if (g_strip < g_nchip) { chip_select(g_strip); break; }
 				if (g_strip == S_BACK) { term_cooked(); return; }
 				if (g_strip == S_LANG) { g_zh = !g_zh; break; }
 				if (g_strip == S_LIST || g_strip == S_CARDS) {
@@ -5690,7 +5722,7 @@ static void tui(void)
 			case K_RIGHT: if (g_card < g_nview - 1) g_card++; break;
 			case K_UP:
 				if (g_card >= G_cols) g_card -= G_cols;
-				else { g_zone = Z_STRIP; g_strip = g_chip; }
+				else { g_zone = Z_STRIP; strip_to(g_chipsel >= 0 ? g_chipsel : g_chip); }
 				break;
 			case K_DOWN:
 				if (g_card + G_cols < g_nview) g_card += G_cols;
@@ -5706,7 +5738,7 @@ static void tui(void)
 				break;
 			case K_HOME: g_card = 0; break;
 			case K_END:  g_card = g_nview ? g_nview - 1 : 0; break;
-			case K_TAB:  g_zone = Z_STRIP; g_strip = g_chip; break;
+			case K_TAB:  g_zone = Z_STRIP; strip_to(g_chipsel >= 0 ? g_chipsel : g_chip); break;
 			case K_ENTER:
 				g_msg[0] = '\0';
 				if (g_nview) screen_app(&g_pkg[g_view[g_card]]);
