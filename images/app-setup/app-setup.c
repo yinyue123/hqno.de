@@ -1752,11 +1752,21 @@ static void grid_dump(FILE *f)
 			Cell *cell = &g_grid[r * g_gw + c];
 			if (!cell->cont && (cell->ch[0] != ' ' || cell->ch[1] != '\0')) last = c;
 		}
+		/* Attributes too, when asked. A still is normally plain text because
+		 * that is what can be diffed; a still somebody is *looking* at, to
+		 * check that stopped is yellow and broken is red, is not diffable and
+		 * should carry its colours. */
+		int at = -1;
 		for (int c = 0; c <= last; c++) {
 			Cell *cell = &g_grid[r * g_gw + c];
 			if (cell->cont) continue;
+			if (g_color && cell->attr != at) {
+				at = cell->attr;
+				fprintf(f, "\x1b[%sm", SGR[at]);
+			}
 			fputs(cell->ch[0] ? cell->ch : " ", f);
 		}
+		if (g_color && at >= 0) fputs("\x1b[0m", f);
 		fputc('\n', f);
 	}
 }
@@ -4179,8 +4189,12 @@ static int act_draw(int row, int col, const Action *a, int focused, int maxw)
 	else           snprintf(t, sizeof t, "<%s>", a->label);
 	int w = u8width(t);
 	if (w > maxw) return 0;
-	gput(row, col, t, focused ? P_CURSOR : (a->dim ? P_BTNDIM : P_WIN), w);
-	if (focused) cursor_sweep(row, col, w, P_CURSOR, P_CURSORHOT);
+	/* A background, so a button is a shape and not five words in a row. The
+	 * form's three buttons have always been drawn on cyan by btn_draw; these
+	 * are the same thing and now look like it. Dim keeps the flat grey,
+	 * because a button that cannot be pressed should not look pressable. */
+	gput(row, col, t, focused ? P_BTNACT : (a->dim ? P_BTNDIM : P_BTN), w);
+	if (focused) cursor_sweep(row, col, w, P_BTNACT, P_CURSORHOT);
 	return w;
 }
 
@@ -4228,7 +4242,11 @@ static int detail_facts(const Pkg *p, char lab[6][32], char val[6][64])
 #define DET_LINES 96
 typedef struct { char t[512]; unsigned char a; } DetLine;
 
-static int detail_body(const Pkg *p, int cols, DetLine *out)
+/* `labw` is the label column the caller has already established, so the
+ * facts above this and the Includes/Log lines in it line up on one edge.
+ * Zero means "work it out yourself", which is what the callers that have no
+ * facts above them pass. */
+static int detail_body(const Pkg *p, int cols, DetLine *out, int labw)
 {
 	int n = 0;
 	char wrap[24][512];
@@ -4238,9 +4256,11 @@ static int detail_body(const Pkg *p, int cols, DetLine *out)
 		copy_str(out[n].t, sizeof out[n].t, wrap[i]); out[n].a = P_WIN; n++;
 	}
 
-	int labw = u8width(S(T_INCLUDES));
-	if (u8width(S(T_LOG)) > labw) labw = u8width(S(T_LOG));
-	labw += 3;
+	if (!labw) {
+		labw = u8width(S(T_INCLUDES));
+		if (u8width(S(T_LOG)) > labw) labw = u8width(S(T_LOG));
+		labw += 3;
+	}
 
 	char gutter[64];
 	if (pkg_includes(p)[0] && n < DET_LINES) {
@@ -4295,7 +4315,7 @@ static int status_body(const Pkg *p, int cols, DetLine *out)
 		out[n].a = P_WIN; n++;
 	}
 	if (nf && n < DET_LINES) { out[n].t[0] = '\0'; out[n].a = P_WIN; n++; }
-	if (n < DET_LINES - 8) n += detail_body(p, cols, out + n);
+	if (n < DET_LINES - 8) n += detail_body(p, cols, out + n, labw);
 	return n;
 }
 
@@ -4458,7 +4478,10 @@ static int act_layout(AppView *v, int inner, int backw)
 		v->arow[i] = row;
 		v->acol[i] = x;
 		v->awid[i] = w;
-		x += w + 1;
+		/* Two columns between buttons, not one. Five of them at one space
+		 * apart is a wall of angle brackets; nmtui never puts five in a row
+		 * and does not have to think about this. */
+		x += w + 2;
 	}
 	v->arow[v->na] = 0;                            /* Back */
 	v->acol[v->na] = inner - backw;
@@ -4530,8 +4553,14 @@ static void app_draw(Pkg *p, AppView *v)
 		v->bscroll = 0;
 	}
 
-	/* border, tabs, [verbs + a blank], the rule, the body, border */
-	int ph = 2 + v->ntrows + (v->na ? v->nbrows + 1 : 0) + 1 + nb;
+	/* border, tabs, the rule, the body, [a blank + the verbs], border.
+	 *
+	 * The verbs are at the foot now. They used to sit directly under the tab
+	 * row, where five of them read as one dense line of brackets pinned to
+	 * the title — and nmtui, which this program's palette and its three form
+	 * buttons come from, has always put the things you press at the bottom
+	 * with the content above them. */
+	int ph = 2 + v->ntrows + 1 + nb + (v->na ? v->nbrows + 1 : 0);
 	if (ph > room) ph = room;
 	if (ph < 8) ph = 8;
 
@@ -4572,16 +4601,6 @@ static void app_draw(Pkg *p, AppView *v)
 	}
 	y += v->ntrows;
 
-	/* ---- the verbs of this tab ------------------------------------------ */
-	if (v->na) {
-		for (int i = 0; i < v->na; i++) {
-			int by = y + v->arow[i], bx = tx + v->acol[i];
-			act_draw(by, bx, &v->acts[i], v->zone == Z_BTN && i == v->sel, v->awid[i]);
-			hit_add(H_BTN, i, by, bx, 1, v->awid[i]);
-		}
-		y += v->nbrows;
-	}
-
 	gput(y, px, BX_LT, P_BORDER, 1);
 	gfill(y, px + 1, pw - 2, BX_H, P_BORDER);
 	gput(y, px + pw - 1, BX_RT, P_BORDER, 1);
@@ -4589,8 +4608,19 @@ static void app_draw(Pkg *p, AppView *v)
 
 	g_clip_top = prow + 1; g_clip_bot = prow + ph - 2;
 
+	/* ---- the verbs, at the foot ----------------------------------------- */
+	int arow0 = prow + ph - 1 - v->nbrows;
+	if (v->na) {
+		for (int i = 0; i < v->na; i++) {
+			int by = arow0 + v->arow[i], bx = tx + v->acol[i];
+			act_draw(by, bx, &v->acts[i], v->zone == Z_BTN && i == v->sel, v->awid[i]);
+			hit_add(H_BTN, i, by, bx, 1, v->awid[i]);
+		}
+	}
+
 	int btop = y;
-	v->brows = prow + ph - 1 - btop;
+	/* the blank row above the verbs is theirs, not the body's */
+	v->brows = (v->na ? arow0 - 1 : prow + ph - 1) - btop;
 	if (v->brows < 1) v->brows = 1;
 	v->maxscroll = nb - v->brows;
 	if (v->maxscroll < 0) v->maxscroll = 0;
@@ -4686,8 +4716,10 @@ static void screen_app(Pkg *p)
 
 		if (v.zone == Z_BODY) {
 			switch (k) {
-			case K_UP:    if (v.bscroll > 0) v.bscroll--; else v.zone = Z_BTN; continue;
-			case K_DOWN:  if (v.bscroll < v.maxscroll) v.bscroll++; continue;
+			case K_UP:    if (v.bscroll > 0) v.bscroll--; else v.zone = Z_TAB; continue;
+			case K_DOWN:  if (v.bscroll < v.maxscroll) v.bscroll++;
+			              else if (v.na) v.zone = Z_BTN;
+			              continue;
 			case K_PGUP:  v.bscroll -= v.brows; continue;
 			case K_PGDN:  v.bscroll += v.brows; continue;
 			case K_HOME:  v.bscroll = 0; continue;
@@ -4710,8 +4742,10 @@ static void screen_app(Pkg *p)
 			case K_END:   v.tsel = v.ntab; moved = 1; break;
 			case K_TAB:   v.tsel = (v.tsel + 1) % (v.ntab + 1); moved = 1; break;
 			case K_DOWN:
-				if (v.na) v.zone = Z_BTN;
-				else if (v.maxscroll) v.zone = Z_BODY;
+				/* Down the screen in the order it is drawn: tabs, then the
+				 * text, then the verbs at the foot. */
+				if (v.maxscroll) v.zone = Z_BODY;
+				else if (v.na) v.zone = Z_BTN;
 				break;
 			case K_UP: break;
 			default: break;
@@ -4743,9 +4777,11 @@ static void screen_app(Pkg *p)
 		case K_HOME:  v.sel = 0; continue;
 		case K_END:   v.sel = v.na ? v.na - 1 : 0; continue;
 		case K_DOWN:
-			if (!act_step(&v, +1) && v.maxscroll) v.zone = Z_BODY;
+			act_step(&v, +1);   /* the verbs are the last band */
 			continue;
-		case K_UP:    if (!act_step(&v, -1)) v.zone = Z_TAB; continue;
+		case K_UP:    if (!act_step(&v, -1))
+		              	v.zone = v.maxscroll ? Z_BODY : Z_TAB;
+		              continue;
 		case K_TAB:   v.zone = Z_TAB; continue;
 		}
 		if (k != K_ENTER && k != ' ') continue;
@@ -6017,6 +6053,10 @@ static int cli_screenshot(int n, char **rest)
 		}
 		/* So a filtered home screen can be rendered without a terminal, which
 		 * is the only way the search box is testable from a script. */
+		/* A still with its colours on. The default is off because a frame that
+		 * is diffed should be plain text; a frame somebody is *looking* at, to
+		 * check that stopped is yellow and broken is red, should not be. */
+		else if (!strcmp(rest[i], "--color")) g_color = 1;
 		else if (!strcmp(rest[i], "--find") && i + 1 < n)
 			copy_str(g_filter, sizeof g_filter, rest[++i]);
 		else if (!strcmp(rest[i], "--view") && i + 1 < n)
