@@ -218,12 +218,21 @@ static const L T_NOMATCH   = {"Nothing matches. Backspace, or Esc to clear.",
                              "没有匹配的。退格删字，或按 Esc 清空。"};
 static const L T_HELPHOME  = {"type to search   ↑↓←→ move   Enter open   F3 view   F2 中文   Esc clear/quit",
                              "直接打字搜索   ↑↓←→ 移动   回车 打开   F3 视图   F2 English   Esc 清空/退出"};
-static const L T_HELPDET   = {"←→ button    Enter run    ↓ into the text",
-                             "←→ 选按钮    回车 执行    ↓ 进正文滚动"};
+static const L T_HELPDET   = {"←→ tab   ↓ into it   Enter run   F2 中文   Esc back",
+                             "←→ 切换标签   ↓ 进入内容   回车 执行   F2 English   Esc 返回"};
 static const L T_SERVICE   = {"Service",      "服务"};
 static const L T_VERSION   = {"Version",      "版本"};
 static const L T_INCLUDES  = {"Includes",     "包含"};
 static const L T_LOG       = {"Log",          "日志"};
+/* The tab bar of the app screen. `Status` when there is something running to
+ * have a state, `Not installed` when there is not — the first tab names what
+ * this screen is showing rather than what the software would do. */
+static const L T_TSTATUS   = {"Status",        "状态"};
+static const L T_EDITHINT  = {"Enter opens the form. * marks what must be filled in.",
+                             "回车打开编辑表单。带 * 的是必填项。"};
+static const L T_TABSENT   = {"Not installed", "未安装"};
+static const L T_REMOVEBODY= {"Uninstalling stops the service, removes the packages this recipe installed and deletes the configuration it wrote. Data is kept: databases, document roots and anything under /data stay where they are. What exactly each recipe keeps is in its own How to use it.",
+                             "卸载会停掉服务、删掉这个配方装的软件包和它写的配置。数据会保留：数据库、网站目录以及 /data 下的东西都不动。具体每个配方保留什么，看它自己的「使用说明」。"};
 static const L T_NOLOG     = {"No log yet. One appears at %s the first time something is run on it.",
                              "还没有日志。对它做过一次操作之后，日志就在 %s。"};
 static const L T_LOGEMPTY  = {"The log file is empty.", "日志文件是空的。"};
@@ -4015,6 +4024,15 @@ static void draw_cover(int row, int col, int w, int rows, const Pkg *p, const ch
  * hand end of the same row, in the same corner it occupies everywhere else.
  * Choosing what to do is the same gesture as choosing what to do it to.
  */
+/* The tabs are places and never reorder; the verbs inside a tab are actions
+ * and may. That split is the whole point of §6 — `build_actions` used to put
+ * Install in slot 0 when a package was absent and Stop in slot 0 when it was
+ * running, so the same two keystrokes did different things. */
+enum { TAB_STATUS = 0, TAB_SETTINGS, TAB_LOG, TAB_DOCS, TAB_REMOVE };
+#define MAX_TABS 6
+#define MAX_ACTS 14
+typedef struct { int kind; char label[64]; char aux[16]; } TabE;
+
 enum { A_INSTALL = 1, A_REMOVE, A_START, A_STOP, A_RESTART, A_BOOT,
        A_STATUS, A_DETAILS, A_PARAMS, A_DOCS, A_LOG, A_BUTTON };
 
@@ -4045,22 +4063,24 @@ static void add_log_action(const Pkg *p, Action *a)
  * on something running — and **the log comes straight after it**, because "it
  * is not running" and "why is it not running" are the same moment and the
  * answer should not be at the far end of a wrapped row behind Details. */
-static int build_actions(const Pkg *p, Action *a)
+/* The verbs of one tab. Status has the ones that change what the machine is
+ * doing; Remove has the one; Settings, Log and How-to-use-it have none, because
+ * they are places to look rather than things to do. */
+static int build_actions(const Pkg *p, int tab, Action *a)
 {
 	int n = 0;
 
-	/* A recipe that declares `# button:` replaces the *service* half of this
-	 * row — Install/Start/Stop/Restart/Boot/Status/Update/Uninstall, every one
-	 * of which is computed from a state machine that does not describe it.
-	 *
-	 * Settings, Details, Docs and the log are **not** part of that half and
-	 * stay. Taking them too is what the first version did, and it made a store
-	 * card impossible to use: the card whose entire purpose is to hold a
-	 * bucket name and a key had no way to open the form they go in. A verb row
-	 * with nothing on it but "✓ Test connection" is not a smaller interface,
-	 * it is a dead one. */
+	if (tab == TAB_REMOVE) {
+		a[0].act = A_REMOVE; copy_str(a[0].label, 64, S(T_REMOVE));
+		a[0].aux[0] = '\0'; a[0].dim = 0;
+		return 1;
+	}
+	if (tab != TAB_STATUS) return 0;
+
+	/* A recipe that declares `# button:` has said the service state machine
+	 * does not describe it. Its buttons are the Status tab's verbs. */
 	if (p->nbuttons) {
-		for (int i = 0; i < p->nbuttons; i++) {
+		for (int i = 0; i < p->nbuttons && n < MAX_ACTS; i++) {
 			const Btn *b = &p->buttons[i];
 			a[n].act = A_BUTTON;
 			copy_str(a[n].label, 64, (g_zh && b->label_zh[0]) ? b->label_zh : b->label);
@@ -4070,56 +4090,74 @@ static int build_actions(const Pkg *p, Action *a)
 			a[n].dim = 0;
 			n++;
 		}
-		a[n].act = A_PARAMS; copy_str(a[n].label, 64, S(T_PARAMS));
-		snprintf(a[n].aux, sizeof a[n].aux, "%d", p->nparams);
-		if (!p->nparams) a[n].aux[0] = '\0';
-		a[n].dim = !p->nparams; n++;
-
-		add_log_action(p, &a[n]); n++;
-		a[n].act = A_DETAILS; copy_str(a[n].label, 64, S(T_DETAILS)); a[n].aux[0] = 0; a[n].dim = 0; n++;
-		a[n].act = A_DOCS;    copy_str(a[n].label, 64, S(T_DOCS));    a[n].aux[0] = 0; a[n].dim = 0; n++;
 		return n;
 	}
 
 	int inst = pkg_installed(p);
-
 	if (!inst) {
 		a[n].act = A_INSTALL; copy_str(a[n].label, 64, S(T_INSTALL)); a[n].aux[0] = 0; a[n].dim = 0; n++;
-	} else if (p->service[0]) {
+		return n;
+	}
+	if (p->service[0]) {
 		if (p->status == ST_RUNNING) {
 			a[n].act = A_STOP; copy_str(a[n].label, 64, S(T_STOP)); a[n].aux[0] = 0; a[n].dim = 0; n++;
 		} else {
 			a[n].act = A_START; copy_str(a[n].label, 64, S(T_START)); a[n].aux[0] = 0; a[n].dim = 0; n++;
 		}
+		a[n].act = A_RESTART; copy_str(a[n].label, 64, S(T_RESTART)); a[n].aux[0] = 0; a[n].dim = 0; n++;
 	}
-
-	add_log_action(p, &a[n]); n++;
-
-	if (inst) {
-		if (p->service[0]) {
-			a[n].act = A_RESTART; copy_str(a[n].label, 64, S(T_RESTART)); a[n].aux[0] = 0; a[n].dim = 0; n++;
-		}
-		a[n].act = A_STATUS; copy_str(a[n].label, 64, S(T_STATUS)); a[n].aux[0] = 0; a[n].dim = 0; n++;
-		a[n].act = A_INSTALL; copy_str(a[n].label, 64, S(T_UPDATE)); a[n].aux[0] = 0; a[n].dim = 0; n++;
-		if (p->service[0]) {
-			a[n].act = A_BOOT; copy_str(a[n].label, 64, S(T_BOOT));
-			snprintf(a[n].aux, sizeof a[n].aux, "%s",
-			         p->enabled == 1 ? S(T_YES) : p->enabled == 0 ? S(T_NO) : "?");
-			a[n].dim = 0; n++;
-		}
+	a[n].act = A_STATUS; copy_str(a[n].label, 64, S(T_STATUS)); a[n].aux[0] = 0; a[n].dim = 0; n++;
+	a[n].act = A_INSTALL; copy_str(a[n].label, 64, S(T_UPDATE)); a[n].aux[0] = 0; a[n].dim = 0; n++;
+	if (p->service[0]) {
+		a[n].act = A_BOOT; copy_str(a[n].label, 64, S(T_BOOT));
+		snprintf(a[n].aux, sizeof a[n].aux, "%s",
+		         p->enabled == 1 ? S(T_YES) : p->enabled == 0 ? S(T_NO) : "?");
+		a[n].dim = 0; n++;
 	}
-
-	a[n].act = A_PARAMS; copy_str(a[n].label, 64, S(T_PARAMS));
-	snprintf(a[n].aux, sizeof a[n].aux, "%d", p->nparams);
-	if (!p->nparams) a[n].aux[0] = '\0';
-	a[n].dim = !p->nparams; n++;
-
-	a[n].act = A_DETAILS; copy_str(a[n].label, 64, S(T_DETAILS)); a[n].aux[0] = 0; a[n].dim = 0; n++;
-	a[n].act = A_DOCS;    copy_str(a[n].label, 64, S(T_DOCS));    a[n].aux[0] = 0; a[n].dim = 0; n++;
-	if (inst) { a[n].act = A_REMOVE; copy_str(a[n].label, 64, S(T_REMOVE)); a[n].aux[0] = 0; a[n].dim = 0; n++; }
 	return n;
 }
 
+
+
+/* Which tabs this package has. Settings only when it declares any, Log only
+ * when there is one on disk, Remove only when there is something to remove —
+ * a tab that opens on nothing is a tab somebody presses once and distrusts
+ * afterwards. */
+static int build_tabs(const Pkg *p, TabE *t)
+{
+	int n = 0, inst = pkg_installed(p);
+	char lp[600];
+	struct stat st;
+
+	t[n].kind = TAB_STATUS;
+	copy_str(t[n].label, 64, S(inst ? T_TSTATUS : T_TABSENT));
+	t[n].aux[0] = '\0'; n++;
+
+	if (p->nparams) {
+		t[n].kind = TAB_SETTINGS;
+		copy_str(t[n].label, 64, S(T_PARAMS));
+		snprintf(t[n].aux, sizeof t[n].aux, "%d", p->nparams);
+		n++;
+	}
+	snprintf(lp, sizeof lp, "%s/%s.log", log_dir(), p->id);
+	if (stat(lp, &st) == 0 && S_ISREG(st.st_mode)) {
+		t[n].kind = TAB_LOG;
+		copy_str(t[n].label, 64, S(T_LOG));
+		t[n].aux[0] = '\0';
+		if (st.st_size > 0) human_size((long long)st.st_size, t[n].aux, sizeof t[n].aux);
+		n++;
+	}
+	t[n].kind = TAB_DOCS;
+	copy_str(t[n].label, 64, S(T_DOCS));
+	t[n].aux[0] = '\0'; n++;
+
+	if (inst) {
+		t[n].kind = TAB_REMOVE;
+		copy_str(t[n].label, 64, S(T_REMOVE));
+		t[n].aux[0] = '\0'; n++;
+	}
+	return n;
+}
 
 static int act_width(const Action *a)
 {
@@ -4223,20 +4261,172 @@ static int detail_body(const Pkg *p, int cols, DetLine *out)
 	return n;
 }
 
+/* --- the body of each tab -------------------------------------------------
+ *
+ * Every one of them produces the same thing the detail pane always produced: a
+ * list of styled lines the existing scroller already knows how to draw. That
+ * is why four of the five tabs cost almost nothing — Log and How-to-use-it
+ * were separate paged screens, and a paged screen is a list of lines with a
+ * window drawn round it.
+ *
+ * Built when the tab changes rather than every frame: How-to-use-it forks a
+ * shell to ask the recipe, and doing that sixty times a second would be a
+ * cursor animation that runs a script.
+ */
+static int status_body(const Pkg *p, int cols, DetLine *out)
+{
+	int n = 0;
+	char lab[6][32], val[6][64];
+	int nf = detail_facts(p, lab, val);
+
+	/* One label column, all the way down — LuCI's shape. The facts used to be
+	 * an inline 2x3 grid above hanging-indent blocks, which is two layout
+	 * languages on one screen and neither edge to track. */
+	int labw = 0;
+	for (int i = 0; i < nf; i++) {
+		int w = u8width(lab[i]);
+		if (w > labw) labw = w;
+	}
+	labw += 3;
+	for (int i = 0; i < nf && n < DET_LINES - 4; i++) {
+		char g[64];
+		u8pad(g, sizeof g, lab[i], labw);
+		snprintf(out[n].t, sizeof out[n].t, "%s%s", g, val[i]);
+		out[n].a = P_WIN; n++;
+	}
+	if (nf && n < DET_LINES) { out[n].t[0] = '\0'; out[n].a = P_WIN; n++; }
+	if (n < DET_LINES - 8) n += detail_body(p, cols, out + n);
+	return n;
+}
+
+static int text_body(const char *txt, int cols, DetLine *out, int attr)
+{
+	int n = 0;
+	const char *l = txt;
+	while (*l && n < DET_LINES) {
+		const char *e = strchr(l, '\n');
+		size_t len = e ? (size_t)(e - l) : strlen(l);
+		char one[1024];
+		if (len >= sizeof one) len = sizeof one - 1;
+		memcpy(one, l, len); one[len] = '\0';
+		/* Wrapped rather than cut: a log line and a help line are both prose
+		 * often enough that losing the right of them loses the point. */
+		if (u8width(one) <= cols) {
+			copy_str(out[n].t, sizeof out[n].t, one); out[n].a = attr; n++;
+		} else {
+			/* A recipe's help text and a log are both laid out with indents
+			 * that carry meaning, and u8wrap eats leading spaces. Take the
+			 * indent off first and put it back on every piece. */
+			int ind = 0;
+			while (one[ind] == ' ' && ind < cols / 2) ind++;
+			char pad[64];
+			int pn = ind < (int)sizeof pad - 1 ? ind : (int)sizeof pad - 1;
+			memset(pad, ' ', (size_t)pn); pad[pn] = '\0';
+			char wrap[8][512];
+			int nw = u8wrap(one + ind, cols - pn, wrap, 8);
+			for (int i = 0; i < nw && n < DET_LINES; i++) {
+				snprintf(out[n].t, sizeof out[n].t, "%s%s", pad, wrap[i]);
+				out[n].a = attr; n++;
+			}
+		}
+		if (!e) break;
+		l = e + 1;
+	}
+	return n;
+}
+
+static int log_body(const Pkg *p, int cols, DetLine *out)
+{
+	char path[600];
+	snprintf(path, sizeof path, "%s/%s.log", log_dir(), p->id);
+	int fd = open(path, O_RDONLY);
+	if (fd < 0) return 0;
+	off_t size = lseek(fd, 0, SEEK_END);
+	off_t from = size > LOG_TAIL ? size - LOG_TAIL : 0;
+	if (lseek(fd, from, SEEK_SET) < 0) from = 0;
+	char *buf = xmalloc(LOG_TAIL + 2);
+	ssize_t got = read(fd, buf, LOG_TAIL);
+	close(fd);
+	if (got < 0) got = 0;
+	buf[got] = '\0';
+	char *start = buf;
+	/* a tail that begins mid-line begins at the next one instead */
+	if (from > 0) { char *nl = strchr(buf, '\n'); if (nl) start = nl + 1; }
+	strip_ansi(start);
+	int n = text_body(start, cols, out, P_DIM);
+	free(buf);
+	return n;
+}
+
+static int docs_body(Pkg *p, int cols, DetLine *out)
+{
+	char txt[32768];
+	g_env_pkg = p;
+	int rc = run_capture(p->path, "help", txt, sizeof txt, 20, 1);
+	g_env_pkg = NULL;
+	if (rc != 0 && !txt[0]) snprintf(txt, sizeof txt, "%s", S(T_NODOC));
+	strip_ansi(txt);
+	return text_body(txt, cols, out, P_WIN);
+}
+
+static int settings_body(const Pkg *p, int cols, DetLine *out)
+{
+	int n = 0, labw = 0;
+	for (int i = 0; i < p->nparams; i++) {
+		int w = u8width(param_label_req(p, &p->params[i]));
+		if (w > labw) labw = w;
+	}
+	if (labw > cols / 2) labw = cols / 2;
+	labw += 2;
+	for (int i = 0; i < p->nparams && n < DET_LINES - 3; i++) {
+		const Param *pm = &p->params[i];
+		char g[200], cut[256];
+		u8pad(g, sizeof g, param_label_req(p, pm), labw);
+		u8ellipsis(cut, sizeof cut, pm->value[0] ? pm->value : "—", cols - labw);
+		snprintf(out[n].t, sizeof out[n].t, "%s%s", g, cut);
+		out[n].a = pm->value[0] ? P_WIN : P_DIM;
+		n++;
+	}
+	if (n < DET_LINES - 2) {
+		out[n].t[0] = '\0'; out[n].a = P_WIN; n++;
+		copy_str(out[n].t, sizeof out[n].t, S(T_EDITHINT)); out[n].a = P_DIM; n++;
+	}
+	return n;
+}
+
+static int body_for_tab(Pkg *p, int tab, int cols, DetLine *out)
+{
+	switch (tab) {
+	case TAB_SETTINGS: return settings_body(p, cols, out);
+	case TAB_LOG:      return log_body(p, cols, out);
+	case TAB_DOCS:     return docs_body(p, cols, out);
+	case TAB_REMOVE:   return text_body(S(T_REMOVEBODY), cols, out, P_WIN);
+	default:           return status_body(p, cols, out);
+	}
+}
+
+
 /* Two zones on this screen: the row of verbs, and the prose under it that
  * scrolls when there is more of it than fits. */
-enum { Z_BTN = 0, Z_BODY };
+enum { Z_TAB = 0, Z_BTN, Z_BODY };
 
 /* Everything the app screen needs to draw itself, and everything drawing it
  * works out on the way. The screen is split from its loop so that
  * `screenshot --screen app` renders the real thing rather than a second
  * drawing of it that is free to drift — the last version had two, and the
  * copy is what a layout test would have been testing. */
-#define MAX_ACTS 14
 
 typedef struct {
 	int sel;          /* 0..na-1 a verb, na is Back */
-	int zone;         /* Z_BTN or Z_BODY */
+	int zone;         /* Z_TAB, Z_BTN or Z_BODY */
+	/* which place this screen is showing, and the cursor's own position on
+	 * the bar. tsel is separate from sel so walking down into the verbs and
+	 * back up returns to the tab you came from. */
+	int tab, tsel;
+	int ntab;
+	TabE tabs[MAX_TABS];
+	int trow[MAX_TABS + 1], tcol[MAX_TABS + 1], twid[MAX_TABS + 1];
+	int ntrows;
 	int bscroll;      /* first line of prose drawn */
 	/* filled in by app_draw */
 	int na, brows, maxscroll;
@@ -4276,13 +4466,40 @@ static int act_layout(AppView *v, int inner, int backw)
 	return row + 1;
 }
 
+/* The tab bar, laid out exactly like the verb row underneath it and with Back
+ * pinned to the right the way it is on every other screen. Index ntab is Back. */
+static int tab_layout(AppView *v, int inner, int backw)
+{
+	int first = inner - backw - 2;
+	if (first < 8) first = 8;
+	int x = 0, row = 0;
+	for (int i = 0; i < v->ntab; i++) {
+		int w = u8width(v->tabs[i].label) + 2;
+		if (v->tabs[i].aux[0]) w += u8width(v->tabs[i].aux) + 1;
+		int limit = row ? inner : first;
+		if (x && x + w > limit) { row++; x = 0; }
+		v->trow[i] = row; v->tcol[i] = x; v->twid[i] = w;
+		x += w + 1;
+	}
+	v->trow[v->ntab] = 0;
+	v->tcol[v->ntab] = inner - backw;
+	v->twid[v->ntab] = backw;
+	return row + 1;
+}
+
 static void app_draw(Pkg *p, AppView *v)
 {
 	static DetLine body[DET_LINES];
+	static int nb = 0, body_tab = -1, body_cols = -1;
+	static const Pkg *body_pkg = NULL;
 
-	v->na = build_actions(p, v->acts);
-	if (v->sel > v->na) v->sel = v->na;
+	v->ntab = build_tabs(p, v->tabs);
+	if (v->tab >= v->ntab) v->tab = 0;
+	if (v->tsel > v->ntab) v->tsel = v->ntab;
+	v->na = build_actions(p, v->tabs[v->tab].kind, v->acts);
+	if (v->sel >= v->na) v->sel = v->na ? v->na - 1 : 0;
 	if (v->sel < 0) v->sel = 0;
+	if (v->zone == Z_BTN && !v->na) v->zone = Z_TAB;
 
 	grid_size(g_w, g_h);
 	g_showtop = 0;
@@ -4290,36 +4507,31 @@ static void app_draw(Pkg *p, AppView *v)
 	hit_clear();
 
 	/* Wide enough to read and no wider. A hundred columns of prose is already
-	 * a long line to track back from; on a terminal twice that, filling it
-	 * spreads six facts and a paragraph across a screen of nothing. */
+	 * a long line to track back from. */
 	int px = 1, pw = g_w - 2, room = g_h - 3;
 	if (pw > 100) { pw = 100; px = (g_w - pw) / 2; }
 	if (room < 10) { px = 0; pw = g_w > 100 ? 100 : g_w; room = g_h - 1; }
 	int tx = px + 2, inner = pw - 4;
 
-	/* Everything that goes in the panel is measured before the panel is
-	 * drawn, so a package with two lines to say about itself gets a short
-	 * panel rather than a screen-high box with a field of nothing under the
-	 * text. The cover is the part that gives when the terminal is short. */
-	int coverh = 3;
-	if (room < 16) coverh = 2;
-	if (room < 13) coverh = 1;
-	int cw = inner * 2 / 5;
-	if (cw > 30) cw = 30;
-	int stacked = (inner < 46 || cw < 12);
-
-	int nb = detail_body(p, inner, body);
-	char lab[6][32], val[6][64];
-	int nf = detail_facts(p, lab, val);
-	int nfrows = stacked ? (nf < 4 ? nf : 4) : 0;
-
 	char backl[64];
 	snprintf(backl, sizeof backl, " %s ", S(T_BACK));
 	int backw = u8width(backl);
-	v->nbrows = act_layout(v, inner, backw);
 
-	/* border, verbs, rule, state, cover, stacked facts, blank, prose, border */
-	int ph = 2 + v->nbrows + 1 + 1 + coverh + nfrows + 1 + nb;
+	v->ntrows = tab_layout(v, inner, backw);
+	v->nbrows = v->na ? act_layout(v, inner, 0) : 0;
+
+	/* Built when the tab changes, not every frame: How-to-use-it forks a shell
+	 * to ask the recipe what it says about itself. */
+	if (body_tab != v->tabs[v->tab].kind || body_cols != inner || body_pkg != p) {
+		nb = body_for_tab(p, v->tabs[v->tab].kind, inner, body);
+		body_tab = v->tabs[v->tab].kind;
+		body_cols = inner;
+		body_pkg = p;
+		v->bscroll = 0;
+	}
+
+	/* border, tabs, [verbs + a blank], the rule, the body, border */
+	int ph = 2 + v->ntrows + (v->na ? v->nbrows + 1 : 0) + 1 + nb;
 	if (ph > room) ph = room;
 	if (ph < 8) ph = 8;
 
@@ -4328,75 +4540,55 @@ static void app_draw(Pkg *p, AppView *v)
 	if (prow < 1) prow = 1;
 	win_box(prow, px, pw, ph, pkg_name(p));
 
-	/* ---- the verbs, wrapping, with Back pinned to the first row --------- */
-	int y = prow + 1;
-	for (int i = 0; i < v->na; i++) {
-		int by = y + v->arow[i], bx = tx + v->acol[i];
-		act_draw(by, bx, &v->acts[i], v->zone == Z_BTN && i == v->sel, v->awid[i]);
-		hit_add(H_BTN, i, by, bx, 1, v->awid[i]);
+	/* The state belongs on the title bar, which is what a title bar is for. It
+	 * used to float as an unlabelled line inside the panel while every other
+	 * line had a label. */
+	{
+		char st[128];
+		snprintf(st, sizeof st, " %s %s ", status_mark(p), S(*status_label(p)));
+		int sw = u8width(st);
+		if (sw < pw - u8width(pkg_name(p)) - 8)
+			gput(prow, px + pw - 2 - sw, st, status_attr(p), sw);
 	}
 
-	int bcur = (v->zone == Z_BTN && v->sel == v->na);
-	int backx = tx + v->acol[v->na];
-	gput(y, backx, backl, bcur ? P_BACKCUR : P_BACK, backw);
-	if (bcur) cursor_sweep(y, backx, backw, P_BACKCUR, P_BACKHOT);
-	hit_add(H_BACK, 0, y, backx, 1, backw);
+	/* ---- the tabs ------------------------------------------------------- */
+	int y = prow + 1;
+	for (int i = 0; i < v->ntab; i++) {
+		char t[128];
+		if (v->tabs[i].aux[0]) snprintf(t, sizeof t, " %s %s ", v->tabs[i].label, v->tabs[i].aux);
+		else                   snprintf(t, sizeof t, " %s ", v->tabs[i].label);
+		int by = y + v->trow[i], bx = tx + v->tcol[i], bw = v->twid[i];
+		int cur = (v->zone == Z_TAB && v->tsel == i);
+		gput(by, bx, t, cur ? P_CURSOR : (i == v->tab ? P_CHIPSEL : P_WIN), bw);
+		if (cur) cursor_sweep(by, bx, bw, P_CURSOR, P_CURSORHOT);
+		hit_add(H_CHIP, i, by, bx, 1, bw);
+	}
+	{
+		int bcur = (v->zone == Z_TAB && v->tsel == v->ntab);
+		int bx = tx + v->tcol[v->ntab];
+		gput(y, bx, backl, bcur ? P_BACKCUR : P_BACK, backw);
+		if (bcur) cursor_sweep(y, bx, backw, P_BACKCUR, P_BACKHOT);
+		hit_add(H_BACK, 0, y, bx, 1, backw);
+	}
+	y += v->ntrows;
 
-	/* ---- the rule under them -------------------------------------------- */
-	y += v->nbrows;
+	/* ---- the verbs of this tab ------------------------------------------ */
+	if (v->na) {
+		for (int i = 0; i < v->na; i++) {
+			int by = y + v->arow[i], bx = tx + v->acol[i];
+			act_draw(by, bx, &v->acts[i], v->zone == Z_BTN && i == v->sel, v->awid[i]);
+			hit_add(H_BTN, i, by, bx, 1, v->awid[i]);
+		}
+		y += v->nbrows;
+	}
+
 	gput(y, px, BX_LT, P_BORDER, 1);
 	gfill(y, px + 1, pw - 2, BX_H, P_BORDER);
 	gput(y, px + pw - 1, BX_RT, P_BORDER, 1);
 	y++;
 
-	/* Everything from here down belongs inside the panel. Clipping rather
-	 * than arithmetic means a terminal too short for the cover loses the
-	 * bottom of the cover, not the bottom border. */
 	g_clip_top = prow + 1; g_clip_bot = prow + ph - 2;
 
-	/* ---- state, then the cover with the hard numbers beside it ---------- */
-	char st[192];
-	snprintf(st, sizeof st, "%s %s", status_mark(p), S(*status_label(p)));
-	gput(y, tx, st, status_attr(p), inner);
-	y++;
-
-	if (!stacked) {
-		draw_cover(y, tx, cw, coverh, p, p->disk[0] ? p->disk : NULL);
-		/* Two columns of label-and-number, sized to the widest pair rather
-		 * than to the space available — spreading six short facts across
-		 * fifty columns turns a block you can read at a glance into a
-		 * scatter you have to track across. */
-		int fx = tx + cw + 3, fw = inner - cw - 3;
-		int colw = 0;
-		for (int i = 0; i < nf; i++) {
-			int lw = u8width(lab[i]) + 1 + u8width(val[i]) + 2;
-			if (lw > colw) colw = lw;
-		}
-		if (colw > fw / 2) colw = fw / 2;
-		if (colw < 8) colw = 8;
-		for (int i = 0; i < nf; i++) {
-			int fr = y + i / 2, fc = fx + (i % 2) * colw;
-			if (fr >= y + coverh) break;
-			char f[160], cut[160];
-			snprintf(f, sizeof f, "%s %s", lab[i], val[i]);
-			u8ellipsis(cut, sizeof cut, f, colw - 1);
-			gput(fr, fc, cut, P_DIM, colw - 1);
-		}
-		y += coverh;
-	} else {
-		draw_cover(y, tx, inner, coverh, p, p->disk[0] ? p->disk : NULL);
-		y += coverh;
-		for (int i = 0; i < nfrows; i++) {
-			char f[160], cut[192];
-			snprintf(f, sizeof f, "%s %s", lab[i], val[i]);
-			u8ellipsis(cut, sizeof cut, f, inner);
-			gput(y, tx, cut, P_DIM, inner);
-			y++;
-		}
-	}
-	y++;
-
-	/* ---- the prose, which is the part that scrolls ---------------------- */
 	int btop = y;
 	v->brows = prow + ph - 1 - btop;
 	if (v->brows < 1) v->brows = 1;
@@ -4404,7 +4596,7 @@ static void app_draw(Pkg *p, AppView *v)
 	if (v->maxscroll < 0) v->maxscroll = 0;
 	if (v->bscroll > v->maxscroll) v->bscroll = v->maxscroll;
 	if (v->bscroll < 0) v->bscroll = 0;
-	if (v->zone == Z_BODY && !v->maxscroll) v->zone = Z_BTN;
+	if (v->zone == Z_BODY && !v->maxscroll) v->zone = v->na ? Z_BTN : Z_TAB;
 
 	for (int i = 0; i < v->brows && v->bscroll + i < nb; i++)
 		gput(btop + i, tx, body[v->bscroll + i].t, body[v->bscroll + i].a, inner);
@@ -4432,7 +4624,9 @@ static int act_step(AppView *v, int dir)
 	int row = v->arow[v->sel] + dir;
 	if (row < 0 || row >= v->nbrows) return 0;
 	int best = -1, bestd = 1 << 30;
-	for (int i = 0; i <= v->na; i++) {
+	/* `< na`, not `<= na`: Back moved to the tab row, so index na is no
+	 * longer a place the verb cursor may land. */
+	for (int i = 0; i < v->na; i++) {
 		if (v->arow[i] != row) continue;
 		int d = v->acol[i] - v->acol[v->sel];
 		if (d < 0) d = -d;
@@ -4461,7 +4655,9 @@ static void screen_app(Pkg *p)
 {
 	AppView v;
 	memset(&v, 0, sizeof v);
-	v.zone = Z_BTN;
+	/* Lands on Status, which is the tab that answers "what is this and what
+	 * is it doing" — the question somebody had when they pressed Enter. */
+	v.zone = Z_TAB;
 
 	for (;;) {
 		term_measure();
@@ -4470,15 +4666,18 @@ static void screen_app(Pkg *p)
 
 		int k = read_key();
 		if (k == K_RESIZE || k == K_TIMEOUT || k == K_NONE) continue;
-		if (k == K_ESC || k == 'q') return;
-		if (k == 'L') { g_zh = !g_zh; continue; }
+		if (k == K_ESC || k == 'q' || k == 3) return;
+		if (k == 'L' || k == K_F2) { g_zh = !g_zh; continue; }
 
 		if (k == K_CLICK) {
 			int idx = 0;
 			switch (hit_test(g_my, g_mx, &idx)) {
 			case H_BACK: return;
 			case H_BTN:  v.zone = Z_BTN; v.sel = idx; k = K_ENTER; break;
-			case H_BODY: v.zone = v.maxscroll ? Z_BODY : Z_BTN; continue;
+			case H_CHIP: v.zone = Z_TAB; v.tsel = idx;
+			             if (v.tab != idx) { v.tab = idx; v.sel = 0; v.bscroll = 0; }
+			             continue;
+			case H_BODY: v.zone = v.maxscroll ? Z_BODY : Z_TAB; continue;
 			default: continue;
 			}
 		}
@@ -4493,25 +4692,64 @@ static void screen_app(Pkg *p)
 			case K_PGDN:  v.bscroll += v.brows; continue;
 			case K_HOME:  v.bscroll = 0; continue;
 			case K_END:   v.bscroll = v.maxscroll; continue;
-			case K_ENTER: v.zone = Z_BTN; continue;
+			case K_ENTER: v.zone = v.na ? Z_BTN : Z_TAB; continue;
 			default: continue;
 			}
 		}
 
+		/* ---- the tab bar ------------------------------------------------
+		 * Left and right change the tab and the body under it changes with
+		 * them — no Enter, nothing opens. Enter is only for Back and for the
+		 * one tab that has an editor behind it. */
+		if (v.zone == Z_TAB) {
+			int moved = 0;
+			switch (k) {
+			case K_LEFT:  if (v.tsel > 0) { v.tsel--; moved = 1; } break;
+			case K_RIGHT: if (v.tsel < v.ntab) { v.tsel++; moved = 1; } break;
+			case K_HOME:  v.tsel = 0; moved = 1; break;
+			case K_END:   v.tsel = v.ntab; moved = 1; break;
+			case K_TAB:   v.tsel = (v.tsel + 1) % (v.ntab + 1); moved = 1; break;
+			case K_DOWN:
+				if (v.na) v.zone = Z_BTN;
+				else if (v.maxscroll) v.zone = Z_BODY;
+				break;
+			case K_UP: break;
+			default: break;
+			}
+			if (moved && v.tsel < v.ntab && v.tab != v.tsel) {
+				v.tab = v.tsel; v.sel = 0; v.bscroll = 0;
+			}
+			if (k == K_ENTER || k == ' ') {
+				if (v.tsel == v.ntab) return;              /* Back */
+				if (v.tabs[v.tsel].kind == TAB_SETTINGS) {
+					/* The one tab with an editor rather than a view. Its
+					 * body already shows every value; this opens the form
+					 * that changes them, and Save & Apply is the install
+					 * verb because for every recipe here it is also the
+					 * reconfigure path. */
+					switch (screen_params(p)) {
+					case 2: action_install(p); break;
+					case 1: message(S(T_PARAMS), S(T_PARAMSAVED)); break;
+					}
+					probe_pkg(p);
+				} else if (v.na) v.zone = Z_BTN;
+			}
+			continue;
+		}
+
 		switch (k) {
-		case K_LEFT:  v.sel = (v.sel - 1 + v.na + 1) % (v.na + 1); continue;
-		case K_RIGHT: v.sel = (v.sel + 1) % (v.na + 1); continue;
+		case K_LEFT:  if (v.na) v.sel = (v.sel - 1 + v.na) % v.na; continue;
+		case K_RIGHT: if (v.na) v.sel = (v.sel + 1) % v.na; continue;
 		case K_HOME:  v.sel = 0; continue;
-		case K_END:   v.sel = v.na; continue;
+		case K_END:   v.sel = v.na ? v.na - 1 : 0; continue;
 		case K_DOWN:
-			/* down a row of verbs if there is one, and into the prose off
-			 * the bottom of them */
 			if (!act_step(&v, +1) && v.maxscroll) v.zone = Z_BODY;
 			continue;
-		case K_UP:    act_step(&v, -1); continue;
+		case K_UP:    if (!act_step(&v, -1)) v.zone = Z_TAB; continue;
+		case K_TAB:   v.zone = Z_TAB; continue;
 		}
 		if (k != K_ENTER && k != ' ') continue;
-		if (v.sel == v.na) return;                    /* Back */
+		if (!v.na) continue;
 		if (v.acts[v.sel].dim) continue;
 
 		switch (v.acts[v.sel].act) {
@@ -5748,8 +5986,8 @@ static int cli_screenshot(int n, char **rest)
 	          !strcmp(screen, "detail"))) {
 		AppView v;
 		memset(&v, 0, sizeof v);
-		v.zone = Z_BTN;
-		v.sel = sel;
+		v.zone = Z_TAB;
+		v.tab = v.tsel = sel;
 		app_draw(p, &v);
 		screen = "app";
 	} else if (!strcmp(screen, "progress")) {
