@@ -31,6 +31,20 @@
 # param: nocache | /wp-admin,/wp-login,/wp-json,/xmlrpc.php,/api/,/admin,/login,/cart,/checkout,/my-account,/pay | Never cache these paths | 这些路径永不缓存
 # param: private | wordpress_logged_in,wp_woocommerce_session,woocommerce_items_in_cart,comment_author,PHPSESSID,laravel_session | Signed-in cookies | 登录状态 Cookie
 #
+# require: origin
+# help: origin | Where your website actually is — a domain or an IP. It has to be a different machine from this one. | 你的网站真正在的那台机器，填域名或 IP。必须是另一台机器，不能填本机。
+# help: port | The port the origin answers on. 443 turns on HTTPS to it by itself. | 源站监听的端口。填 443 会自动用 HTTPS 回源。
+# help: cache | static: only files — images, video, CSS, JS. site: pages as well, for visitors who are not signed in. off: nothing is kept. | static：只缓存图片视频 CSS JS 这些文件；site：未登录访客看到的页面也缓存；off：什么都不缓存。
+# help: domain | The name this node answers for. Blank means any name, which is right when nothing else is on port 80. | 本机对外用的域名。留空＝什么域名都接；机器上没有别的站点时就留空。
+# help: proto | auto picks HTTPS when the origin port is 443, and HTTP otherwise. | auto：源站端口是 443 就走 HTTPS，否则走 HTTP。
+# help: listen | The port on this machine. 80 unless something already has it. | 本机监听的端口。除非 80 被别的东西占了，否则填 80。
+# help: host | The name sent to the origin. Blank forwards the visitor's own, which is usually right. | 回源时发的 Host。留空＝原样转发访客用的域名，通常这样就对。
+# help: size | How much disk the cache may use — 2g, 500m. The oldest is evicted to stay under it. | 缓存最多占多少磁盘，比如 2g、500m。超了会自动淘汰最久没被用过的。
+# help: file_ttl | How long a file stays on the shelf — 30d, 12h, 600s. | 静态文件缓存多久，比如 30d、12h、600s。
+# help: page_ttl | How long a page stays, in site mode. Short is the safe direction. | site 模式下页面缓存多久。写短一点更安全。
+# help: nocache | Comma list. A request whose path contains any of these is never cached. | 逗号分隔。路径里出现其中任意一项的请求，一律不缓存。
+# help: private | Comma list of cookie names that mean signed-in. A request carrying one skips the cache both ways. | 逗号分隔的 Cookie 名字，表示已登录。带这些 Cookie 的请求既不读缓存也不写缓存。
+#
 # What this is, and why it is a recipe rather than a page in the manual.
 #
 # docs/deploy-website-cdn.md sells two containers: a small one on a line that

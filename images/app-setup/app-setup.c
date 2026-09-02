@@ -193,6 +193,8 @@ static const L T_VERB_BOOT = {"Changing boot setting for %s", "正在修改 %s �
 static const L T_NODOC     = {"This source ships no documentation.", "这个软件源没有写说明。"};
 static const L T_NOPARAM   = {"This software has no settings to change.",
                              "这个软件没有可以改的参数。"};
+static const L T_REQFIELD  = {"This one has to be filled in before it can be applied.",
+                             "这一项必须填了才能应用。"};
 static const L T_PARAMSAVED= {"Settings saved, but not in effect yet. Use Save & Apply, or install again.",
                              "参数已保存，但还没生效。用「保存并应用」，或下次安装时生效。"};
 
@@ -208,8 +210,14 @@ static const L T_SAVE      = {"Save",         "保存"};
 /* The home screen and the detail page. Both say which way is out, because the
  * way out is a button you walk to rather than a key you have to know. */
 static const L T_ALL       = {"All",           "全部"};
-static const L T_HELPHOME  = {"↑↓←→ move    Enter open    ↑ at the top is Back",
-                             "↑↓←→ 移动    回车 打开    ↑ 走到顶是「返回」"};
+static const L T_FIND      = {"Find", "查找"};
+static const L T_FINDHINT  = {"type to search", "直接打字搜索"};
+static const L T_VLIST     = {"List", "列表"};
+static const L T_VCARDS    = {"Cards", "卡片"};
+static const L T_NOMATCH   = {"Nothing matches. Backspace, or Esc to clear.",
+                             "没有匹配的。退格删字，或按 Esc 清空。"};
+static const L T_HELPHOME  = {"type to search   ↑↓←→ move   Enter open   F3 view   F2 中文   Esc clear/quit",
+                             "直接打字搜索   ↑↓←→ 移动   回车 打开   F3 视图   F2 English   Esc 清空/退出"};
 static const L T_HELPDET   = {"←→ button    Enter run    ↓ into the text",
                              "←→ 选按钮    回车 执行    ↓ 进正文滚动"};
 static const L T_SERVICE   = {"Service",      "服务"};
@@ -269,6 +277,11 @@ enum { PT_TEXT = 0, PT_BOOL, PT_ENUM, PT_NUMBER, PT_LIST };
 typedef struct {
 	char name[32];
 	char label[64], label_zh[96];
+	/* LuCI's line under the control, which is the thing this form missed most:
+	 * `Keep pages for = 10m` says nothing about the unit or about what blank
+	 * does. Filled by `# help:`; empty on every recipe that has not written
+	 * one, which costs those recipes nothing. */
+	char help[160], help_zh[200];
 	char dflt[128];
 	char value[256];
 	int  type;
@@ -326,6 +339,10 @@ typedef struct {
 	char includes[224], includes_zh[280];
 	char disk[32], memory[32], ports[64], requires[128];
 	char service[64];
+	/* `# require: origin, port` — the fields the recipe cannot run without.
+	 * A comma list rather than a flag on the param line, because the param
+	 * line is full at five fields and because one line reads as one rule. */
+	char require[160];
 	char cats[6][24];
 	int  ncats;
 	int  order;
@@ -1124,6 +1141,29 @@ static void add_button(Pkg *p, const char *spec)
 	p->nbuttons++;
 }
 
+/* `help: <field> | English | 中文` — the line shown under the form while that
+ * field has the cursor. The field has to be declared before it, the same order
+ * `# group:` and `# action:` already ask for, so a header reads top to bottom.
+ * An app-setup that predates this skips the key and shows no description,
+ * which is exactly what a recipe without one shows. */
+static void add_help(Pkg *p, const char *spec)
+{
+	char buf[512];
+	copy_str(buf, sizeof buf, spec);
+	char *f[3] = { buf, NULL, NULL };
+	int nf = 1;
+	for (char *q = buf; *q && nf < 3; q++)
+		if (*q == '|') { *q = '\0'; f[nf++] = q + 1; }
+	for (int i = 0; i < nf; i++) trim(f[i]);
+	if (!*f[0] || nf < 2) return;
+	for (int i = 0; i < p->nparams; i++)
+		if (!strcmp(p->params[i].name, f[0])) {
+			copy_str(p->params[i].help, sizeof p->params[i].help, f[1]);
+			if (nf > 2) copy_str(p->params[i].help_zh, sizeof p->params[i].help_zh, f[2]);
+			return;
+		}
+}
+
 static void set_field(Pkg *p, const char *k, const char *v)
 {
 	if      (!strcmp(k, "id"))          copy_str(p->id, sizeof p->id, v);
@@ -1138,6 +1178,8 @@ static void set_field(Pkg *p, const char *k, const char *v)
 	else if (!strcmp(k, "ports"))       copy_str(p->ports, sizeof p->ports, v);
 	else if (!strcmp(k, "requires"))    copy_str(p->requires, sizeof p->requires, v);
 	else if (!strcmp(k, "service"))     copy_str(p->service, sizeof p->service, v);
+	else if (!strcmp(k, "require"))     copy_str(p->require, sizeof p->require, v);
+	else if (!strcmp(k, "help"))        add_help(p, v);
 	else if (!strcmp(k, "order"))       p->order = atoi(v);
 	else if (!strcmp(k, "param"))       add_param(p, v);
 	else if (!strcmp(k, "group"))       add_group(p, v);
@@ -1495,6 +1537,7 @@ static const char *B2_LT, *B2_RT;
 static const char *MK_RUN, *MK_STOP, *MK_ABSENT, *MK_ERR, *MK_OK, *MK_DOT;
 static const char *BAR_F, *BAR_E, *AR_L, *AR_R, *AR_UD;
 static const char *TH_COVER, *CH_MORE;
+static const char *GL_LIST, *GL_CARDS;
 
 static void pick_glyphs(void)
 {
@@ -1508,6 +1551,7 @@ static void pick_glyphs(void)
 		BAR_F = "█"; BAR_E = "░";
 		AR_L = "◄"; AR_R = "►"; AR_UD = "↑↓";
 		TH_COVER = "▒"; CH_MORE = "›";
+		GL_LIST = "▤"; GL_CARDS = "⊞";
 	} else {
 		BX_TL = "+"; BX_TR = "+"; BX_BL = "+"; BX_BR = "+";
 		BX_H = "-"; BX_V = "|"; BX_LT = "+"; BX_RT = "+";
@@ -1518,6 +1562,7 @@ static void pick_glyphs(void)
 		BAR_F = "#"; BAR_E = "-";
 		AR_L = "<"; AR_R = ">"; AR_UD = "^v";
 		TH_COVER = ":"; CH_MORE = ">";
+		GL_LIST = "="; GL_CARDS = "#";
 	}
 }
 
@@ -1797,7 +1842,11 @@ static void on_fatal(int sig) { term_cooked(); _exit(128 + sig); }
 enum {
 	K_NONE = 0, K_UP = 256, K_DOWN, K_LEFT, K_RIGHT, K_PGUP, K_PGDN,
 	K_HOME, K_END, K_TAB, K_BTAB, K_ENTER, K_ESC, K_BACK, K_RESIZE, K_TIMEOUT,
-	K_CLICK, K_WHEELUP, K_WHEELDN
+	K_CLICK, K_WHEELUP, K_WHEELDN,
+	/* Once the home screen filters on every printable key, the letters it
+	 * used for language, view and refresh are no longer free. Function keys
+	 * are what is left that a terminal sends and a person can find. */
+	K_F1, K_F2, K_F3, K_F4, K_F5
 };
 
 static int read_byte(int timeout_ms, unsigned char *out)
@@ -1875,6 +1924,9 @@ static int read_key_to(int timeout_ms)
 			case 4: case 8: return K_END;
 			case 5: return K_PGUP;
 			case 6: return K_PGDN;
+			case 11: return K_F1;   case 12: return K_F2;
+			case 13: return K_F3;   case 14: return K_F4;
+			case 15: return K_F5;
 			}
 			return K_NONE;
 		}
@@ -1886,6 +1938,10 @@ static int read_key_to(int timeout_ms)
 		case 'A': return K_UP;   case 'B': return K_DOWN;
 		case 'C': return K_RIGHT; case 'D': return K_LEFT;
 		case 'H': return K_HOME; case 'F': return K_END;
+		/* xterm's application-mode F1..F4, which is what most terminals
+		 * still send for those four. */
+		case 'P': return K_F1;   case 'Q': return K_F2;
+		case 'R': return K_F3;   case 'S': return K_F4;
 		}
 	}
 	return K_ESC;
@@ -1975,7 +2031,7 @@ static void scrollbar(int row, int col, int h, int first, int shown, int total,
  *
  * Later entries win, so a button drawn on top of a panel is found first.
  */
-enum { H_NONE = 0, H_BACK, H_LANG, H_CHIP, H_CARD, H_BTN, H_BODY };
+enum { H_NONE = 0, H_BACK, H_LANG, H_CHIP, H_CARD, H_BTN, H_BODY, H_VIEW, H_FIND };
 
 typedef struct { short r0, c0, r1, c1; short what, idx; } Hit;
 static Hit g_hit[256];
@@ -3255,6 +3311,22 @@ static void field_draw(int y, int fx, int fieldw, int rh, int attr,
 	}
 }
 
+/* The label, plus the star that says the recipe cannot run without it. LuCI
+ * marks these; this form saved an empty one happily and let a shell script
+ * discover it, which is app-setup.cdn.md §3 #6 from the other end. */
+static const char *param_label_req(const Pkg *p, const Param *pm)
+{
+	static char buf[176];
+	snprintf(buf, sizeof buf, "%s%s", param_label(pm),
+	         list_has(p->require, pm->name) ? " *" : "");
+	return buf;
+}
+
+static const char *param_help(const Param *pm)
+{
+	return (g_zh && pm->help_zh[0]) ? pm->help_zh : pm->help;
+}
+
 static int screen_params(Pkg *p)
 {
 	if (!p->nparams) { message(pkg_name(p), S(T_NOPARAM)); return 0; }
@@ -3272,6 +3344,12 @@ static int screen_params(Pkg *p)
 	 * another row puts it at the end of that row's value — which is where
 	 * typing used to append before there was a caret to put anywhere else. */
 	int caret = 0, lastsel = -1;
+	/* A complaint from Save & Apply, shown where the field's own description
+	 * goes, and cleared as soon as the cursor moves. want_param survives the
+	 * frame that unfolds a group so the offending field can be pointed at
+	 * even when it was hidden. */
+	char formmsg[220] = "";
+	int want_param = -1;
 	char title[256];
 	snprintf(title, sizeof title, "%s %s %s", pkg_name(p), MK_DOT, S(T_PARAMS));
 
@@ -3290,8 +3368,18 @@ static int screen_params(Pkg *p)
 		int nitems = nrows + 3;
 		if (sel > B_CANCEL) sel = B_CANCEL;
 
+		if (want_param >= 0) {
+			for (int i = 0; i < nrows; i++)
+				if (rows[i].kind == ROW_PARAM && rows[i].idx == want_param) { sel = i; break; }
+			want_param = -1;
+			/* lastsel, not -1: moving the cursor is what clears the complaint,
+			 * and this move *is* the complaint pointing at its field. */
+			lastsel = sel;
+			caret = 0;
+		}
 		if (sel != lastsel) {
 			lastsel = sel;
+			formmsg[0] = '\0';
 			caret = (sel < nrows && rows[sel].kind == ROW_PARAM)
 			        ? (int)strlen(p->params[rows[sel].idx].value) : 0;
 		}
@@ -3299,7 +3387,7 @@ static int screen_params(Pkg *p)
 		int labw = 12;
 		for (int i = 0; i < nrows; i++)
 			if (rows[i].kind == ROW_PARAM) {
-				int lw = u8width(param_label(&p->params[rows[i].idx]));
+				int lw = u8width(param_label_req(p, &p->params[rows[i].idx]));
 				if (lw > labw) labw = lw;
 			}
 		if (labw > 28) labw = 28;
@@ -3319,9 +3407,16 @@ static int screen_params(Pkg *p)
 		int total = 0;
 		for (int i = 0; i < nrows; i++)
 			total += param_rowh(p, &rows[i], i == sel, fieldw);
-		int h = total + 6;
+		/* Two rows and the rule above them, and only when there is something
+		 * to put there. A form whose recipe wrote no `# help:` is exactly the
+		 * form it was before this existed. */
+		int helph = 0;
+		for (int i = 0; i < p->nparams; i++)
+			if (p->params[i].help[0] || p->params[i].help_zh[0]) { helph = 3; break; }
+		if (p->require[0]) helph = 3;
+		int h = total + 6 + helph;
 		if (h > g_h - 2) h = g_h - 2;
-		int visrows = h - 6;
+		int visrows = h - 6 - helph;
 		if (visrows < 1) visrows = 1;
 		/* Rows are not all one line any more, so "is the cursor on screen"
 		 * is a walk rather than a subtraction. Scrolling one row at a time
@@ -3355,15 +3450,23 @@ static int screen_params(Pkg *p)
 			if (vr->kind == ROW_GROUP) {
 				Group *gr = &p->groups[vr->idx];
 				const char *lbl = (g_zh && gr->label_zh[0]) ? gr->label_zh : gr->label;
+				/* A rule across the box with the name in it, which is what a
+				 * terminal's version of LuCI's tab looks like. It used to be
+				 * "= Advanced" sitting in the label column, where it read as a
+				 * field called Advanced whose value was <Hide>. */
+				int a = focused ? P_ENTRYACT : P_BORDER;
+				gput(y, col, BX_LT, P_BORDER, 1);
+				gfill(y, col + 1, w - 2, BX_H, P_BORDER);
+				gput(y, col + w - 1, BX_RT, P_BORDER, 1);
 				char hdr[160];
-				snprintf(hdr, sizeof hdr, "= %s", lbl);
-				int a = focused ? P_ENTRYACT : P_WIN;
-				gfill(y, col + 1, w - 2, " ", a);
-				gput(y, col + 2, hdr, a, w - 4);
+				snprintf(hdr, sizeof hdr, " %s ", lbl);
+				int hw = u8width(hdr);
+				gput(y, col + 2, hdr, a, hw);
 				char btxt[32];
-				snprintf(btxt, sizeof btxt, "<%s>", S(gr->folded ? T_SHOW : T_HIDE));
+				snprintf(btxt, sizeof btxt, " <%s> ", S(gr->folded ? T_SHOW : T_HIDE));
 				int btw = u8width(btxt);
-				gput(y, col + w - 2 - btw, btxt, a, btw);
+				gput(y, col + w - 2 - btw, btxt, focused ? P_BTNACT : P_BTN, btw);
+				if (focused) cursor_sweep(y, col + 2, hw, P_ENTRYACT, P_CURSORHOT);
 				hit_add(H_BODY, i, y, col + 1, 1, w - 2);
 				y += rh;
 				continue;
@@ -3372,11 +3475,15 @@ static int screen_params(Pkg *p)
 				Param *apm = &p->params[vr->idx];
 				const char *lbl = (g_zh && apm->action_label_zh[0])
 				                  ? apm->action_label_zh : apm->action_label;
+				/* A button, not a row of text with a tick in front of it.
+				 * `✓ Test the origin` was indistinguishable from a label
+				 * whose field happened to be empty. */
 				char btxt[96];
-				snprintf(btxt, sizeof btxt, "  %s", lbl);
+				snprintf(btxt, sizeof btxt, "<%s>", lbl);
 				int a = focused ? P_ENTRYACT : P_WIN;
 				gfill(y, col + 1, w - 2, " ", a);
-				gput(y, col + 2, btxt, a, w - 4);
+				gput(y, col + 4, btxt, focused ? P_BTNACT : P_BTN, w - 6);
+				if (focused) cursor_sweep(y, col + 4, u8width(btxt), P_BTNACT, P_CURSORHOT);
 				hit_add(H_BODY, i, y, col + 1, 1, w - 2);
 				y += rh;
 				continue;
@@ -3386,7 +3493,7 @@ static int screen_params(Pkg *p)
 			/* A field that belongs to a group reads as nested under its
 			 * header — two columns in, same as the header's own "= " costs. */
 			int indent = (pm->group >= 0) ? 2 : 0;
-			gput(y, col + 2 + indent, param_label(pm), P_WIN, labw - indent);
+			gput(y, col + 2 + indent, param_label_req(p, pm), P_WIN, labw - indent);
 
 			int fx = col + 3 + labw;
 			int a = focused ? P_ENTRYACT : P_ENTRY;
@@ -3435,6 +3542,26 @@ static int screen_params(Pkg *p)
 		}
 		scrollbar(row + 1, col + w - 2, visrows, scroll, visrows, nrows,
 		          P_SBTHUMBW, P_SBTRACKW);
+
+		/* LuCI puts this under every field because a web page scrolls. Twelve
+		 * fields times two rows is this whole terminal, so it lives in one
+		 * fixed place and follows the cursor instead. */
+		if (helph) {
+			int hy = row + h - 3 - helph + 1;
+			gput(hy - 1, col, BX_LT, P_BORDER, 1);
+			gfill(hy - 1, col + 1, w - 2, BX_H, P_BORDER);
+			gput(hy - 1, col + w - 1, BX_RT, P_BORDER, 1);
+			const char *txt = formmsg;
+			if (!*txt && sel < nrows && rows[sel].kind == ROW_PARAM)
+				txt = param_help(&p->params[rows[sel].idx]);
+			char hl[4][512];
+			int hn = *txt ? u8wrap(txt, w - 4, hl, 2) : 0;
+			for (int i = 0; i < 2; i++) {
+				gfill(hy + i, col + 1, w - 2, " ", P_WIN);
+				if (i < hn)
+					gput(hy + i, col + 2, hl[i], *formmsg ? P_ERR : P_DIM, w - 4);
+			}
+		}
 
 		int bx = col + (w - bw) / 2;
 		if (bx < col + 1) bx = col + 1;
@@ -3490,6 +3617,19 @@ static int screen_params(Pkg *p)
 				return 0;
 			}
 			if (sel == B_APPLY || sel == B_SAVE) {
+				/* A form that can be saved into a state its own program refuses
+				 * is a form with a rule missing, not a program with a bad error
+				 * message. The cursor goes to the field — unfolding its group if
+				 * that is where it was hiding — and nothing is written. */
+				int bad = -1;
+				for (int i = 0; i < p->nparams; i++)
+					if (list_has(p->require, p->params[i].name) && !p->params[i].value[0]) { bad = i; break; }
+				if (bad >= 0) {
+					if (p->params[bad].group >= 0) p->groups[p->params[bad].group].folded = 0;
+					want_param = bad;
+					copy_str(formmsg, sizeof formmsg, S(T_REQFIELD));
+					continue;
+				}
 				if (!params_save(p)) {
 					message(title, g_zh ? "保存失败：写不了参数文件。"
 					                    : "could not write the settings file");
@@ -3992,9 +4132,13 @@ static int act_width(const Action *a)
  * pressed, plain otherwise. Returns the columns it used. */
 static int act_draw(int row, int col, const Action *a, int focused, int maxw)
 {
+	/* `<Label>`, which is newt's shape and LuCI's and the one btn_draw has
+	 * always used for the form's three buttons. This row is the one somebody
+	 * opened the screen to press, and it was the one drawn as bare words.
+	 * Same width as the spaces it replaces, so nothing above needs to know. */
 	char t[128];
-	if (a->aux[0]) snprintf(t, sizeof t, " %s %s ", a->label, a->aux);
-	else           snprintf(t, sizeof t, " %s ", a->label);
+	if (a->aux[0]) snprintf(t, sizeof t, "<%s %s>", a->label, a->aux);
+	else           snprintf(t, sizeof t, "<%s>", a->label);
 	int w = u8width(t);
 	if (w > maxw) return 0;
 	gput(row, col, t, focused ? P_CURSOR : (a->dim ? P_BTNDIM : P_WIN), w);
@@ -4452,6 +4596,15 @@ static int g_strip = 1;               /* the cursor's place along the bar */
 static int g_card = 0, g_cardrow = 0;
 static int g_cat = 0;                 /* the category the current chip names */
 static int g_view[MAX_PKGS], g_nview = 0;
+/* The search box. Every printable key on this screen lands here, which is
+ * what cost `q`, `r` and `L` their shortcuts — F2 is the language now, F3 the
+ * view, F5 the refresh, and Esc clears the box before it leaves. Fifty
+ * recipes is more than anybody should have to walk past. */
+static char g_filter[64] = "";
+/* Which body is drawn under the bar. The bar — search, chips, switch — belongs
+ * to neither of them, which is the whole reason the switch is cheap. */
+enum { V_CARDS = 0, V_LIST };
+static int g_vmode = V_CARDS;
 static int g_inst[MAX_PKGS], g_ninst = 0;
 static char g_msg[256] = "";
 
@@ -4472,6 +4625,33 @@ static int g_nchip = 0;
 static int SB_row[MAX_CATS + 4], SB_col[MAX_CATS + 4], SB_wid[MAX_CATS + 4];
 static int SB_rows = 1;
 static int G_cols, G_cardw, G_coverh, G_cardh, G_pitch, G_top, G_rows, G_chiprow;
+static int G_findrow;
+
+/* Case-insensitive substring, byte-wise — which is also correct for the
+ * Chinese fields, because a UTF-8 substring of a UTF-8 string is a substring
+ * of its bytes. No fuzzy matching: fzf's subsequence match is lovely and is a
+ * thing to get wrong quietly, and `ng` finding `mongodb` is a surprise on a
+ * list somebody is about to install from. */
+static int ci_find(const char *hay, const char *needle)
+{
+	if (!*needle) return 1;
+	for (const char *h = hay; *h; h++) {
+		const char *a = h, *b = needle;
+		while (*a && *b && tolower((unsigned char)*a) == tolower((unsigned char)*b)) { a++; b++; }
+		if (!*b) return 1;
+	}
+	return 0;
+}
+
+/* Both names and both summaries, not just the id: somebody reading the
+ * Chinese cards should find nginx by typing 网页, and somebody who wants a
+ * cache should find `cdn` by a word that appears only in its summary. */
+static int pkg_matches(const Pkg *p, const char *needle)
+{
+	return ci_find(p->id, needle) || ci_find(p->name, needle) ||
+	       ci_find(p->name_zh, needle) || ci_find(p->summary, needle) ||
+	       ci_find(p->summary_zh, needle);
+}
 
 static int pkg_in_cat(const Pkg *p, const char *cat)
 {
@@ -4530,6 +4710,7 @@ static void rebuild_lists(void)
 	g_nview = 0;
 	for (int i = 0; i < g_npkg; i++) {
 		Pkg *p = &g_pkg[i];
+		if (!pkg_matches(p, g_filter)) continue;
 		if (c == CHIP_INSTALLED) { if (pkg_installed(p)) g_view[g_nview++] = i; }
 		else if (c == CHIP_ALL)  g_view[g_nview++] = i;
 		else if (pkg_in_cat(p, g_cats[c].id)) g_view[g_nview++] = i;
@@ -4556,10 +4737,29 @@ static void card_layout(void)
 	if (G_cardw > avail) G_cardw = avail;
 
 	G_chiprow = (g_h >= 18) ? 3 : 2;
-	G_top = G_chiprow + SB_rows + 2;          /* the bar, its shadow, a blank */
+	/* the bar, its shadow, the find row, a blank */
+	G_findrow = G_chiprow + SB_rows + 1;
+	G_top = G_findrow + 2;
 	int space = (g_h - 1) - G_top;            /* the help line owns the last row */
-	if (space < 5) { G_top = G_chiprow + 2; space = (g_h - 1) - G_top; }
+	/* On a screen too short for all of it the blank goes first and the bar's
+	 * shadow second. The find row itself never goes: a search box that is only
+	 * there on a tall terminal is a search box nobody learns about. */
+	if (space < 5) { G_findrow = G_chiprow + SB_rows; G_top = G_findrow + 1;
+	                 space = (g_h - 1) - G_top; }
 	if (space < 4) space = 4;
+
+	/* The list is one column of one-row items, which is not a special case
+	 * for anything below it: the cursor arithmetic, the viewport, PgUp and the
+	 * wheel are all written in terms of G_cols and G_rows, so saying "one
+	 * column" here is the whole of the navigation for the other view. */
+	if (g_vmode == V_LIST) {
+		G_cols = 1;
+		G_cardw = g_w - 2;
+		G_rows = space - 2;              /* the window's own two border rows */
+		if (G_rows < 1) G_rows = 1;
+		G_coverh = 0; G_cardh = 1; G_pitch = 1;
+		return;
+	}
 
 	/* The cover is what gives when the window is short, because it is the
 	 * part carrying no words. */
@@ -4642,6 +4842,75 @@ static void strip_layout(void)
 
 /* The bar: a grey strip the width of the screen, as many rows as it takes,
  * with a shadow under it — the same object as every other window here. */
+/* The row under the bar: what has been typed, how many recipes it left, and
+ * which of the two bodies is showing. One row, and always there — §5.1.
+ *
+ * The switch names both views with the current one lit, rather than naming the
+ * one you are not in. A control that says "Cards" while you are looking at a
+ * list is a coin flip every time somebody reads it: is that what this is, or
+ * what I will get? Both, and the question does not arise. */
+/* Which body somebody last chose, remembered where the other things nobody
+ * edits are remembered. A person who prefers cards on an eighty-column
+ * terminal should have to say so once, not once a session — and a person who
+ * never touches the switch should never be shown a screen they did not ask
+ * for, which is why the first answer comes from the terminal's own size. */
+static void view_save(void)
+{
+	char path[600];
+	snprintf(path, sizeof path, "%s/view", state_dir());
+	mkdir_p(state_dir());
+	FILE *f = fopen(path, "w");
+	if (!f) return;                       /* a read-only /var is not an error here */
+	fprintf(f, "%s\n", g_vmode == V_LIST ? "list" : "cards");
+	fclose(f);
+}
+
+static void view_load(void)
+{
+	char path[600], buf[32];
+	snprintf(path, sizeof path, "%s/view", state_dir());
+	FILE *f = fopen(path, "r");
+	if (f) {
+		if (fgets(buf, sizeof buf, f)) {
+			g_vmode = !strncmp(buf, "list", 4) ? V_LIST : V_CARDS;
+			fclose(f);
+			return;
+		}
+		fclose(f);
+	}
+	/* Never asked: pick by what the terminal can actually hold. A screen with
+	 * room for twenty cards gets the grid it was designed for; a screen that
+	 * would show two gets the list. */
+	g_vmode = (g_w >= 100 && g_h >= 30) ? V_CARDS : V_LIST;
+}
+
+static void draw_find(void)
+{
+	int y = G_findrow;
+	gfill(y, 0, g_w, " ", P_CHIP);
+
+	char crd[48], lst[48], cnt[32];
+	snprintf(lst, sizeof lst, " %s %s ", GL_LIST,  S(T_VLIST));
+	snprintf(crd, sizeof crd, " %s %s ", GL_CARDS, S(T_VCARDS));
+	snprintf(cnt, sizeof cnt, "%d / %d", g_nview, g_npkg);
+	int wl = u8width(lst), wc = u8width(crd), wn = u8width(cnt);
+
+	int xc = g_w - 1 - wc, xl = xc - wl - 1, xn = xl - wn - 3;
+	if (xn > 12) {
+		gput(y, xn, cnt, P_CHIP, wn);
+		gput(y, xl, lst, g_vmode == V_LIST  ? P_CHIPSEL : P_CHIP, wl);
+		gput(y, xc, crd, g_vmode == V_CARDS ? P_CHIPSEL : P_CHIP, wc);
+		hit_add(H_VIEW, V_LIST,  y, xl, 1, wl);
+		hit_add(H_VIEW, V_CARDS, y, xc, 1, wc);
+	} else xn = g_w - 1;
+
+	char left[200];
+	if (g_filter[0]) snprintf(left, sizeof left, " %s  %s_", S(T_FIND), g_filter);
+	else             snprintf(left, sizeof left, " %s  %s", S(T_FIND), S(T_FINDHINT));
+	gput(y, 1, left, g_filter[0] ? P_CHIPSEL : P_ABSENT, xn - 2);
+	hit_add(H_FIND, 0, y, 1, 1, xn - 2);
+}
+
 static void draw_strip(void)
 {
 	int y = G_chiprow;
@@ -4801,6 +5070,107 @@ static void draw_card(int row, int col, Pkg *p, int focused)
 	}
 }
 
+/* The dot in front of a row, and what colour it is. The words "running" and
+ * "not installed" cost nine columns and twelve to say what one cell says. */
+static const char *state_mark(const Pkg *p, int *attr)
+{
+	switch (p->status) {
+	case ST_RUNNING:   *attr = P_RUN;     return MK_RUN;
+	case ST_INSTALLED: *attr = P_RUN;     return MK_RUN;
+	case ST_STOPPED:   *attr = P_STOPPED; return MK_STOP;
+	case ST_BROKEN:    *attr = P_ERR;     return MK_ERR;
+	default:           *attr = P_ABSENT;  return MK_ABSENT;
+	}
+}
+
+/* The list body: every match on the left at one row apiece, and whichever the
+ * cursor is on opened on the right. The bar above it is the same bar the grid
+ * has — §5.1 — so the search, the category and the switch are not drawn here
+ * and do not know which body they are above. */
+static void draw_list(void)
+{
+	int top = G_top, h = (g_h - 1) - top;
+	if (h < 4 || !g_nview) return;
+	int w = g_w - 2;
+	int lw = w * 2 / 5;
+	if (lw < 18) lw = 18;
+	if (lw > 34) lw = 34;
+	int detail = (w - lw > 28);
+	if (!detail) lw = w - 2;
+
+	win_box(top, 0, w, h, NULL);
+	if (detail)
+		for (int r = 1; r < h - 1; r++) gput(top + r, 1 + lw, BX_V, P_BORDER, 1);
+
+	for (int r = 0; r < G_rows && g_cardrow + r < g_nview; r++) {
+		int i = g_cardrow + r, y = top + 1 + r;
+		Pkg *p = &g_pkg[g_view[i]];
+		int cur = (g_zone == Z_GRID && i == g_card);
+		int a = cur ? P_CURSOR : P_WIN, sa;
+		const char *mk = state_mark(p, &sa);
+		gfill(y, 1, lw, " ", a);
+		gput(y, 2, mk, cur ? P_CURSOR : sa, 1);
+
+		/* The id rather than the name: it is what somebody just typed into the
+		 * box, what the command line takes, and the one label that does not
+		 * change when the language does. The name is on the right. */
+		int dw = p->disk[0] ? u8width(p->disk) : 0;
+		int room = lw - 4 - (dw ? dw + 2 : 0);
+		char nm[128];
+		u8ellipsis(nm, sizeof nm, p->id, room);
+		gput(y, 4, nm, a, room);
+		if (dw) gput(y, 1 + lw - dw - 1, p->disk, a, dw);
+		if (cur) cursor_sweep(y, 1, lw, P_CURSOR, P_CURSORHOT);
+		hit_add(H_CARD, i, y, 1, 1, lw);
+	}
+	scrollbar(top + 1, w - 1, h - 2, g_cardrow, G_rows, g_nview,
+	          P_SBTHUMBW, P_SBTRACKW);
+
+	if (!detail) return;
+
+	Pkg *p = &g_pkg[g_view[g_card]];
+	/* one column back from the frame, and one more for the scrollbar that is
+	 * painted on it — text that touches a scrollbar reads as text that was cut */
+	int x = lw + 3, dw2 = w - x - 2, y = top + 1, last = top + h - 2;
+	if (dw2 < 4) return;
+
+	char nm[160];
+	u8ellipsis(nm, sizeof nm, pkg_name(p), dw2 - 14);
+	gput(y, x, nm, P_TITLE, dw2);
+	{
+		int sa; const char *mk = state_mark(p, &sa);
+		char st[64];
+		snprintf(st, sizeof st, "%s %s", mk, S(*status_label(p)));
+		int sw = u8width(st);
+		if (sw < dw2 - u8width(nm) - 2) gput(y, x + dw2 - sw, st, sa, sw);
+	}
+	y += 2;
+
+	char lab[6][32], val[6][64];
+	int nf = detail_facts(p, lab, val);
+	for (int i = 0; i < nf && y <= last; i++) {
+		char one[128];
+		snprintf(one, sizeof one, "%-9s %s", lab[i], val[i]);
+		char cut[160];
+		u8ellipsis(cut, sizeof cut, one, dw2);
+		gput(y++, x, cut, P_WIN, dw2);
+	}
+
+	char lines[8][512];
+	if (y < last) y++;
+	int n = u8wrap(pkg_summary(p), dw2, lines, 4);
+	for (int i = 0; i < n && y <= last; i++) gput(y++, x, lines[i], P_WIN, dw2);
+
+	const char *inc = pkg_includes(p);
+	if (inc[0] && y + 1 <= last) {
+		y++;
+		char head[600];
+		snprintf(head, sizeof head, "%s  %s", S(T_INCLUDES), inc);
+		n = u8wrap(head, dw2, lines, 4);
+		for (int i = 0; i < n && y <= last; i++) gput(y++, x, lines[i], P_WIN, dw2);
+	}
+}
+
 static void render_home(void)
 {
 	grid_size(g_w, g_h);
@@ -4816,6 +5186,7 @@ static void render_home(void)
 	}
 
 	draw_strip();
+	draw_find();
 
 	/* Follow the cursor with the viewport, then pin the viewport inside the
 	 * list — in that order, so a shrinking list cannot leave it past the end. */
@@ -4825,6 +5196,24 @@ static void render_home(void)
 	if (cur >= g_cardrow + G_rows) g_cardrow = cur - G_rows + 1;
 	if (g_cardrow > nrows - G_rows) g_cardrow = nrows - G_rows;
 	if (g_cardrow < 0) g_cardrow = 0;
+
+	if (g_vmode == V_LIST) {
+		draw_list();
+		if (!g_nview) {
+			const L *e = g_filter[0] ? &T_NOMATCH
+			           : g_chipcat[g_chip] == CHIP_INSTALLED ? &T_NOINST : &T_EMPTY;
+			gput(G_top, 2, S(*e), P_ABSENTB, g_w - 4);
+		}
+		help_line_l(&T_HELPHOME);
+		if (g_msg[0]) {
+			char m[300];
+			snprintf(m, sizeof m, " %s ", g_msg);
+			int mw = u8width(m);
+			if (mw > g_w - 4) mw = g_w - 4;
+			gput(g_h - 1, g_w - 1 - mw, m, P_HELP, mw);
+		}
+		return;
+	}
 
 	g_clip_top = G_top; g_clip_bot = g_h - 2;
 	for (int r = 0; r < G_rows; r++) {
@@ -4845,7 +5234,8 @@ static void render_home(void)
 	          P_SBTHUMB, P_SBTRACK);
 
 	if (!g_nview) {
-		const L *e = g_chipcat[g_chip] == CHIP_INSTALLED ? &T_NOINST : &T_EMPTY;
+		const L *e = g_filter[0] ? &T_NOMATCH
+		           : g_chipcat[g_chip] == CHIP_INSTALLED ? &T_NOINST : &T_EMPTY;
 		gput(G_top, 2, S(*e), P_ABSENTB, g_w - 4);
 	}
 
@@ -4892,6 +5282,7 @@ static void tui(void)
 	term_raw();
 	atexit(term_cooked);
 	term_measure();
+	view_load();
 	rebuild_lists();
 	/* Something is already installed: that is what this visit is probably
 	 * about, so start on that chip rather than on the whole catalogue. */
@@ -4906,14 +5297,25 @@ static void tui(void)
 		int k = read_key();
 		if (k == K_NONE || k == K_RESIZE || k == K_TIMEOUT) continue;
 
-		if (k == 'q' || k == 'Q') { term_cooked(); return; }
-		if (k == 'L') { g_zh = !g_zh; continue; }
-		if (k == 'r' || k == 'R') {
+		/* The letters belong to the search box now, so the three things they
+		 * used to do moved to keys a search box will never be given. */
+		if (k == 3) { term_cooked(); return; }              /* ^C */
+		if (k == K_F2) { g_zh = !g_zh; continue; }
+		if (k == K_F3) { g_vmode = (g_vmode == V_CARDS) ? V_LIST : V_CARDS;
+		                 view_save(); g_cardrow = 0; continue; }
+		if (k == K_F5 || k == 18) {                          /* F5 or ^R */
 			copy_str(g_msg, sizeof g_msg, g_zh ? "正在刷新…" : "refreshing…");
 			render_home(); grid_flush();
 			probe_all(1);
 			g_msg[0] = '\0';
 			continue;
+		}
+
+		/* Esc empties the box before it leaves, so the way out is the same
+		 * key twice from anywhere rather than a key somebody has to know. */
+		if (k == K_ESC) {
+			if (g_filter[0]) { g_filter[0] = '\0'; g_card = 0; g_cardrow = 0; continue; }
+			term_cooked(); return;
 		}
 
 		if (k == K_CLICK) {
@@ -4922,6 +5324,8 @@ static void tui(void)
 			case H_BACK: term_cooked(); return;
 			case H_LANG: g_zh = !g_zh; g_zone = Z_STRIP; g_strip = S_LANG; continue;
 			case H_CHIP: g_zone = Z_STRIP; strip_to(idx); continue;
+			case H_VIEW: g_vmode = idx; view_save(); g_cardrow = 0; continue;
+			case H_FIND: continue;   /* the box is always live; nothing to focus */
 			/* A card opens on a single click, anywhere on it, the way a
 			 * thumbnail does. Moving the cursor there first would be a
 			 * second gesture for something already pointed at. */
@@ -4949,6 +5353,26 @@ static void tui(void)
 			continue;
 		}
 
+		/* Every printable byte goes in the box, wherever the cursor is —
+		 * including the bytes of a Chinese character, which arrive one at a
+		 * time and reassemble in the buffer. This is the whole design: the
+		 * fastest way to find one of fifty is the one somebody falls into
+		 * without being told it exists. */
+		if (k >= 32 && k < 256 && k != 127) {
+			size_t n = strlen(g_filter);
+			if (n < sizeof g_filter - 2) { g_filter[n] = (char)k; g_filter[n+1] = '\0'; }
+			g_card = 0; g_cardrow = 0; g_msg[0] = '\0';
+			continue;
+		}
+		if (k == K_BACK) {
+			size_t n = strlen(g_filter);
+			while (n && ((unsigned char)g_filter[n-1] & 0xC0) == 0x80) n--;
+			if (n) n--;
+			g_filter[n] = '\0';
+			g_card = 0; g_cardrow = 0;
+			continue;
+		}
+
 		switch (g_zone) {
 		case Z_STRIP:
 			switch (k) {
@@ -4961,12 +5385,11 @@ static void tui(void)
 			 * program however many rows the bar wrapped onto. */
 			case K_UP:    if (!strip_step(-1)) strip_to(S_BACK); break;
 			case K_TAB:   g_zone = Z_GRID; break;
-			case K_ESC:   strip_to(S_BACK); break;
 			case K_DOWN:
 				if (strip_step(+1)) break;
 				if (g_nview) g_zone = Z_GRID;
 				break;
-			case K_ENTER: case ' ':
+			case K_ENTER:
 				if (g_strip == S_BACK) { term_cooked(); return; }
 				if (g_strip == S_LANG) { g_zh = !g_zh; break; }
 				if (g_nview) g_zone = Z_GRID;
@@ -4997,8 +5420,7 @@ static void tui(void)
 			case K_HOME: g_card = 0; break;
 			case K_END:  g_card = g_nview ? g_nview - 1 : 0; break;
 			case K_TAB:  g_zone = Z_STRIP; g_strip = g_chip; break;
-			case K_ESC:  g_zone = Z_STRIP; g_strip = g_chip; g_msg[0] = '\0'; break;
-			case K_ENTER: case ' ':
+			case K_ENTER:
 				g_msg[0] = '\0';
 				if (g_nview) screen_app(&g_pkg[g_view[g_card]]);
 				break;
@@ -5258,7 +5680,7 @@ static int cli_doctor(void)
  */
 static int cli_screenshot(int n, char **rest)
 {
-	int w = 100, h = 30, sel = 0, zone = -1, want = 0;
+	int w = 100, h = 30, sel = 0, zone = -1, want = 0, vset = 0;
 	const char *cat = NULL, *screen = "home", *pick = NULL;
 	for (int i = 1; i < n; i++) {
 		if (!strcmp(rest[i], "--width") && i + 1 < n) w = atoi(rest[++i]);
@@ -5274,12 +5696,19 @@ static int cli_screenshot(int n, char **rest)
 			else if (!strcmp(f, "chips")) { zone = Z_STRIP; want = -3; }
 			else                            zone = Z_GRID;
 		}
+		/* So a filtered home screen can be rendered without a terminal, which
+		 * is the only way the search box is testable from a script. */
+		else if (!strcmp(rest[i], "--find") && i + 1 < n)
+			copy_str(g_filter, sizeof g_filter, rest[++i]);
+		else if (!strcmp(rest[i], "--view") && i + 1 < n)
+			{ g_vmode = !strcmp(rest[++i], "list") ? V_LIST : V_CARDS; vset = 1; }
 		else if (!strcmp(rest[i], "--probe")) probe_all(1);
 	}
 	g_w = w > 24 ? w : 24;
 	g_h = h > 10 ? h : 10;
 	g_anim = 0;              /* a frame that moves is not a frame you can diff */
 
+	if (!vset) view_load();
 	rebuild_lists();
 	if (cat) {
 		int ci = cat_index(cat);
@@ -5348,7 +5777,7 @@ static int cli_screenshot(int n, char **rest)
 		int labw = 12;
 		for (int i = 0; i < nvr; i++)
 			if (vrows[i].kind == ROW_PARAM) {
-				int lw = u8width(param_label(&p->params[vrows[i].idx]));
+				int lw = u8width(param_label_req(p, &p->params[vrows[i].idx]));
 				if (lw > labw) labw = lw;
 			}
 		if (labw > 28) labw = 28;
@@ -5359,8 +5788,12 @@ static int cli_screenshot(int n, char **rest)
 		int bfit = btn_width(S(T_SAVEAPPLY)) + 2 + btn_width(S(T_SAVE)) + 2 +
 		           btn_width(S(T_CANCEL)) + 4;
 		if (ww < bfit) { ww = bfit; if (ww > g_w - 2) ww = g_w - 2; }
-		int hh = nvr + 6; if (hh > g_h - 2) hh = g_h - 2;
-		int visrows = hh - 6; if (visrows < 1) visrows = 1;
+		int helph = 0;
+		for (int i = 0; i < p->nparams; i++)
+			if (p->params[i].help[0] || p->params[i].help_zh[0]) { helph = 3; break; }
+		if (p->require[0]) helph = 3;
+		int hh = nvr + 6 + helph; if (hh > g_h - 2) hh = g_h - 2;
+		int visrows = hh - 6 - helph; if (visrows < 1) visrows = 1;
 		int row = (g_h - hh) / 2, col = (g_w - ww) / 2;
 		if (row < 1) row = 1;
 		if (col < 0) col = 0;
@@ -5374,12 +5807,15 @@ static int cli_screenshot(int n, char **rest)
 			if (vr->kind == ROW_GROUP) {
 				Group *gr = &p->groups[vr->idx];
 				const char *lbl = (g_zh && gr->label_zh[0]) ? gr->label_zh : gr->label;
+				gput(y, col, BX_LT, P_BORDER, 1);
+				gfill(y, col + 1, ww - 2, BX_H, P_BORDER);
+				gput(y, col + ww - 1, BX_RT, P_BORDER, 1);
 				char hdr[160];
-				snprintf(hdr, sizeof hdr, "= %s", lbl);
-				gput(y, col + 2, hdr, slot == 0 ? P_ENTRYACT : P_WIN, ww - 4);
+				snprintf(hdr, sizeof hdr, " %s ", lbl);
+				gput(y, col + 2, hdr, slot == 0 ? P_ENTRYACT : P_BORDER, u8width(hdr));
 				char btxt[32];
-				snprintf(btxt, sizeof btxt, "<%s>", S(gr->folded ? T_SHOW : T_HIDE));
-				gput(y, col + ww - 2 - u8width(btxt), btxt, P_WIN, u8width(btxt));
+				snprintf(btxt, sizeof btxt, " <%s> ", S(gr->folded ? T_SHOW : T_HIDE));
+				gput(y, col + ww - 2 - u8width(btxt), btxt, P_BTN, u8width(btxt));
 				continue;
 			}
 			if (vr->kind == ROW_ACTION) {
@@ -5387,14 +5823,14 @@ static int cli_screenshot(int n, char **rest)
 				const char *lbl = (g_zh && apm->action_label_zh[0])
 				                  ? apm->action_label_zh : apm->action_label;
 				char btxt[96];
-				snprintf(btxt, sizeof btxt, "  %s", lbl);
-				gput(y, col + 2, btxt, slot == 0 ? P_ENTRYACT : P_WIN, ww - 4);
+				snprintf(btxt, sizeof btxt, "<%s>", lbl);
+				gput(y, col + 4, btxt, slot == 0 ? P_BTNACT : P_BTN, ww - 6);
 				continue;
 			}
 			Param *pm = &p->params[vr->idx];
 			int indent = (pm->group >= 0) ? 2 : 0;
 			int fx = col + 3 + labw;
-			gput(y, col + 2 + indent, param_label(pm), P_WIN, labw - indent);
+			gput(y, col + 2 + indent, param_label_req(p, pm), P_WIN, labw - indent);
 			gfill(y, fx, fieldw, " ", a0);
 			if (pm->type == PT_BOOL) {
 				int on = !strcmp(pm->value, "on") || !strcmp(pm->value, "1");
@@ -5425,6 +5861,21 @@ static int cli_screenshot(int n, char **rest)
 			}
 		}
 		scrollbar(row + 1, col + ww - 2, visrows, 0, visrows, nvr, P_SBTHUMBW, P_SBTRACKW);
+		if (helph) {
+			int hy = row + hh - 3 - helph + 1;
+			gput(hy - 1, col, BX_LT, P_BORDER, 1);
+			gfill(hy - 1, col + 1, ww - 2, BX_H, P_BORDER);
+			gput(hy - 1, col + ww - 1, BX_RT, P_BORDER, 1);
+			const char *txt = "";
+			for (int i = 0; i < nvr; i++)
+				if (vrows[i].kind == ROW_PARAM) { txt = param_help(&p->params[vrows[i].idx]); break; }
+			char hl[4][512];
+			int hn = *txt ? u8wrap(txt, ww - 4, hl, 2) : 0;
+			for (int i = 0; i < 2; i++) {
+				gfill(hy + i, col + 1, ww - 2, " ", P_WIN);
+				if (i < hn) gput(hy + i, col + 2, hl[i], P_DIM, ww - 4);
+			}
+		}
 		int bw = btn_width(S(T_SAVEAPPLY)) + 2 + btn_width(S(T_SAVE)) + 2 + btn_width(S(T_CANCEL));
 		int bx = col + (ww - bw) / 2;
 		if (bx < col + 1) bx = col + 1;
