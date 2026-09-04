@@ -16,8 +16,8 @@ on:
   workflow_dispatch:
     inputs:
       base:
-        description: 'Alpine base image'
-        default: 'alpine:3.22'
+        description: 'Base image — must be glibc; Geekbench segfaults on musl'
+        default: 'debian:trixie-slim'
         required: false
       platforms:
         description: 'Platforms to build'

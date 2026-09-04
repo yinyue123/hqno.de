@@ -12,12 +12,19 @@ podman run --rm -v nq:/data ghcr.io/yinyue123/nodequality init
 podman run --rm -it -v nq:/data --entrypoint vi \
   ghcr.io/yinyue123/nodequality /data/nodequality/shop.json
 
-podman run --rm -it -v nq:/data ghcr.io/yinyue123/nodequality \
+podman run --rm -it --cap-add=NET_RAW -v nq:/data ghcr.io/yinyue123/nodequality \
   run --endpoint https://shop.hqno.de
 ```
 
 Four commands, and only the third is yours to think about: `shop.json` is the
 price list, and nothing else in the page is typed by a human.
+
+**`--cap-add=NET_RAW` is not optional**, and it is the one flag whose absence
+is silent. Podman drops `CAP_NET_RAW` from its default set, `nexttrace` and
+`mtr` both need a raw socket, and a traceroute that cannot open one does not
+fail the run — it prints `Unknown -> NoData` nine times and the page comes back
+without a route section. Neither does the check exit non-zero. If the route
+tabs are missing from a page, this flag is the first thing to check.
 
 The volume is not decoration. `credentials.json` is written into it on the
 first publish and it is the only thing that can ever replace the page — a
@@ -33,7 +40,7 @@ to poke at `raw/` after a run.
 Built by hand from the Actions tab — **nodequality image** — not on every
 push. See [`../../shop/`](../../shop) for the endpoint it publishes to.
 
-## Why Alpine, and not the Debian rootfs NodeQuality downloads
+## Why Debian, and no chroot
 
 NodeQuality's whole shape is a sandbox: it fetches a Debian rootfs, chroots
 into it, runs the checks inside and deletes it, so a benchmark leaves nothing
@@ -43,13 +50,40 @@ production box.
 A container already is that sandbox. There is no host to keep clean, the
 container is deleted when it exits, and the chroot NodeQuality performs needs
 `mount -t proc`, which wants `CAP_SYS_ADMIN` — a capability an app container
-does not get. So the rootfs is dropped and the base becomes the small one.
+does not get. So the rootfs is dropped, but the *distribution* is kept, and
+that second half was where an earlier Alpine base went wrong.
 
-The cost of musl is **Geekbench**: it is a prebuilt glibc binary and will not
-run. The checks are therefore run in privacy mode (`-p`), which measures the
-CPU with sysbench instead and never downloads Geekbench at all. Privacy mode
-buys a second thing worth having: each xykt script otherwise uploads a copy of
-its report to a paste site, and this one publishes to your endpoint instead.
+The checks reach for four prebuilt binaries, and a check that cannot find one
+does not fail — it fills the section with `NoData` and carries on. Two of the
+four are glibc:
+
+| tool | what it is | what its absence cost |
+|---|---|---|
+| `geekbench5` | glibc, x86_64 | the CPU tiles. Segfaults under musl even with `gcompat` |
+| `speedtest` | Ookla's CLI | the domestic speedtest table |
+| `nexttrace` | static Go | the route matrix and every traceroute |
+| `stun` | `stun-client` | the NAT type row |
+
+All four are in the image now. Baking them in is also what keeps a check from
+running `apt-get` in the middle of a benchmark, which would both skew the disk
+numbers and fail on a box with no package mirror.
+
+Privacy mode (`-p`) is worth being precise about, because it does two
+unrelated things and shipping Geekbench does not settle it. `-p` stops the
+script posting a copy of its report to a paste site, *and* it skips Geekbench
+— the gate is `mode_privacy -eq 0 && test_cpu_gb5` at the call site, not
+whether the binary is installed.
+
+So `-p` is kept on three checks and dropped on the hardware one. The trade,
+stated plainly: a hardware report goes to Report.Check.Place, and it says what
+the page is about to publish anyway — CPU, memory, disk. The IP report, which
+carries the address, the risk scores and the blacklist standing, keeps `-p`
+and is never posted anywhere but your own endpoint. `--no-geekbench` puts `-p`
+back on all four and costs you the CPU tiles.
+
+Geekbench uploads its own result to `browser.geekbench.com` regardless — that
+is how it returns a score at all, and the link it gives back is the one the
+page shows as **原始结果 ↗**.
 
 `-F` (fast mode) is *not* used, and it is the obvious wrong turn here: it
 skips sysbench, the memory test and fio as well, which leaves the performance
@@ -61,8 +95,8 @@ section of the page with nothing in it.
 |---|---|---|---|
 | `IP.Check.Place` | `-p -y` | ownership, risk scores, unlock, blacklists | 3–5 min, little traffic |
 | `Hardware.Check.Place` | `-p -y` | CPU, memory, disk, sysbench, fio | 3–6 min, no traffic |
-| `Net.Check.Place` | `-p -y` | routes, 31-province latency, speedtests | 10–20 min, **a few GB** |
-| `Net.Check.Place` | `-p -R -n -S 123` | backhaul traceroutes | 3–8 min |
+| `Net.Check.Place` | `-p -y` | 31-province latency, speedtests, BGP, NAT | 10–20 min, **a few GB** |
+| `Net.Check.Place` | `-p -R -n -S 123` | the nine backhaul routes | 3–8 min |
 
 `--skip net` drops the expensive one; `--low-data` runs it in its own reduced
 mode. A skipped check does not break the page — the renderer drops a section

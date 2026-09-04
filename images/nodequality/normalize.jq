@@ -20,6 +20,20 @@
 # collection defaults to English.
 
 def blank: . == null or . == "" or . == "null" or . == "N/A" or . == "-";
+
+# Both speed tables arrive in bits per second — Net.sh's own report divides by
+# a million to print "588 Mbps" from 588313440, and the page says Mbps in its
+# column head. Printing the raw figure was putting a nine-digit number in a
+# column three characters wide. Truncated, not rounded, so the page and the
+# report it came from agree: 659032 b/s is "0" in both.
+def mbps: if blank then "" else ((tostring | tonumber?) as $n
+  | if $n == null then "" else ($n / 1000000 | floor | tostring) end) end;
+
+# The speed tones the design uses, read off the mockup: a link under 100 Mbps
+# to a Chinese city is the bad case, under 500 is the middling one.
+def speed_tone: (tostring | tonumber?) as $n
+  | if $n == null then "sub" elif $n < 100000000 then "bad"
+    elif $n < 500000000 then "warn" else "ok" end;
 def clean: if blank then null else . end;
 
 # A row that disappears rather than printing "null" at a customer.
@@ -55,7 +69,85 @@ def pct: if . == null then null
   | if . == null then null elif . > 100 then 100 elif . < 2 then 2 else . end
   end;
 
-$ip[0] as $ip | $hw[0] as $hw | $net[0] as $net | $trace[0] as $tr | $shop[0] as $shop
+
+# ------------------------------------------------------------------- routes
+#
+# nexttrace returns a list of probes per TTL; the first that answered is the
+# hop. RTT is nanoseconds.
+def route_hops: [ (.hops // [])[]
+  | ( [ .[] | select(.Success == true) ][0] ) as $p
+  | if $p == null then
+      { ttl: null, ip: "*", asn: "", country: "", prov: "", city: "", owner: "", rtt: null }
+    else
+      { ttl: $p.TTL,
+        ip: ($p.Address.IP // "*"),
+        asn: ((($p.Geo.asnumber // "") | tostring) as $a
+              | if $a == "" then "" else "AS" + $a end),
+        country: ($p.Geo.country // ""),
+        prov:    ($p.Geo.prov // ""),
+        city:    ($p.Geo.city // ""),
+        owner:   (($p.Geo.owner // "") | ltrimstr(" ") | rtrimstr(" ")),
+        rtt: $p.RTT }
+    end ];
+
+# Mainland, which for a backhaul route means not Hong Kong, Macau or Taiwan.
+def is_cn: ((.country // "") | test("中国|China"))
+       and ((((.country // "") + (.prov // "") + (.city // ""))
+             | test("香港|澳门|台湾|Hong Kong|Macau|Taiwan")) | not);
+
+# Net.sh's naming table, transcribed rather than approximated. $h is the hop
+# list and $i the index of the first mainland hop.
+def route_name($h; $i):
+  ([ $h[] | .asn ] | join(" ")) as $all
+  | (if (($h[$i].asn) // "") == "AS17676" then $i + 1 else $i end) as $j
+  | (($h[$j].asn) // "") as $a
+  # CN2 is GIA unless the first hop past the CN2 block is a 202.97 address.
+  | ([ $h[$j:][] | select(.asn != "AS4809" and .asn != "AS23764") ][0]) as $after
+  | ((($after.ip) // "") | startswith("202.97")) as $gt
+  | if   $a == "AS4134"  then "163"
+    elif $a == "AS4837"  then (if $j > 0 and (($h[$j-1].asn) // "") == "AS10099"
+                               then "10099" else "4837" end)
+    elif $a == "AS58453" then "CMI"
+    elif $a == "AS58807" then "CMIN2"
+    elif $a == "AS9808"  then (if ($all | test("AS58807")) then "CMIN2" else "CMI" end)
+    elif $a == "AS9929"  then "9929"
+    elif $a == "AS10099" then (if ($all | test("AS9929")) then "9929" else "10099" end)
+    elif $a == "AS4809"  then (if ($all | test("AS23764")) then "CTGGIA"
+                               elif $gt then "CN2GT" else "CN2GIA" end)
+    elif $a == "AS23764" then (if $gt then "CN2GT" else "CTGGIA" end)
+    elif $a == "AS4538"  then "CERNET"
+    elif $a == "AS7497"  then "CSTNET"
+    elif ($all | test("AS58807")) then "CMIN2"
+    elif ($all | test("AS9929"))  then "9929"
+    elif ($all | test("AS10099")) then "10099"
+    elif ($all | test("AS4809"))  then "CN2"
+    elif ($all | test("AS9808"))  then "CMI"
+    elif ($all | test("AS4134"))  then "163"
+    elif ($all | test("AS4837"))  then "4837"
+    else "NoData" end;
+
+# The carrier it left on: the last hop before China that names an owner.
+def route_carrier($h; $i):
+  ([ $h[0:$i][] | select((.owner | length) > 0) ] | last) as $x
+  | if $x == null then "" else ($x.owner | split(" ")[0]) end;
+
+# A premium route earns the accent. One that could not be read stays grey
+# rather than being guessed at.
+def route_tone($n):
+  if (["CN2GIA", "CTGGIA", "CMIN2", "9929"] | index($n)) then "ok"
+  elif (["NoData", "Hidden", "Unknown", ""] | index($n)) then "mute"
+  else "ink" end;
+
+def route_of: route_hops as $h
+  | ([ range(0; ($h | length)) | select($h[.] | is_cn) ][0]) as $i
+  | { city: .city, isp: .isp, hops: $h, cn: $i,
+      name: (if $i == null or $i == 0 then "Hidden" else route_name($h; $i) end),
+      carrier: (if $i == null then "" else route_carrier($h; $i) end) };
+
+def route_label: (if (.carrier | length) > 0 then .carrier + " → " else "" end) + .name;
+
+$ip[0] as $ip | $hw[0] as $hw | $net[0] as $net | $shop[0] as $shop
+| ([ ($route[0] // [])[] | route_of ]) as $routes
 
 | ($ip.Info // {}) as $info
 | ($hw.CPU // {}) as $cpu
@@ -198,9 +290,14 @@ $ip[0] as $ip | $hw[0] as $hw | $net[0] as $net | $trace[0] as $tr | $shop[0] as
                          elif .value.Status == "Block" or .value.Status == "Failed" then "bad"
                          else "warn" end) } ],
 
-    port25: (if ($ip.Mail.Port25 // null) == null then null
-             else { v: (if $ip.Mail.Port25 then "@v_yes" else "@v_port_blocked" end),
-                    tone: (if $ip.Mail.Port25 then "ok" else "bad" end) } end),
+    # `//` treats false as absent, and false is the answer this row exists to
+    # carry: a blocked port 25 is what a buyer needs to see, and writing it as
+    # `.Port25 // null` deleted the row on exactly the machines that have one.
+    # So the test is whether the key is a boolean, not whether it is truthy.
+    port25: (($ip.Mail // {}) as $mail
+             | if ($mail.Port25 | type) != "boolean" then null
+               else { v: (if $mail.Port25 then "@v_yes" else "@v_port_blocked" end),
+                      tone: (if $mail.Port25 then "ok" else "bad" end) } end),
 
     blacklist: (($ip.Mail.DNSBlacklist // {}) as $b
       | if ($b | length) == 0 then [] else [
@@ -264,30 +361,60 @@ $ip[0] as $ip | $hw[0] as $hw | $net[0] as $net | $trace[0] as $tr | $shop[0] as
 
     domestic: [ ($net.Speedtest // [])[]
                 | { node: ([(.City | clean), (.Provider | clean)] | map(select(. != null)) | join(" ")),
-                    up: (.SendSpeed // ""), upPing: (.SendDelay // ""),
-                    down: (.ReceiveSpeed // ""), dnPing: (.ReceiveDelay // ""),
-                    upTone: "sub", downTone: "sub" } ],
+                    up: (.SendSpeed | mbps), upPing: ((.SendDelay // "") | tostring),
+                    down: (.ReceiveSpeed | mbps), dnPing: ((.ReceiveDelay // "") | tostring),
+                    upTone: (.SendSpeed | speed_tone), downTone: (.ReceiveSpeed | speed_tone) } ],
 
     intl: [ ($net.Transfer // [])[]
             | select((.SendSpeed | blank | not) or (.ReceiveSpeed | blank | not))
-            | { city: .City, ping: (.Delay.Average // ""),
-                up: (.SendSpeed // ""), upRt: (.SendRetransmits // ""),
-                down: (.ReceiveSpeed // ""), dnRt: (.ReceiveRetransmits // "") } ]
+            | { city: .City, ping: ((.Delay.Average // "") | tostring),
+                up: (.SendSpeed | mbps), upRt: ((.SendRetransmits // "") | tostring),
+                down: (.ReceiveSpeed | mbps), dnRt: ((.ReceiveRetransmits // "") | tostring) } ],
 
-    # The route matrix and the hop-by-hop detail are *not* built here, and the
-    # renderer draws both if a document carries them — see
-    # shop/example.page.json, which does.
+    # ---------------------------------------------------------- route
     #
-    # The reason is upstream: Net.sh writes exactly seven keys to its JSON —
-    # Head, BGP, Local, Connectivity, Delay, Speedtest, Transfer — and the
-    # nine backhaul routes are not among them. `-R` prints them to the report
-    # and nothing else, so the file NodeQuality saves as backroute_trace.json
-    # is the same envelope with the route fields empty. There is no JSON to
-    # read, only a coloured table to scrape, and a route name guessed wrong is
-    # worse on a sales page than a route section that is not there.
+    # Both route sections come from raw/route.json, which nq-shop fills by
+    # running the nine traces itself — Net.sh writes none of them to its JSON,
+    # and firing all nine at once loses the API's rate limit anyway. See the
+    # note above cmd_route.
     #
-    # The report is kept verbatim as raw/trace.log for whoever wants to read
-    # it or paste it in by hand.
+    # One matrix row per city, three cells across for the three carriers, in
+    # the order the page's column heads name them.
+    matrix: [ (["BJ", "SH", "GD"] | .[]) as $c
+              | { city: $c, rows: [ $routes[] | select(.city == $c) ] }
+              | select((.rows | length) > 0)
+              | { label: "@{p.\(.city)} TCP",
+                  cells: [ (["ct", "cu", "cm"] | .[]) as $i
+                           | ([ .rows[] | select(.isp == $i) ][0]) as $r
+                           | if $r == null then { v: "—", tone: "mute" }
+                             else { v: ($r | route_label), tone: route_tone($r.name) } end ] } ],
+
+    traces: [ $routes[]
+              | select((.hops | length) > 0)
+              | { title: "@{p.\(.city)} @{isp_\(.isp)} · \(route_label)",
+                  # Province where there is one, country otherwise: the same
+                  # granularity the design's geographic path reads at, and one
+                  # step coarser than the city, which turns a single route into
+                  # a list of every metro its packets touched.
+                  geo: ([ .hops[]
+                          | ((.prov | clean) // (.country | clean))
+                          | select(. != null) ]
+                        | . as $g | reduce $g[] as $x ([]; if (. | last) == $x then . else . + [$x] end)
+                        | join(" → ")),
+                  asPath: ([ .hops[] | .asn | select(. != "") ]
+                           | . as $a | reduce $a[] as $x ([]; if (. | last) == $x then . else . + [$x] end)
+                           | join(" → ")),
+                  hops: [ .hops[]
+                          | select(.ttl != null)
+                          | { n: (.ttl | tostring),
+                              rtt: (if .rtt == null then "*"
+                                    else "\((.rtt / 1000000 * 100 | round) / 100)ms" end),
+                              ip: .ip,
+                              asn: (if .asn == "" then "—" else .asn end),
+                              org: ([ (.owner | clean),
+                                      ([(.country | clean), (.prov | clean)]
+                                       | map(select(. != null)) | join(" ") | clean) ]
+                                    | map(select(. != null)) | join(" ")) } ] } ]
   }
 
   # A section the checks could not fill is dropped rather than published

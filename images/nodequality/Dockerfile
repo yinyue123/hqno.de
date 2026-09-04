@@ -4,43 +4,99 @@
 # price list into one document, pays the endpoint's proof of work and posts it.
 # What comes back is a URL.
 #
-# Alpine, and not the Debian rootfs NodeQuality downloads, for one reason:
-# NodeQuality chroots into a throwaway Debian so the tests leave no trace on
-# the host. A container *is* that throwaway system — it has no host to dirty,
-# and the chroot it would need (`mount -t proc`) wants CAP_SYS_ADMIN, which an
-# app container does not get. So the sandbox is the container and the base can
-# be the small one.
+# Debian, and for the same reason NodeQuality chroots into a Debian rootfs:
+# two of the four tools these checks reach for are prebuilt glibc binaries.
+# The earlier Alpine base cost the page four sections, because a check that
+# cannot find its tool does not fail — it prints NoData and carries on:
 #
-# The cost of musl is Geekbench: it is a prebuilt glibc binary and will not
-# run here. The checks are therefore run in their fast mode, which measures
-# CPU with sysbench instead and never downloads it. Everything else the xykt
-# scripts want is an apk away, and all of it is baked in below so that a run
-# on a metered box downloads test payloads and nothing else.
+#   nexttrace   the nine backhaul routes; without it every line reads
+#               "Unknown -> NoData" and the route sections are empty
+#   speedtest   Ookla's CLI, which is the domestic speedtest table
+#   stun        NAT type, in the local-policy card
+#   geekbench5  the CPU scores. This is the one that forces the base: it is
+#               glibc and segfaults under musl even with gcompat installed
+#
+# All four are baked in below, along with everything the scripts would
+# otherwise `apt-get` mid-benchmark — which would both skew the disk numbers
+# and fail on a box with no package mirror. A run downloads test payloads and
+# nothing else.
 
-ARG BASE=alpine:3.22
+ARG BASE=debian:trixie-slim
 
 FROM ${BASE} AS solver
-RUN apk add --no-cache gcc musl-dev
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gcc libc6-dev \
+ && rm -rf /var/lib/apt/lists/*
 COPY pow.c /tmp/pow.c
 # Static, so the runtime stage carries one file and no toolchain.
 RUN gcc -O3 -static -o /nq-pow /tmp/pow.c && strip /nq-pow
 
 FROM ${BASE}
+ARG TARGETARCH
 
-# Three package lists, taken from what IP.sh, Net.sh and Hardware.sh each
-# install when they find themselves on Alpine. Pre-installing them is what
-# keeps the scripts from running `apk add` mid-benchmark, which would both
-# skew the disk numbers and fail on a box with no package mirror.
-RUN apk add --no-cache \
-      bash coreutils util-linux procps grep sed gawk findutils tar unzip zip \
+# Taken from what IP.sh, Net.sh and Hardware.sh each install when they find
+# themselves on Debian — including `stun`, which only Net.sh's Debian branch
+# asks for, and which is why the NAT row was blank.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      bash coreutils util-linux procps grep sed gawk findutils \
+      tar unzip zip xz-utils \
       curl wget ca-certificates openssl jq bc \
-      bind-tools iproute2 netcat-openbsd mtr iperf3 \
+      dnsutils iproute2 netcat-openbsd mtr-tiny iperf3 stun-client \
       dmidecode lm-sensors pciutils smartmontools fio sysbench \
-      imagemagick gcompat libstdc++ tzdata \
+      imagemagick tzdata \
  && update-ca-certificates \
- # ImageMagick 7 ships `magick`; Net.sh looks for `convert` and would try to
- # install the package it already has if it cannot find one.
+ && rm -rf /var/lib/apt/lists/* \
+ # Net.sh looks for `convert`; ImageMagick 7 ships it as `magick` and would
+ # try to install the package it already has if it cannot find one.
  && { command -v convert >/dev/null || ln -s "$(command -v magick)" /usr/bin/convert; }
+
+# NextTrace is a static Go binary, so the same file works on either libc; it
+# is pinned because a route name guessed wrong is worse than no route section.
+ARG NEXTTRACE_VERSION=v1.3.7
+RUN set -eux; \
+    case "$TARGETARCH" in \
+      amd64) arch=amd64 ;; \
+      arm64) arch=arm64 ;; \
+      *) echo "no nexttrace build for $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /usr/local/bin/nexttrace \
+      "https://github.com/nxtrace/NTrace-core/releases/download/${NEXTTRACE_VERSION}/nexttrace_linux_${arch}"; \
+    chmod +x /usr/local/bin/nexttrace; \
+    nexttrace --version
+
+# Ookla's CLI. Net.sh will fetch this itself if it is missing, mid-run, over
+# the link it is about to measure.
+ARG SPEEDTEST_VERSION=1.2.0
+RUN set -eux; \
+    case "$TARGETARCH" in \
+      amd64) arch=x86_64 ;; \
+      arm64) arch=aarch64 ;; \
+      *) echo "no speedtest build for $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/speedtest.tgz \
+      "https://install.speedtest.net/app/cli/ookla-speedtest-${SPEEDTEST_VERSION}-linux-${arch}.tgz"; \
+    tar xzf /tmp/speedtest.tgz -C /usr/local/bin speedtest; \
+    rm /tmp/speedtest.tgz; \
+    speedtest --version
+
+# Geekbench 5 is x86_64-only on Linux. Shipping it is necessary but not
+# sufficient: Hardware.sh gates the whole test on privacy mode at the call
+# site — `mode_privacy -eq 0 && test_cpu_gb5` — not on whether the binary is
+# there. nq-shop is what drops -p for the hardware check; this only makes
+# sure that when it does, nothing is downloaded mid-benchmark.
+ARG GEEKBENCH_VERSION=5.5.1
+RUN set -eux; \
+    if [ "$TARGETARCH" = "amd64" ]; then \
+      curl -fsSL -o /tmp/geekbench.tgz \
+        "https://cdn.geekbench.com/Geekbench-${GEEKBENCH_VERSION}-Linux.tar.gz"; \
+      tar xzf /tmp/geekbench.tgz -C /usr/local/bin; \
+      rm /tmp/geekbench.tgz; \
+      ln -s "/usr/local/bin/Geekbench-${GEEKBENCH_VERSION}-Linux/geekbench5" /usr/local/bin/geekbench5; \
+      geekbench5 --version; \
+    else \
+      echo "Geekbench 5 has no $TARGETARCH build for Linux; the CPU tiles will be sysbench's"; \
+    fi
 
 COPY --from=solver /nq-pow /usr/local/bin/nq-pow
 COPY nq-shop /usr/local/bin/nq-shop

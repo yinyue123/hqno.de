@@ -4,6 +4,7 @@
 #   nq-shop run          collect, build and publish  (the default)
 #   nq-shop init         write the editable price list and stop
 #   nq-shop collect      run the checks into raw/
+#   nq-shop route        trace the nine backhaul routes into raw/route.json
 #   nq-shop build        fold raw/ and shop.json into page.json
 #   nq-shop publish      pay the proof of work and post page.json
 #   nq-shop show         print the path of every file it keeps
@@ -16,8 +17,13 @@
 #   page.json         the two folded together; this is what gets published
 #   credentials.json  the id and the token that let you publish over it again
 #
-# The one thing worth knowing before running it: this takes fifteen to thirty
-# minutes and moves a few GB of speedtest traffic. `--skip net` if that matters.
+# Two things worth knowing before running it. It takes twenty to fifty minutes
+# and moves a few GB of speedtest traffic — `--skip net` if that matters. And
+# it needs CAP_NET_RAW: podman drops that capability by default, nexttrace and
+# mtr both want a raw socket, and without one the nine backhaul routes come
+# back as NoData without anything exiting non-zero.
+#
+#   podman run --rm --cap-add=NET_RAW -v nq:/data … run --endpoint …
 
 set -euo pipefail
 
@@ -31,9 +37,15 @@ NET_URL="${NQ_NET_URL:-https://Net.Check.Place}"
 HW_URL="${NQ_HW_URL:-https://Hardware.Check.Place}"
 
 SKIP=""
+GEEKBENCH=1
 DRY_RUN=0
 POW_LIMIT="${NQ_POW_LIMIT:-600}"
 CHECK_TIMEOUT="${NQ_CHECK_TIMEOUT:-1800}"
+# One trace is well under a minute; the pause between them is what keeps nine
+# of them inside the API's per-address budget.
+ROUTE_TIMEOUT="${NQ_ROUTE_TIMEOUT:-90}"
+ROUTE_PAUSE="${NQ_ROUTE_PAUSE:-12}"
+ROUTE_RETRIES="${NQ_ROUTE_RETRIES:-4}"
 LOW_DATA=0
 
 say()  { printf '\033[1;36m%s\033[0m\n' "$*" >&2; }
@@ -52,12 +64,13 @@ skipping() { [[ ",$SKIP," == *",$1,"* ]]; }
 CMD=""
 while [[ $# -gt 0 ]]; do
 	case "$1" in
-	run|init|collect|build|publish|show) CMD="$1"; shift ;;
+	run|init|collect|route|build|publish|show) CMD="$1"; shift ;;
 	--endpoint)   NQ_ENDPOINT="$2"; shift 2 ;;
 	--home)       NQ_HOME="$2"; shift 2 ;;
 	--lang)       NQ_LANG="$2"; shift 2 ;;
 	--skip)       SKIP="$2"; shift 2 ;;
 	--low-data)   LOW_DATA=1; shift ;;
+	--no-geekbench) GEEKBENCH=0; shift ;;
 	--dry-run)    DRY_RUN=1; shift ;;
 	--timeout)    CHECK_TIMEOUT="$2"; shift 2 ;;
 	-h|--help)    usage ;;
@@ -86,10 +99,17 @@ cmd_init() {
 # ------------------------------------------------------------------- collect
 
 # Each check is asked for JSON with -o, and -o refuses a file that already
-# exists, so the old answer goes first. -p is privacy mode, which is what makes
-# these usable here: it drops Geekbench (a glibc binary that cannot run on
-# musl) and it stops each script uploading a copy of the report to a paste site
-# that is not ours.
+# exists, so the old answer goes first. -p is privacy mode, and it does two
+# unrelated things: it stops the script posting a copy of its report to a
+# paste site that is not ours, and it skips Geekbench — the gate is on the
+# call site (`mode_privacy -eq 0 && test_cpu_gb5`), not on whether the binary
+# is installed, so shipping Geekbench in the image is not enough on its own.
+#
+# So -p is kept on every check but the hardware one. That is the trade stated
+# plainly: a hardware report goes to Report.Check.Place, and it says what this
+# page is about to publish anyway — CPU, memory, disk. The IP report, which
+# carries the address, the risk scores and the blacklist standing, keeps -p
+# and stays unpublished. `--no-geekbench` puts -p back on all four.
 run_check() {
 	local name="$1" out="$2"; shift 2
 	if skipping "$name"; then
@@ -123,13 +143,91 @@ cmd_collect() {
 	cp "$RAW/net.sh" "$RAW/trace.sh"
 
 	local low=(); [[ $LOW_DATA -eq 1 ]] && low=(-L)
+	local hwp=(); [[ $GEEKBENCH -eq 0 ]] && hwp=(-p)
 
 	run_check ip    "$RAW/ip.json"    "${lang[@]}" -p -y                || true
-	run_check hw    "$RAW/hw.json"    "${lang[@]}" -p -y                || true
+	run_check hw    "$RAW/hw.json"    "${lang[@]}" "${hwp[@]}" -y       || true
 	run_check net   "$RAW/net.json"   "${lang[@]}" -p -y "${low[@]}"    || true
-	run_check trace "$RAW/trace.json" "${lang[@]}" -p -R -n -S 123      || true
+	cmd_route
 
 	say "collected: $(cd "$RAW" && ls -1 *.json 2>/dev/null | tr '\n' ' ')"
+}
+
+# --------------------------------------------------------------------- route
+
+# The nine backhaul routes, traced here rather than by Net.sh -R.
+#
+# Net.sh runs these too and writes none of them to its JSON: the route names
+# live in bash arrays that reach the terminal and nothing else, so there has
+# never been anything to read. It also starts all nine nexttrace processes at
+# once, and that is what makes the section unusable rather than merely
+# unavailable — the NextTrace API rate limits per source address, nine
+# simultaneous requests all lose it, and each line comes back
+# "Unknown -> NoData" while the check still exits as if it had worked.
+#
+# So they are run one at a time here, with a pause between, asking for JSON
+# instead of a coloured table. The provider stays LeoMoeAPI because it is the
+# only one that tags the Chinese backbone: ipinfo leaves the 59.43.x hops
+# with no ASN at all, and those hops are the CN2 that decides whether a route
+# is GIA. The answer to the rate limit is patience, not a worse map.
+
+ROUTE_TARGETS=(
+	"BJ ct bj-ct" "BJ cu bj-cu" "BJ cm bj-cm"
+	"SH ct sh-ct" "SH cu sh-cu" "SH cm sh-cm"
+	"GD ct gd-ct" "GD cu gd-cu" "GD cm gd-cm"
+)
+
+cmd_route() {
+	mkdir -p "$RAW"
+	if skipping route; then
+		warn "skipping the backhaul routes"
+		return 0
+	fi
+	if ! command -v nexttrace >/dev/null 2>&1; then
+		warn "no nexttrace on PATH — the page will have no route sections"
+		return 0
+	fi
+
+	local log="$RAW/route.log" out="$RAW/route.json"
+	: > "$log"
+	local parts=() spec city isp host domain raw json try ok done=0
+
+	say "tracing the nine backhaul routes, one at a time"
+	for spec in "${ROUTE_TARGETS[@]}"; do
+		read -r city isp host <<<"$spec"
+		domain="${host}-v4.ip.zstaticcdn.com"
+		ok=0
+		for ((try = 1; try <= ROUTE_RETRIES; try++)); do
+			raw="$(timeout -s SIGKILL "$ROUTE_TIMEOUT" \
+				nexttrace -p 80 -q 3 -4 --tcp --psize 1400 --json --no-rdns \
+				"$domain" 2>>"$log" || true)"
+			json="$(grep -o '{.*}' <<<"$raw" | tail -n1)"
+			if [[ -n "$json" ]] && jq -e '.Hops | length > 0' <<<"$json" >/dev/null 2>&1; then
+				ok=1
+				break
+			fi
+			printf 'retry %d for %s %s\n' "$try" "$city" "$isp" >> "$log"
+			sleep "$ROUTE_PAUSE"
+		done
+		if [[ $ok -eq 1 ]]; then
+			parts+=("$(jq -c -n --arg city "$city" --arg isp "$isp" \
+				--argjson trace "$json" \
+				'{city: $city, isp: $isp, hops: $trace.Hops}')")
+			done=$((done + 1))
+			say "  $city $isp"
+		else
+			warn "  $city $isp — no answer after $ROUTE_RETRIES tries; see $log"
+		fi
+		sleep "$ROUTE_PAUSE"
+	done
+
+	if [[ $done -eq 0 ]]; then
+		warn "no route answered — the page will have no route sections"
+		rm -f "$out"
+		return 0
+	fi
+	printf '%s\n' "${parts[@]}" | jq -s '.' > "$out"
+	say "traced $done of ${#ROUTE_TARGETS[@]} routes into $out"
 }
 
 # --------------------------------------------------------------------- build
@@ -140,7 +238,7 @@ cmd_build() {
 
 	local args=()
 	local f
-	for f in ip hw net trace; do
+	for f in ip hw net route; do
 		if [[ -s "$RAW/$f.json" ]] && jq -e . "$RAW/$f.json" >/dev/null 2>&1; then
 			args+=(--slurpfile "$f" "$RAW/$f.json")
 		else
@@ -284,6 +382,7 @@ mkdir -p "$NQ_HOME"
 case "$CMD" in
 init)    cmd_init ;;
 collect) cmd_collect ;;
+route)   cmd_route ;;
 build)   cmd_build ;;
 publish) cmd_publish ;;
 show)    cmd_show ;;
