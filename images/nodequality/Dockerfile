@@ -103,7 +103,7 @@ COPY nq-shop /usr/local/bin/nq-shop
 COPY normalize.jq page.default.json /usr/share/nodequality/
 RUN chmod +x /usr/local/bin/nq-shop \
  && bash -n /usr/local/bin/nq-shop \
- && jq -n --argjson ip '[]' --argjson hw '[]' --argjson net '[]' --argjson trace '[]' \
+ && jq -n --argjson ip '[]' --argjson hw '[]' --argjson net '[]' --argjson route '[]' \
       --slurpfile shop /usr/share/nodequality/page.default.json \
       -f /usr/share/nodequality/normalize.jq > /dev/null
 
