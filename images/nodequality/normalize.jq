@@ -62,6 +62,8 @@ $ip[0] as $ip | $hw[0] as $hw | $net[0] as $net | $trace[0] as $tr | $shop[0] as
 | ($hw.Memory // {}) as $mem
 | ($hw.Disk // {}) as $disk
 | (($disk.benchmarks // {}).fio // {}) as $fio
+| ($net.BGP // {}) as $bgp
+| ($net.Local // {}) as $local
 
 # ------------------------------------------------------------------ the page
 
@@ -107,9 +109,7 @@ $ip[0] as $ip | $hw[0] as $hw | $net[0] as $net | $trace[0] as $tr | $shop[0] as
 
     # -------------------------------------------------------------- perf
     # Geekbench is not run here — it is a glibc binary and this is musl — so
-    # the CPU tiles are sysbench's, and the memory pair is the hardware
-    # check's own read/write measurement.
-    # "SYSBENCH" is a product name and reads the same in all four languages,
+    # the CPU tiles are sysbench's. "SYSBENCH" is a product name and reads the same in all four languages,
     # so the CPU tiles carry it literally and the memory pair keeps its
     # translated label. The memory numbers are the hardware check's own
     # measurement, not sysbench's, and the sub-line says so rather than
@@ -215,37 +215,79 @@ $ip[0] as $ip | $hw[0] as $hw | $net[0] as $net | $trace[0] as $tr | $shop[0] as
                else "NetQuality \($net.Head.Version)" end),
 
     bgp: [
-      row("@k_registry"; $net.BGP.registry),
-      row("@k_asname";   $net.BGP.as_name),
-      row("@k_prefix";   $net.BGP.prefix),
-      row("@k_region";   $net.BGP.region),
-      row("@k_neighbors"; $net.BGP.neighbors)
+      row("@k_registry";  $bgp.RIR),
+      row("@k_asname";    (if ($bgp.ASN | clean) == null then null
+                           else "AS\($bgp.ASN) \($bgp.Organization // "")" | rtrimstr(" ") end)),
+      row("@k_prefix";    (if ($bgp.Prefix | clean) == null then null else "/\($bgp.Prefix)" end)),
+      row("@k_regmod";    (if ($bgp.ModDate | clean) == null then null
+                           else "\(($bgp.RegDate | clean) // "—") / \($bgp.ModDate)" end)),
+      row("@k_region";    ([($bgp.Country | clean), ($bgp.SubRegion | clean)]
+                           | map(select(. != null)) | join(" · ") | clean)),
+      row("@k_neighbors"; (if ($bgp.NeighborinTotal | clean) == null then null
+                           else "\($bgp.NeighborActive) / \($bgp.NeighborinTotal) · \($bgp.IPActive) / \($bgp.IPinTotal)" end))
     ],
 
+    # Symmetric NAT is the one line here a buyer might care about, so it is the
+    # one that gets a tone rather than being another grey row.
     local: [
-      row("@k_nat";   $net.NAT.type; "warn"),
-      row("@k_cc";    $net.TCP.congestion_control),
-      row("@k_qdisc"; $net.TCP.qdisc),
-      row("@k_rmem";  $net.TCP.rmem; "sub"),
-      row("@k_wmem";  $net.TCP.wmem; "sub")
+      row("@k_nat";   ([($local.NATDescribe | clean), ($local.Mapping | clean)]
+                       | map(select(. != null)) | join(" · ") | clean);
+                      (if ($local.NATDescribe // "") == "Symmetric" then "bad" else "ok" end)),
+      row("@k_cc";    $local.TCPCongestionControl),
+      row("@k_qdisc"; $local.QueueDiscipline),
+      row("@k_rmem";  $local.TCPReceiveBuffer; "sub"),
+      row("@k_wmem";  $local.TCPSendBuffer; "sub")
     ],
 
-    peering: [
-      row("@k_ixp";      $net.Connectivity.ixp),
-      row("@k_upstream"; $net.Connectivity.upstream),
-      row("@k_peers";    $net.Connectivity.peer)
-    ] | map({ k, v }),
+    peering: ([
+      row("@k_ixp";      $bgp.IXCount),
+      row("@k_upstream"; $bgp.UpstreamsCount),
+      row("@k_peers";    $bgp.PeersCount)
+    ] | map({ k, v })),
 
-    upstreams: [ ($net.Connectivity.upstreams // [])[]
-                 | { name: (if type == "object" then (.name // .asn) else . end),
-                     tier1: (if type == "object" then (.tier1 // false) else false end) } ],
+    # The target AS is this machine's own, so it is not one of its upstreams.
+    upstreams: [ ($net.Connectivity // [])[]
+                 | select(.IsTarget != true)
+                 | { name: "AS\(.ASN) \(.Org // "")" | rtrimstr(" "), tier1: (.IsTier1 // false) } ],
 
-    traces: [ (($tr.Traceroute // $tr.Trace // []) | if type == "object" then to_entries | map(.value) else . end)[]
-              | { title: (.name // .target // ""),
-                  geo: ((.geo // []) | join(" → ")),
-                  asPath: ((.as_path // []) | join(" → ")),
-                  hops: [ (.hops // [])[] | { n: (.hop // .n | tostring), rtt: (.rtt // ""),
-                                              ip: (.ip // ""), asn: (.asn // ""), org: (.org // "") } ] } ]
+    # No `name` per row on purpose: the checks return the provinces in the
+    # order the language table lists them, so leaving the name out is what
+    # makes the grid read as 粤 or Guangdong depending on the reader.
+    #
+    # A province that answered zero on all three carriers was not measured —
+    # the check reports an unanswered probe as 0.00 — and a grid of zeros
+    # would read as a machine with no latency at all.
+    latency: (($net.Delay // [])
+      | map({ cells: [ (.CT.Average // "0"), (.CU.Average // "0"), (.CM.Average // "0") ] })
+      | if (map(select(.cells | map(tonumber? // 0) | add > 0)) | length) == 0 then null
+        else { rows: . } end),
+
+    domestic: [ ($net.Speedtest // [])[]
+                | { node: ([(.City | clean), (.Provider | clean)] | map(select(. != null)) | join(" ")),
+                    up: (.SendSpeed // ""), upPing: (.SendDelay // ""),
+                    down: (.ReceiveSpeed // ""), dnPing: (.ReceiveDelay // ""),
+                    upTone: "sub", downTone: "sub" } ],
+
+    intl: [ ($net.Transfer // [])[]
+            | select((.SendSpeed | blank | not) or (.ReceiveSpeed | blank | not))
+            | { city: .City, ping: (.Delay.Average // ""),
+                up: (.SendSpeed // ""), upRt: (.SendRetransmits // ""),
+                down: (.ReceiveSpeed // ""), dnRt: (.ReceiveRetransmits // "") } ]
+
+    # The route matrix and the hop-by-hop detail are *not* built here, and the
+    # renderer draws both if a document carries them — see
+    # shop/example.page.json, which does.
+    #
+    # The reason is upstream: Net.sh writes exactly seven keys to its JSON —
+    # Head, BGP, Local, Connectivity, Delay, Speedtest, Transfer — and the
+    # nine backhaul routes are not among them. `-R` prints them to the report
+    # and nothing else, so the file NodeQuality saves as backroute_trace.json
+    # is the same envelope with the route fields empty. There is no JSON to
+    # read, only a coloured table to scrape, and a route name guessed wrong is
+    # worse on a sales page than a route section that is not there.
+    #
+    # The report is kept verbatim as raw/trace.log for whoever wants to read
+    # it or paste it in by hand.
   }
 
   # A section the checks could not fill is dropped rather than published

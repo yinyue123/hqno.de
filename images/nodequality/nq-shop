@@ -119,7 +119,6 @@ cmd_collect() {
 	say "fetching the checks"
 	fetch "$IP_URL" "$RAW/ip.sh"
 	fetch "$HW_URL" "$RAW/hw.sh"
-	cp "$RAW/hw.sh" "$RAW/hw.sh.bak" 2>/dev/null || true
 	fetch "$NET_URL" "$RAW/net.sh"
 	cp "$RAW/net.sh" "$RAW/trace.sh"
 
@@ -130,7 +129,7 @@ cmd_collect() {
 	run_check net   "$RAW/net.json"   "${lang[@]}" -p -y "${low[@]}"    || true
 	run_check trace "$RAW/trace.json" "${lang[@]}" -p -R -n -S 123      || true
 
-	say "collected: $(cd "$RAW" && ls -1 ./*.json 2>/dev/null | tr '\n' ' ')"
+	say "collected: $(cd "$RAW" && ls -1 *.json 2>/dev/null | tr '\n' ' ')"
 }
 
 # --------------------------------------------------------------------- build
@@ -262,6 +261,17 @@ cmd_show() {
 }
 
 # ----------------------------------------------------------------------- run
+
+# /data is where this is meant to live, and on hqnode it is opt-in: `hqnode
+# run` without --data gives a container no /data at all. Falling back silently
+# would work and then lose the publish token on the next reinstall, so say it
+# once, loudly, and carry on — a page still gets published either way.
+if [[ "$NQ_HOME" == /data/* && ! -d /data ]]; then
+	warn "there is no /data here, so $NQ_HOME will sit on the container's own"
+	warn "filesystem and go away with it — including the token that lets you"
+	warn "republish. Give the container a /data (hqnode run --data 1G), or copy"
+	warn "$NQ_HOME/credentials.json somewhere it will survive."
+fi
 
 mkdir -p "$NQ_HOME"
 case "$CMD" in

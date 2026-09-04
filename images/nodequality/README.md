@@ -48,6 +48,24 @@ section of the page with nothing in it.
 mode. A skipped check does not break the page — the renderer drops a section
 with no rows, and its tab with it.
 
+### The two sections this does not fill
+
+**The route matrix and the hop-by-hop detail are not built automatically.**
+The page can show both — [`shop/example.page.json`](../../../shop/example.page.json)
+does — but nothing here fills them.
+
+The reason is upstream. `Net.sh` writes exactly seven keys to its JSON —
+`Head`, `BGP`, `Local`, `Connectivity`, `Delay`, `Speedtest`, `Transfer` — and
+the nine backhaul routes are not among them. `-R` prints them to the report and
+nowhere else, which is why the file NodeQuality saves as
+`backroute_trace.json` is that same envelope with nothing route-shaped in it.
+Getting them into the page would mean scraping a coloured, localized table, and
+a route name guessed wrong is worse on a sales page than a route section that
+is not there.
+
+The report is kept verbatim as `raw/trace.log`. Read it, or paste the routes
+into `page.json` by hand — the renderer draws them if they are there.
+
 ## Files it keeps
 
 Everything lives under `/data/nodequality`, which on an hqnode container is
