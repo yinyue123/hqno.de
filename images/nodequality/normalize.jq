@@ -151,6 +151,7 @@ $ip[0] as $ip | $hw[0] as $hw | $net[0] as $net | $shop[0] as $shop
 
 | ($ip.Info // {}) as $info
 | ($hw.CPU // {}) as $cpu
+| (($hw.CPU // {}).benchmarks.geekbench5 // {}) as $gb
 | ($hw.Memory // {}) as $mem
 | ($hw.Disk // {}) as $disk
 | (($disk.benchmarks // {}).fio // {}) as $fio
@@ -206,10 +207,20 @@ $ip[0] as $ip | $hw[0] as $hw | $net[0] as $net | $shop[0] as $shop
     # translated label. The memory numbers are the hardware check's own
     # measurement, not sysbench's, and the sub-line says so rather than
     # crediting the wrong tool.
+    # Four tiles, and the design's are Geekbench's when there are any. The
+    # image ships geekbench5 now, so the sysbench pair is the fallback for a
+    # machine where it did not run — an arm64 box, or --no-geekbench — rather
+    # than the only thing on offer.
     cpu: [
-      (if ($cpu.benchmarks.sysbench.single // null) != null then
+      (if ($gb.single // null) != null then
+        { label: "@l_gb_s", value: ($gb.single | tostring), sub: "Geekbench 5" } else empty end),
+      (if ($gb.multi // null) != null then
+        { label: "@l_gb_m", value: ($gb.multi | tostring),
+          sub: (if ($cpu.topology.threads // 1) <= 1 then "@v_singlecore"
+                else "\($cpu.topology.threads) threads" end) } else empty end),
+      (if ($gb.single // null) == null and ($cpu.benchmarks.sysbench.single // null) != null then
         { label: "SYSBENCH 1-THREAD", value: ($cpu.benchmarks.sysbench.single | round | tostring), sub: "events/s" } else empty end),
-      (if ($cpu.benchmarks.sysbench.multi // null) != null then
+      (if ($gb.multi // null) == null and ($cpu.benchmarks.sysbench.multi // null) != null then
         { label: "SYSBENCH \($cpu.topology.threads // 1)-THREAD", value: ($cpu.benchmarks.sysbench.multi | round | tostring),
           sub: "events/s" } else empty end),
       (if ($mem.benchmarks.read_MBps // null) != null then
@@ -218,6 +229,14 @@ $ip[0] as $ip | $hw[0] as $hw | $net[0] as $net | $shop[0] as $shop
       (if ($mem.benchmarks.write_MBps // null) != null then
         { label: "@l_mem_w", value: "\($mem.benchmarks.write_MBps | round) MB/s", sub: "HardwareQuality" } else empty end)
     ],
+
+    # The link the design calls 原始结果 ↗. Geekbench uploads its own run to
+    # get a score at all, and this is the URL it hands back.
+    geekbench_url: (($gb.url // "") | clean),
+
+    # The sub-heading names the tools the tiles actually came from.
+    perf_note: (if ($gb.single // null) != null
+                then "Geekbench 5 · SysBench · fio" else "SysBench · fio" end),
 
     # One line per block size and queue depth the check actually measured,
     # read against write, the way the design reads it.
