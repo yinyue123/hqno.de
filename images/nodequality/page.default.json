@@ -54,7 +54,7 @@
       }
     ],
     "contacts": [
-      { "k": "@k_tg", "v": "@example" },
+      { "k": "@k_tg", "v": "@@example" },
       { "k": "@k_email", "v": "sales@example.com" }
     ],
     "hours": [
