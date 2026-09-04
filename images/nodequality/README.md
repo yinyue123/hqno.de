@@ -6,9 +6,29 @@ together with a price list you edit, pays the endpoint's proof of work and
 posts the result. What comes back is a URL.
 
 ```sh
+podman volume create nq                       # the token lives here, not in the container
+
+podman run --rm -v nq:/data ghcr.io/yinyue123/nodequality init
+podman run --rm -it -v nq:/data --entrypoint vi \
+  ghcr.io/yinyue123/nodequality /data/nodequality/shop.json
+
 podman run --rm -it -v nq:/data ghcr.io/yinyue123/nodequality \
-  run --endpoint https://your-worker.workers.dev
+  run --endpoint https://shop.hqno.de
 ```
+
+Four commands, and only the third is yours to think about: `shop.json` is the
+price list, and nothing else in the page is typed by a human.
+
+The volume is not decoration. `credentials.json` is written into it on the
+first publish and it is the only thing that can ever replace the page — a
+`--rm` container without a volume publishes once and then owns nothing.
+
+Two notes on editing in place. The image's `vi` is busybox's, which stores CJK
+correctly but draws it as dots; if you are rewriting the Chinese titles rather
+than the prices, bind a host directory instead (`-v /opt/nq:/data`) and edit
+`/opt/nq/nodequality/shop.json` with a real editor. And `--entrypoint bash`
+where `vi` is above gives a shell in the same volume, which is the easier way
+to poke at `raw/` after a run.
 
 Built by hand from the Actions tab — **nodequality image** — not on every
 push. See [`../../shop/`](../../shop) for the endpoint it publishes to.
@@ -76,7 +96,7 @@ the directory a reinstall does not erase.
 | `shop.json` | **yours** — prices, contacts, what the machine is called |
 | `raw/*.json` | each check, exactly as it wrote it |
 | `page.json` | the two folded together; this is what gets published |
-| `credentials.json` | the id and token that let you publish over the same page |
+| `credentials.json` | the id, the token and the URL that let you publish over the same page |
 
 Back up `credentials.json`. Losing it does not lose the page — the page stays
 up and readable forever. It loses the ability to ever change it.

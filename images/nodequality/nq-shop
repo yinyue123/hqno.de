@@ -238,7 +238,7 @@ cmd_publish() {
 	# The token comes back exactly once, on the run that created the page.
 	# Losing it does not lose the page — it loses the ability to replace it.
 	if [[ "$(jq -r '.token // ""' <<<"$answer")" != "" ]]; then
-		jq '{id, token}' <<<"$answer" > "$CREDS"
+		jq '{id, token, url}' <<<"$answer" > "$CREDS"
 		chmod 600 "$CREDS"
 		say "saved the id and token to $CREDS — back that file up"
 	fi
@@ -255,8 +255,15 @@ cmd_show() {
 	printf 'page        %s%s\n' "$PAGE" "$([[ -f $PAGE ]] || echo '   (not built yet)')"
 	printf 'credentials %s%s\n' "$CREDS" "$([[ -f $CREDS ]] || echo '   (not published yet)')"
 	printf 'raw         %s\n' "$RAW"
-	[[ -d "$RAW" ]] && ls -1 "$RAW"/*.json 2>/dev/null | sed 's/^/            /'
-	[[ -s "$CREDS" ]] && printf '\npublished as %s\n' "$(jq -r .id "$CREDS")"
+	# `ls` with nothing to list exits 2, pipefail hands that to the pipeline and
+	# set -e would end the function here — one line before the only line anyone
+	# runs `show` for.
+	if [[ -d "$RAW" ]]; then
+		ls -1 "$RAW"/*.json 2>/dev/null | sed 's/^/            /' || true
+	fi
+	if [[ -s "$CREDS" ]]; then
+		printf '\npublished as %s\n' "$(jq -r '.url // .id' "$CREDS")"
+	fi
 	return 0
 }
 
