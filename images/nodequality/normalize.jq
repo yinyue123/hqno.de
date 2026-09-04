@@ -83,12 +83,27 @@ def route_hops: [ (.hops // [])[]
         ip: ($p.Address.IP // "*"),
         asn: ((($p.Geo.asnumber // "") | tostring) as $a
               | if $a == "" then "" else "AS" + $a end),
+        whois: (($p.Geo.whois // "") | ltrimstr(" ") | rtrimstr(" ")),
         country: ($p.Geo.country // ""),
         prov:    ($p.Geo.prov // ""),
         city:    ($p.Geo.city // ""),
         owner:   (($p.Geo.owner // "") | ltrimstr(" ") | rtrimstr(" ")),
         rtt: $p.RTT }
     end ];
+
+# China Telecom's CN2 carries traffic on 59.43.0.0/16, and those hops answer
+# with no AS number at all — APNIC registers the range as CN2-BB, "Chinatelecom
+# Next Carrying Network backbone", and it is not announced. The identity is in
+# the whois netname, which nexttrace returns and prints in brackets, and which
+# Net.sh's parser captures and then never consults: it classifies on the AS
+# column alone, so a CN2 route reads as whatever else is in the path. That is
+# how a DMIT box selling CN2 GIA came back named 163.
+#
+# The effective AS is the one the naming table is asked about. A hop is only
+# given one where the netname says so, so this adds nothing the data did not.
+def asn_eff: if (.asn // "") != "" then .asn
+             elif ((.whois // "") | test("^CN2-")) then "AS4809"
+             else "" end;
 
 # Mainland, which for a backhaul route means not Hong Kong, Macau or Taiwan.
 def is_cn: ((.country // "") | test("中国|China"))
@@ -98,14 +113,14 @@ def is_cn: ((.country // "") | test("中国|China"))
 # Net.sh's naming table, transcribed rather than approximated. $h is the hop
 # list and $i the index of the first mainland hop.
 def route_name($h; $i):
-  ([ $h[] | .asn ] | join(" ")) as $all
-  | (if (($h[$i].asn) // "") == "AS17676" then $i + 1 else $i end) as $j
-  | (($h[$j].asn) // "") as $a
+  ([ $h[] | asn_eff ] | join(" ")) as $all
+  | (if ($h[$i] | asn_eff) == "AS17676" then $i + 1 else $i end) as $j
+  | ($h[$j] | asn_eff) as $a
   # CN2 is GIA unless the first hop past the CN2 block is a 202.97 address.
-  | ([ $h[$j:][] | select(.asn != "AS4809" and .asn != "AS23764") ][0]) as $after
+  | ([ $h[$j:][] | select((asn_eff) != "AS4809" and (asn_eff) != "AS23764") ][0]) as $after
   | ((($after.ip) // "") | startswith("202.97")) as $gt
   | if   $a == "AS4134"  then "163"
-    elif $a == "AS4837"  then (if $j > 0 and (($h[$j-1].asn) // "") == "AS10099"
+    elif $a == "AS4837"  then (if $j > 0 and ($h[$j-1] | asn_eff) == "AS10099"
                                then "10099" else "4837" end)
     elif $a == "AS58453" then "CMI"
     elif $a == "AS58807" then "CMIN2"
@@ -128,8 +143,8 @@ def route_name($h; $i):
 
 # The carrier it left on: the last hop before China that names an owner.
 def route_carrier($h; $i):
-  ([ $h[0:$i][] | select((.owner | length) > 0) ] | last) as $x
-  | if $x == null then "" else ($x.owner | split(" ")[0]) end;
+  ([ $h[0:$i][] | select((.whois | length) > 0 and (.whois != "RFC1918")) ] | last) as $x
+  | if $x == null then "" else $x.whois end;
 
 # A premium route earns the accent. One that could not be read stays grey
 # rather than being guessed at.
@@ -139,10 +154,15 @@ def route_tone($n):
   else "ink" end;
 
 def route_of: route_hops as $h
-  | ([ range(0; ($h | length)) | select($h[.] | is_cn) ][0]) as $i
+  # Classify on the hops that answered. A TTL that timed out is kept for the
+  # hop table, but leaving it in here breaks the CN2 test: the scan for the
+  # first hop past the CN2 block stops on a "*" whose address is nothing, and
+  # a GT route comes out named GIA. Net.sh's own parser drops them too.
+  | ([ $h[] | select(.ttl != null and .ip != "*") ]) as $a
+  | ([ range(0; ($a | length)) | select($a[.] | is_cn) ][0]) as $i
   | { city: .city, isp: .isp, hops: $h, cn: $i,
-      name: (if $i == null or $i == 0 then "Hidden" else route_name($h; $i) end),
-      carrier: (if $i == null then "" else route_carrier($h; $i) end) };
+      name: (if $i == null or $i == 0 then "Hidden" else route_name($a; $i) end),
+      carrier: (if $i == null then "" else route_carrier($a; $i) end) };
 
 def route_label: (if (.carrier | length) > 0 then .carrier + " → " else "" end) + .name;
 
@@ -417,7 +437,11 @@ $ip[0] as $ip | $hw[0] as $hw | $net[0] as $net | $shop[0] as $shop
                   # a list of every metro its packets touched.
                   geo: ([ .hops[]
                           | ((.prov | clean) // (.country | clean))
-                          | select(. != null) ]
+                          | select(. != null)
+                          # "Anycast" is not a place, and the same province
+                          # comes back both with and without its 州/省/市.
+                          | select(. != "Anycast")
+                          | sub("[州省市]$"; "") ]
                         | . as $g | reduce $g[] as $x ([]; if (. | last) == $x then . else . + [$x] end)
                         | join(" → ")),
                   asPath: ([ .hops[] | .asn | select(. != "") ]
@@ -430,9 +454,9 @@ $ip[0] as $ip | $hw[0] as $hw | $net[0] as $net | $shop[0] as $shop
                                     else "\((.rtt / 1000000 * 100 | round) / 100)ms" end),
                               ip: .ip,
                               asn: (if .asn == "" then "—" else .asn end),
-                              org: ([ (.owner | clean),
-                                      ([(.country | clean), (.prov | clean)]
-                                       | map(select(. != null)) | join(" ") | clean) ]
+                              # Place then netname — "北京 CHINANET-BB" — which
+                              # is the pairing the design's hop table shows.
+                              org: ([ (.prov | clean), ((.whois | clean) // (.owner | clean)) ]
                                     | map(select(. != null)) | join(" ")) } ] } ]
   }
 
