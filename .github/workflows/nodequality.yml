@@ -1,0 +1,92 @@
+name: nodequality image
+
+# The container that benchmarks a machine and publishes it as a sales page.
+#
+# Manual only, on purpose. This image is not part of the weekly system-image
+# rotation: nothing downstream pins its digest, a container built from it lives
+# for half an hour, and rebuilding it on every push to images/ would mean
+# twenty minutes of QEMU for a change to a price list. Run it from the Actions
+# tab when the recipe, the runner or the solver actually changed.
+#
+# The package is created private on the first push. Make it public once, by
+# hand, at Settings → Packages → nodequality → Change visibility, or every
+# `podman pull` of it asks for a login.
+
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: 'Alpine base image'
+        default: 'alpine:3.22'
+        required: false
+      platforms:
+        description: 'Platforms to build'
+        default: 'linux/amd64,linux/arm64'
+        required: false
+      tag:
+        description: 'Tag to publish alongside the run number'
+        default: 'latest'
+        required: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # The solver is the one piece of C in the image and the one piece that
+      # is cheap to check before spending twenty minutes on QEMU: a wrong
+      # SHA-256 would only show up as an endpoint rejecting every publish.
+      - name: the solver finds a hash the rest of the world agrees with
+        run: |
+          set -euo pipefail
+          gcc -O3 -o /tmp/nq-pow images/nodequality/pow.c
+          nonce=$(/tmp/nq-pow abc123 16 60)
+          digest=$(printf 'abc123.%s' "$nonce" | sha256sum | cut -d' ' -f1)
+          echo "nonce=$nonce digest=$digest"
+          case "$digest" in
+            0000*) echo "16 leading zero bits, as asked" ;;
+            *) echo "::error::the solver returned a nonce that does not verify"; exit 1 ;;
+          esac
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: images/nodequality
+          build-args: BASE=${{ inputs.base }}
+          platforms: ${{ inputs.platforms }}
+          push: true
+          provenance: false
+          sbom: false
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/nodequality:${{ inputs.tag }}
+            ghcr.io/${{ github.repository_owner }}/nodequality:${{ github.run_number }}
+
+      - name: say what was published
+        run: |
+          {
+            echo "### nodequality"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| base | \`${{ inputs.base }}\` |"
+            echo "| platforms | \`${{ inputs.platforms }}\` |"
+            echo "| digest | \`${{ steps.build.outputs.digest }}\` |"
+            echo
+            echo '```'
+            echo 'podman run --rm -it -v nq:/data \'
+            echo "  ghcr.io/${{ github.repository_owner }}/nodequality:${{ inputs.tag }} \\"
+            echo '  run --endpoint https://your-worker.example.workers.dev'
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY

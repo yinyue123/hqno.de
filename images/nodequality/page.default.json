@@ -1,0 +1,66 @@
+{
+  "lang": "zh",
+  "shop": {
+    "brand": "@brand",
+    "title": {
+      "zh": "待命名节点",
+      "en": "Unnamed node",
+      "fr": "Nœud sans nom",
+      "de": "Unbenannter Node"
+    },
+    "tags": [],
+    "langs": ["zh", "en", "fr", "de"],
+    "order_url": null,
+    "plan_note": "@sub_plan",
+    "plans": [
+      {
+        "name": {
+          "zh": "入门 · 1C / 1 GB",
+          "en": "Starter · 1C / 1 GB",
+          "fr": "Essentiel · 1C / 1 Go",
+          "de": "Einstieg · 1C / 1 GB"
+        },
+        "tested": true,
+        "currency": "¥",
+        "monthly": 49,
+        "yearly": 499,
+        "rows": [
+          { "k": "CPU", "v": "1 vCPU" },
+          { "k": "@k_ram", "v": "1 GB" },
+          { "k": "@k_disk", "v": "31 GB" },
+          { "k": "@k_bw", "v": "300 Mbps" },
+          { "k": "@k_traffic", "v": "1 TB" },
+          { "k": "@k_ipaddr", "v": "@v_ipaddr" }
+        ]
+      },
+      {
+        "name": {
+          "zh": "标准 · 2C / 2 GB",
+          "en": "Standard · 2C / 2 GB",
+          "fr": "Standard · 2C / 2 Go",
+          "de": "Standard · 2C / 2 GB"
+        },
+        "currency": "¥",
+        "monthly": 89,
+        "yearly": 899,
+        "rows": [
+          { "k": "CPU", "v": "2 vCPU" },
+          { "k": "@k_ram", "v": "2 GB" },
+          { "k": "@k_disk", "v": "60 GB" },
+          { "k": "@k_bw", "v": "500 Mbps" },
+          { "k": "@k_traffic", "v": "2 TB" },
+          { "k": "@k_ipaddr", "v": "@v_ipaddr" }
+        ]
+      }
+    ],
+    "contacts": [
+      { "k": "@k_tg", "v": "@example" },
+      { "k": "@k_email", "v": "sales@example.com" }
+    ],
+    "hours": [
+      { "k": "@k_hours", "v": "@v_hours" },
+      { "k": "@k_deliver", "v": "@v_deliver" }
+    ],
+    "notes": ["@price_note", "@contact_note"]
+  }
+}

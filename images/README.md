@@ -181,3 +181,15 @@ Two rules it lives by:
 It is committed by the workflow. The push uses `GITHUB_TOKEN`, which does not
 trigger workflows, so writing to `images/` from a job that watches `images/`
 cannot loop.
+
+## nodequality — a tenant image, not a system one
+
+[`nodequality/`](nodequality) is in this directory but is not one of the
+systems: it has no init, nothing pins its digest, and it is absent from both
+`systems.yml` and `catalog.json`. It is a job that runs once — benchmark this
+machine, publish it as a sales page — and exits.
+
+It therefore has its own workflow (**nodequality image**, manual only) and is
+excluded from this one's path filter, so a change to a price list does not
+spend twenty minutes of QEMU rebuilding eighteen distros. See
+[`nodequality/README.md`](nodequality/README.md).

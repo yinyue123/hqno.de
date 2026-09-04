@@ -17,7 +17,13 @@ name: images
 on:
   push:
     branches: [main]
-    paths: ['images/**', '.github/workflows/images.yml']
+    # nodequality/ is excluded because it is not one of the systems: it has
+    # its own manual workflow, and a push to it should not spend twenty
+    # minutes rebuilding eighteen distros that did not change.
+    paths:
+      - 'images/**'
+      - '!images/nodequality/**'
+      - '.github/workflows/images.yml'
   schedule:
     # Weekly, so a tag picks up distro security updates. Existing containers are
     # untouched: their lower layer is immutable and everything downstream pins
