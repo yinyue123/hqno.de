@@ -190,7 +190,7 @@ cmd_route() {
 
 	local log="$RAW/route.log" out="$RAW/route.json"
 	: > "$log"
-	local parts=() spec city isp host domain raw json try ok done=0
+	local parts=() spec city isp host domain raw json try ok mode done=0
 
 	say "tracing the nine backhaul routes, one at a time"
 	for spec in "${ROUTE_TARGETS[@]}"; do
@@ -198,14 +198,38 @@ cmd_route() {
 		domain="${host}-v4.ip.zstaticcdn.com"
 		ok=0
 		for ((try = 1; try <= ROUTE_RETRIES; try++)); do
-			raw="$(timeout -s SIGKILL "$ROUTE_TIMEOUT" \
-				nexttrace -p 80 -q 3 -4 --tcp --psize 1400 --json --no-rdns \
-				"$domain" 2>>"$log" || true)"
-			json="$(grep -o '{.*}' <<<"$raw" | tail -n1)"
-			if [[ -n "$json" ]] && jq -e '.Hops | length > 0' <<<"$json" >/dev/null 2>&1; then
-				ok=1
-				break
-			fi
+			# UDP first, TCP second. Both are needed and the order matters.
+			#
+			# TCP is the better probe on a machine with its own stack: it
+			# reaches the destination, because a SYN to port 80 is answered
+			# where a UDP datagram to a closed port often is not. But inside
+			# an hqnode container pasta *terminates* TCP and dials the target
+			# from its own socket, so the TTL never reaches the wire and every
+			# trace comes back one hop long — the destination, at hop 1, in
+			# 150 ms. That is not a failure any check notices.
+			#
+			# UDP survives pasta: it forwards the datagram with the TTL set
+			# and relays the ICMP time-exceeded back onto the flow. ICMP mode
+			# does not, on this image: /proc/sys/net/ipv4/ping_group_range is
+			# `65534 65534` in a container, so unprivileged echo is refused
+			# and every hop is a star. See ../../../shop/dmit.test.md §10.
+			for mode in "--udp" "--tcp -p 80"; do
+				raw="$(timeout -s SIGKILL "$ROUTE_TIMEOUT" \
+					nexttrace $mode -q 3 -4 --psize 1400 --json --no-rdns \
+					"$domain" 2>>"$log" || true)"
+				json="$(grep -o '{.*}' <<<"$raw" | tail -n1)"
+				# Two hops, not one. A single hop is what a terminated TCP
+				# connection looks like, and publishing it is worse than
+				# publishing nothing: it renders as a route and is not one.
+				if [[ -n "$json" ]] && jq -e '.Hops | length > 1' <<<"$json" >/dev/null 2>&1; then
+					ok=1
+					break
+				fi
+				printf 'mode %s gave %s hops for %s %s\n' "$mode" \
+					"$(jq -r '.Hops | length' <<<"${json:-{\}}" 2>/dev/null || echo 0)" \
+					"$city" "$isp" >> "$log"
+			done
+			[[ $ok -eq 1 ]] && break
 			printf 'retry %d for %s %s\n' "$try" "$city" "$isp" >> "$log"
 			sleep "$ROUTE_PAUSE"
 		done
