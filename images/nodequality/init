@@ -1,0 +1,32 @@
+#!/bin/sh
+# PID 1, for the half of this image's README that runs under hqnode.
+#
+# `podman run` honours ENTRYPOINT, so under podman this file is never reached
+# and `nq-shop run` is the whole life of the container. hqnode does not: it
+# execs `/sbin/init` and nothing else (`process.entrypoint` in the agent's
+# container.json), so an image with no init is a container that cannot boot.
+# debian:trixie-slim has none — it ENOENTs in a restart loop and the agent
+# gives up, which is a container the README tells people to `hqnode exec` into.
+#
+# So this stays up and does nothing, and the checks are driven with
+# `hqnode exec … nq-shop …` exactly as documented. It is deliberately not
+# `nq-shop run`: a benchmark that starts itself on every boot would re-run on
+# every restart, and there is no endpoint to publish to until somebody says so.
+#
+# Two jobs beyond staying alive. Reap the children `hqnode exec` leaves
+# behind — PID 1 inherits every orphan, and nothing else will collect them.
+# And answer the stop signal: the agent sends SIGRTMIN+3 (systemd's poweroff)
+# and SIGKILLs 30s later, so catching it is the difference between a clean
+# stop and a killed one.
+
+quit() { exit 0; }
+trap quit TERM INT
+trap quit 37   # SIGRTMIN+3 on glibc, which is what the agent sends
+
+while :; do
+	# `sleep &` plus `wait` rather than a bare sleep: a shell only runs a
+	# trap between commands, and a foreground sleep would hold the signal
+	# for its full duration.
+	sleep 3600 &
+	wait $!
+done

@@ -107,6 +107,13 @@ RUN chmod +x /usr/local/bin/nq-shop \
       --slurpfile shop /usr/share/nodequality/page.default.json \
       -f /usr/share/nodequality/normalize.jq > /dev/null
 
+# hqnode execs /sbin/init and ignores ENTRYPOINT, and a slim Debian has no
+# init at all, so without this the container ENOENTs in a restart loop and
+# the `hqnode exec` recipe in ../../../shop/README.md cannot be typed. Under
+# podman the ENTRYPOINT below still wins and this file is never reached.
+COPY init /sbin/init
+RUN chmod +x /sbin/init && sh -n /sbin/init
+
 # /data is the path an hqnode container keeps across a reinstall, so the
 # edited page and the token that lets it be edited again live there.
 ENV NQ_HOME=/data/nodequality
