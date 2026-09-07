@@ -16,8 +16,11 @@ on:
   workflow_dispatch:
     inputs:
       base:
-        description: 'Base image — must be glibc; Geekbench segfaults on musl'
-        default: 'debian:trixie-slim'
+        # Alpine since Geekbench and stun were cut. Everything left is either
+        # a static binary or an Alpine package; 3.24 is the floor because
+        # `7zip` is not packaged before it.
+        description: 'Base image'
+        default: 'alpine:3.24'
         required: false
       platforms:
         description: 'Platforms to build'
