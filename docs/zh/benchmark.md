@@ -93,16 +93,16 @@ SSH 进这个容器，你拿到的不是 shell，是这个：
 ```
   节点体检报告
 
-  页面   https://shop.hqno.de/r/7Qn4kR2vXb
+  页面   https://shop.hqno.de/r/m9Te5tPag6
   语言   ?lang=zh · en · fr · de
   状态   已发布
 
   可以改的
-   1  节点名称   东京 · 直连
-   2  页面标签   AS64512 · 东京 · 直连
-   3  套餐价格   入门 · 1C / 1 GB ¥49 · 标准 · 2C / 2 GB ¥89
-   4  联系方式   @yourname · sales@example.com
-   5  售前交付   每日 10:00-22:00 CST · 下单后 5 分钟
+   1  节点名称   HKT 香港家宽节点
+   2  页面标签   AS4760 HKT · PCCW IMS · 原生 IP · 家宽
+   3  套餐价格   1C / 1 GB ¥49 · 2C / 2 GB ¥89 · 4C / 4 GB ¥169
+   4  联系方式   @nodedeck · sales@example.com · +852 5000 0000
+   5  售前交付   每日 10:00-22:00 HKT · 下单后 5 分钟
    6  页面备注   页面自带的默认文案
    7  页面语言   zh
 
@@ -112,6 +112,9 @@ SSH 进这个容器，你拿到的不是 shell，是这个：
    s  开个 shell
    q  退出
 ```
+
+那个地址是一张真页面 —— **[样例节点](https://shop.hqno.de/r/m9Te5tPag6)**，每一节都填满了，四种语言都能看：[中文](https://shop.hqno.de/r/m9Te5tPag6?lang=zh)、[English](https://shop.hqno.de/r/m9Te5tPag6?lang=en)、[Français](https://shop.hqno.de/r/m9Te5tPag6?lang=fr)、[Deutsch](https://shop.hqno.de/r/m9Te5tPag6?lang=de)。换成你自己的数字，你的页面就长这样。
+
 
 输入序号，它一次问你一个问题，并且把现在的值显示给你看。
 **要改就输入新的，不改就直接回车。** 整个向导只有这一条规则。

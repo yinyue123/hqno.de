@@ -107,18 +107,18 @@ SSH into the container and you do not get a shell. You get this:
 ```
   Node report
 
-  page     https://shop.hqno.de/r/7Qn4kR2vXb
+  page     https://shop.hqno.de/r/m9Te5tPag6
   langs    ?lang=zh · en · fr · de
   state    published
 
   What you can change
-   1  Node name   Tokyo · direct routes
-   2  Tags        AS64512 · Tokyo · direct
-   3  Plans       Starter · 1C / 1 GB $6 · Standard · 2C / 2 GB $11
-   4  Contacts    @yourname · sales@example.com
-   5  Hours       Daily 10:00-22:00 UTC · 5 minutes after payment
+   1  Node name   HKT Hong Kong residential node
+   2  Tags        AS4760 HKT · PCCW IMS · Native IP · Residential
+   3  Plans       1C / 1 GB ¥49 · 2C / 2 GB ¥89 · 4C / 4 GB ¥169
+   4  Contacts    @nodedeck · sales@example.com · +852 5000 0000
+   5  Hours       Daily 10:00-22:00 HKT · 5 minutes after payment
    6  Notes       the wording the page ships with
-   7  Language    en
+   7  Language    zh
 
   What to do
    p  save and publish  (in the background; closing SSH is fine)
@@ -126,6 +126,9 @@ SSH into the container and you do not get a shell. You get this:
    s  a shell
    q  quit
 ```
+
+That address is a real page — **[the demo node](https://shop.hqno.de/r/m9Te5tPag6)**, every section filled, in [English](https://shop.hqno.de/r/m9Te5tPag6?lang=en), [Chinese](https://shop.hqno.de/r/m9Te5tPag6?lang=zh), [French](https://shop.hqno.de/r/m9Te5tPag6?lang=fr) and [German](https://shop.hqno.de/r/m9Te5tPag6?lang=de). It is what yours will look like with your numbers in it.
+
 
 Type a number and it asks you one question at a time, showing what is there
 now. **Type a new value to change it; press Enter to keep what is there.**
