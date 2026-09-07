@@ -153,6 +153,61 @@ def route_tone($n):
   elif (["NoData", "Hidden", "Unknown", ""] | index($n)) then "mute"
   else "ink" end;
 
+# ---------------------------------------------------------------- naming
+#
+# An AS number is not an answer. `AS4134` on a page means nothing to somebody
+# deciding whether to rent this machine, and the netname beside it is not much
+# better — CU169-BACKBONE, CMNET, APNIC-AP. Both are printed, and both get a
+# plain-language name beside them.
+#
+# The table is `as` in the worker's language file, so a French reader gets
+# "Chine Télécom 163" from the same document. Every entry below was read out
+# of the routing registry rather than remembered:
+#
+#   AS4134   CHINA-TELECOM CHINANET-BACKBONE
+#   AS4809   CHINATELECOM-CORE-WAN-CN2 — China Telecom Next Generation Carrier
+#   AS23764  CTGNet
+#   AS4837   CHINA169-Backbone — CHINA UNICOM China169
+#   AS9929   AS-4812-CNC-HP — the "9929" people mean
+#   AS9808   CHINAMOBILE-CN
+#   AS58453  CMI-NET-AS — China Mobile Intl
+#
+# A hop with no AS number at all is the CN2 backbone: 59.43.0.0/16 is not
+# announced, and the netname is the only identity it has.
+def as_label: (.asn // "") as $a | (.whois // "") as $w
+  | if $a == "" and ($w | test("^CN2-")) then "@as.4809"
+    elif $a == "" then ""
+    else "@as." + ($a | ltrimstr("AS"))
+    end;
+
+# Where the traffic leaves the world and enters China. Everything before the
+# first mainland hop is the international leg — that is the half a buyer in
+# China is actually paying for, and it is where the RTT jump happens.
+def leg_mark($h; $i):
+  [ range(0; ($h | length))
+    | . as $k
+    | $h[$k] + { leg: (if $i == null then "intl"
+                       elif $k < $i then "intl" else "cn" end),
+                 border: ($i != null and $k == $i),
+                 net: ($h[$k] | as_label) } ];
+
+# The verdict, which is the line most readers will stop at. Three tiers, and
+# the names are the ones the market uses rather than ones invented here.
+#
+#   精品   CN2 GIA, 联通 9929, 移动 CMIN2, CTGNet — bought, and priced like it
+#   优化   CN2 GT — the cheaper CN2, better than default and not GIA
+#   普通   163, 169/4837, CMI — whatever the carrier routes by default
+#
+# Anything unrecognised gets no tier rather than a guessed one.
+def route_tier($name):
+  if ($name | test("CN2GIA|9929|CMIN2|CTGNet")) then
+    { k: "@tier_premium", tone: "ok", why: "@why_premium" }
+  elif ($name | test("CN2GT")) then
+    { k: "@tier_opt", tone: "acc", why: "@why_opt" }
+  elif ($name | test("163|4837|CMI|9808|CU169|CMNET")) then
+    { k: "@tier_plain", tone: "sub", why: "@why_plain" }
+  else null end;
+
 def route_of: route_hops as $h
   # Classify on the hops that answered. A TTL that timed out is kept for the
   # hop table, but leaving it in here breaks the CN2 test: the scan for the
@@ -464,13 +519,21 @@ $ip[0] as $ip | $hw[0] as $hw | $net[0] as $net | $shop[0] as $shop
                   asPath: ([ .hops[] | .asn | select(. != "") ]
                            | . as $a | reduce $a[] as $x ([]; if (. | last) == $x then . else . + [$x] end)
                            | join(" → ")),
-                  hops: [ .hops[]
+                  tier: route_tier(.name),
+                  hops: [ leg_mark(.hops; .cn)[]
                           | select(.ttl != null)
                           | { n: (.ttl | tostring),
                               rtt: (if .rtt == null then "*"
                                     else "\((.rtt / 1000000 * 100 | round) / 100)ms" end),
                               ip: .ip,
                               asn: (if .asn == "" then "—" else .asn end),
+                              # The plain-language name for that AS, and which
+                              # side of the border the hop is on. Both are what
+                              # turn a column of AS numbers into something a
+                              # buyer can read.
+                              net: .net,
+                              leg: .leg,
+                              border: .border,
                               # Place then netname — "北京 CHINANET-BB" — which
                               # is the pairing the design's hop table shows.
                               org: ([ (.prov | clean), ((.whois | clean) // (.owner | clean)) ]
