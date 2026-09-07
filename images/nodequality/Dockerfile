@@ -117,8 +117,16 @@ RUN chmod +x /usr/local/bin/nq-shop /usr/local/bin/nq-bench \
 # replaced by something that does the three things PID 1 must do here and
 # nothing else. Under podman the ENTRYPOINT below still wins and this file is
 # never reached.
+#
+# The link has to go before the file arrives. Alpine's /sbin/init is a symlink
+# to /bin/busybox and COPY *follows* a symlink destination, so copying onto it
+# writes through and overwrites busybox itself — which is /bin/sh, ls, and
+# everything else in the image. The next RUN then fails with
+# `exec: "/bin/sh": permission denied`, which does not sound like what it is.
+RUN rm -f /sbin/init
 COPY init /sbin/init
-RUN chmod +x /sbin/init && sh -n /sbin/init && [ ! -L /sbin/init ]
+RUN chmod +x /sbin/init && sh -n /sbin/init && [ ! -L /sbin/init ] \
+ && [ -x /bin/busybox ] && busybox true
 
 # /data is the path an hqnode container keeps across a reinstall, so the
 # edited page and the token that lets it be edited again live there.
