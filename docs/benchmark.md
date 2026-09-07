@@ -36,6 +36,13 @@ built, so a run downloads test payloads and nothing else — no package manager
 in the middle of a disk benchmark skewing the disk benchmark.
 :::
 
+::: warning It is a one-way trip from the shell
+`reinstall` is a tool your *current* system carries, and this image does not
+carry it — it is a benchmark, not a general-purpose box. Once you are on it,
+going back to Debian or Alpine is the **reinstall button on the container
+page**, not a command. Nothing is stuck; you just cannot do it from inside.
+:::
+
 ## 2. Wait, and watch if you like
 
 **Twenty to fifty minutes**, and it moves **a few GB** of speedtest traffic,
