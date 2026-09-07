@@ -36,6 +36,7 @@
 #
 #   hqnode exec <name> nq-shop run --endpoint https://elsewhere
 
+export HOME="${HOME:-/root}"   # see nq-shop; PID 1 has even less than exec does
 NQ_HOME="${NQ_HOME:-/data/nodequality}"
 NQ_ENDPOINT="${NQ_ENDPOINT:-https://shop.hqno.de}"
 LOG="$NQ_HOME/first-boot.log"

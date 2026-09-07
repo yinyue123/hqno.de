@@ -28,6 +28,16 @@
 
 set -euo pipefail
 
+# Ookla's speedtest builds a std::string from getenv("HOME") and aborts on a
+# null one — `terminate called after throwing an instance of std::logic_error`
+# — which loses the whole domestic speedtest table while Net.sh carries on and
+# exits zero. It has to be set here rather than relied on from the
+# environment, because none of the three ways this script starts provides it:
+# `hqnode exec` hands over PATH, PWD and TERM only, PID 1 gets PATH and
+# `container`, and a reinstall does not even carry the image's ENV across.
+# Caught twice, once per path. See ../../../shop/dmit.test.md.
+export HOME="${HOME:-/root}"
+
 NQ_HOME="${NQ_HOME:-/data/nodequality}"
 NQ_ENDPOINT="${NQ_ENDPOINT:-}"
 NQ_LANG="${NQ_LANG:-en}"
