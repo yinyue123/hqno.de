@@ -122,8 +122,11 @@ COPY normalize.jq page.default.json /usr/share/nodequality/
 RUN chmod +x /usr/local/bin/nq-shop /usr/local/bin/nq-bench \
  && bash -n /usr/local/bin/nq-shop \
  && bash -n /usr/local/bin/nq-bench \
+ # Every --argjson here has to match what normalize.jq binds. This check has
+ # now caught three mismatches, in both directions; it is the cheapest test in
+ # the image and the only one that runs at build time.
  && jq -n --argjson ip '[]' --argjson hw '[]' --argjson net '[]' --argjson route '[]' \
-      --argjson bench '[]' \
+      --argjson bench '[]' --argjson asnames '{}' \
       --slurpfile shop /usr/share/nodequality/page.default.json \
       -f /usr/share/nodequality/normalize.jq > /dev/null
 
