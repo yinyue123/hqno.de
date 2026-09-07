@@ -39,7 +39,12 @@ set -euo pipefail
 export HOME="${HOME:-/root}"
 
 NQ_HOME="${NQ_HOME:-/data/nodequality}"
-NQ_ENDPOINT="${NQ_ENDPOINT:-}"
+# Defaulted here for the same reason HOME is: a container reinstalled onto
+# this image has none of the image's ENV, so `nq-shop publish` — which is
+# exactly what the help page tells a seller to type after editing their
+# prices — came back with "no endpoint" on a machine that had already
+# published a page. --endpoint still wins over it.
+NQ_ENDPOINT="${NQ_ENDPOINT:-https://shop.hqno.de}"
 NQ_LANG="${NQ_LANG:-en}"
 NQ_SHARE="${NQ_SHARE:-/usr/share/nodequality}"
 
