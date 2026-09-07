@@ -20,19 +20,30 @@
 #      later, so catching it is the difference between a clean stop and a
 #      killed one.
 #
-# NQ_ENDPOINT has to be baked into the image, because `hqnode run` has no
-# --env and `hqnode exec` cannot reach a container that has not started yet.
-# Pointing a node somewhere else means driving it by hand:
+# The endpoint is a default *in this file*, not only an ENV in the Dockerfile,
+# and that is not belt-and-braces — the ENV does not survive the one operation
+# this whole thing exists to serve.
+#
+# `hqnode reinstall` rebuilds the rootfs from a new image and does not re-read
+# that image's config. `process.env` in the agent's container.json keeps
+# whatever the *original* create put there, so a catalog Alpine container
+# reinstalled onto this image comes up with `PATH` and `container` and nothing
+# else — no NQ_ENDPOINT, no NQ_HOME. `stop_signal` is stale the same way, left
+# at the old image's SIGUSR2. Measured on DMIT, 2026-09-07.
+#
+# So nothing the first boot needs may live only in ENV. Pointing a node
+# somewhere else means driving it by hand:
 #
 #   hqnode exec <name> nq-shop run --endpoint https://elsewhere
 
 NQ_HOME="${NQ_HOME:-/data/nodequality}"
-NQ_ENDPOINT="${NQ_ENDPOINT:-}"
+NQ_ENDPOINT="${NQ_ENDPOINT:-https://shop.hqno.de}"
 LOG="$NQ_HOME/first-boot.log"
 
 quit() { exit 0; }
 trap quit TERM INT
 trap quit 37   # SIGRTMIN+3 on glibc, which is what the agent sends
+trap quit 12   # SIGUSR2, which is what a reinstalled container still gets
 
 first_boot() {
 	[ -n "$NQ_ENDPOINT" ] || return 0
