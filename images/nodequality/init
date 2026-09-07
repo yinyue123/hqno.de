@@ -1,32 +1,61 @@
 #!/bin/sh
-# PID 1, for the half of this image's README that runs under hqnode.
+# PID 1, and the reason a reinstall is the whole user interface.
 #
 # `podman run` honours ENTRYPOINT, so under podman this file is never reached
 # and `nq-shop run` is the whole life of the container. hqnode does not: it
 # execs `/sbin/init` and nothing else (`process.entrypoint` in the agent's
 # container.json), so an image with no init is a container that cannot boot.
-# debian:trixie-slim has none — it ENOENTs in a restart loop and the agent
-# gives up, which is a container the README tells people to `hqnode exec` into.
 #
-# So this stays up and does nothing, and the checks are driven with
-# `hqnode exec … nq-shop …` exactly as documented. It is deliberately not
-# `nq-shop run`: a benchmark that starts itself on every boot would re-run on
-# every restart, and there is no endpoint to publish to until somebody says so.
+# What it does, in order:
 #
-# Two jobs beyond staying alive. Reap the children `hqnode exec` leaves
-# behind — PID 1 inherits every orphan, and nothing else will collect them.
-# And answer the stop signal: the agent sends SIGRTMIN+3 (systemd's poweroff)
-# and SIGKILLs 30s later, so catching it is the difference between a clean
-# stop and a killed one.
+#   1. On the first boot after an install, and only then, run the whole
+#      benchmark in the background and publish it. The marker is
+#      credentials.json, which only exists once a publish has succeeded — so a
+#      run that dies halfway is retried on the next boot, and a run that
+#      worked is never repeated. That is what makes "reinstall the container"
+#      the only instruction a seller needs.
+#   2. Reap the orphans `hqnode exec` leaves behind. PID 1 inherits every one
+#      of them and nothing else will collect them.
+#   3. Answer the stop signal. The agent sends SIGRTMIN+3 and SIGKILLs 30s
+#      later, so catching it is the difference between a clean stop and a
+#      killed one.
+#
+# NQ_ENDPOINT has to be baked into the image, because `hqnode run` has no
+# --env and `hqnode exec` cannot reach a container that has not started yet.
+# Pointing a node somewhere else means driving it by hand:
+#
+#   hqnode exec <name> nq-shop run --endpoint https://elsewhere
+
+NQ_HOME="${NQ_HOME:-/data/nodequality}"
+NQ_ENDPOINT="${NQ_ENDPOINT:-}"
+LOG="$NQ_HOME/first-boot.log"
 
 quit() { exit 0; }
 trap quit TERM INT
 trap quit 37   # SIGRTMIN+3 on glibc, which is what the agent sends
 
+first_boot() {
+	[ -n "$NQ_ENDPOINT" ] || return 0
+	[ -f "$NQ_HOME/credentials.json" ] && return 0
+	# /data may not be mounted yet on a very early boot, and writing the
+	# benchmark into the container's own disk instead would lose it on the
+	# next reinstall — which is exactly the operation this is here to serve.
+	mkdir -p "$NQ_HOME" 2>/dev/null || return 0
+
+	{
+		echo "=== first boot $(date -u +%FT%TZ) — benchmarking and publishing to $NQ_ENDPOINT"
+		echo "=== this takes twenty to fifty minutes and moves a few GB"
+		nq-shop run --endpoint "$NQ_ENDPOINT"
+		echo "=== finished $(date -u +%FT%TZ) with status $?"
+	} >>"$LOG" 2>&1 &
+}
+
+first_boot
+
 while :; do
 	# `sleep &` plus `wait` rather than a bare sleep: a shell only runs a
 	# trap between commands, and a foreground sleep would hold the signal
-	# for its full duration.
+	# for its full duration. `wait` also reaps whatever has exited.
 	sleep 3600 &
 	wait $!
 done

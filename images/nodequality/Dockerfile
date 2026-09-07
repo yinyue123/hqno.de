@@ -131,6 +131,13 @@ RUN chmod +x /sbin/init && sh -n /sbin/init && [ ! -L /sbin/init ] \
 # /data is the path an hqnode container keeps across a reinstall, so the
 # edited page and the token that lets it be edited again live there.
 ENV NQ_HOME=/data/nodequality
+
+# What makes a reinstall the whole user interface: /sbin/init reads this on
+# first boot, runs the benchmark and publishes, once. It has to be baked in
+# because `hqnode run` has no --env and `hqnode exec` cannot reach a container
+# that has not started yet. Overriding it means driving the run by hand.
+ENV NQ_ENDPOINT=https://shop.hqno.de
+
 VOLUME /data
 
 ENTRYPOINT ["/usr/local/bin/nq-shop"]
