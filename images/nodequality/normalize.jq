@@ -199,8 +199,14 @@ def is_prime: (asn_eff) as $e
 def as_label: (.asn // "") as $a | (.whois // "") as $w
   | if $a == "" and ($w | test("^CN2-")) then { k: "@as.4809", fb: "CN2" }
     elif $a == "" then null
-    else { k: ("@as." + ($a | ltrimstr("AS"))),
-           fb: (((.isp // "") | clean) // ((.owner // "") | clean) // "") }
+    else ($a | ltrimstr("AS")) as $n
+       | { k: ("@as." + $n),
+           # RIPE's name first — it covers all 122,000 of them and is what
+           # the AS is actually registered as. What LeoMoeAPI reported for
+           # the hop is the fallback under that, and it is usually a domain
+           # rather than a name.
+           fb: (($asnames[$n] // "") | clean
+                // ((.isp // "") | clean) // ((.owner // "") | clean) // "") }
     end;
 
 # Where the traffic leaves the world and enters China. Everything before the

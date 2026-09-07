@@ -99,6 +99,23 @@ RUN set -eux; \
     rm /tmp/speedtest.tgz; \
     speedtest --version
 
+# The names for every AS on earth, so a hop through a network nobody
+# hand-curated still says who it belongs to. RIPE publishes it as one plain
+# text file, free and unauthenticated: 122,000 lines of "<asn> <name>, <cc>".
+#
+# It is kept gzipped and never parsed whole — `nq-shop build` greps out only
+# the dozen or so AS numbers a run's traces actually touched. 6.2 MB of text
+# for two in the image, and no 122,000-entry table anywhere near the renderer.
+ARG ASNAMES_URL=https://ftp.ripe.net/ripe/asnames/asn.txt
+RUN set -eux; \
+    mkdir -p /usr/share/nodequality; \
+    curl -fsSL -o /tmp/asn.txt "$ASNAMES_URL"; \
+    test "$(wc -l < /tmp/asn.txt)" -gt 50000; \
+    grep -q "^4134 " /tmp/asn.txt; \
+    gzip -9 -c /tmp/asn.txt > /usr/share/nodequality/asn.txt.gz; \
+    rm /tmp/asn.txt; \
+    ls -l /usr/share/nodequality/asn.txt.gz
+
 COPY --from=solver /nq-pow /usr/local/bin/nq-pow
 COPY nq-shop nq-bench /usr/local/bin/
 COPY normalize.jq page.default.json /usr/share/nodequality/

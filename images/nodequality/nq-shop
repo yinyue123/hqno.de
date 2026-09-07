@@ -309,7 +309,34 @@ cmd_build() {
 		fi
 	done
 
+	# Names for the AS numbers this run's traces actually walked through,
+	# pulled out of RIPE's 122,000-line list rather than out of a table
+	# somebody maintains by hand. Only the dozen that appear are looked up,
+	# so this is a grep and not a parse. A hop whose AS is not in the file —
+	# or a run with no routes at all — simply gets no name from here, and
+	# normalize.jq falls back to what the trace itself reported.
+	local asnames="{}"
+	if [[ -s "$RAW/route.json" ]] && [[ -r "$NQ_SHARE/asn.txt.gz" ]]; then
+		local nums
+		nums="$(jq -r '.[].hops[][]? | select(.Success) | .Geo.asnumber // empty' \
+			"$RAW/route.json" 2>/dev/null | grep -E '^[0-9]+$' | sort -u)"
+		if [[ -n "$nums" ]]; then
+			# Anchored, because a fixed-string grep for "906 " also
+			# matches 1906, 2906 and 3906 — right answer, thousands of
+			# wrong lines carried along to get there.
+			local pat
+			pat="^($(printf '%s|' $nums | sed 's/|$//')) "
+			asnames="$(zcat "$NQ_SHARE/asn.txt.gz" \
+				| grep -E "$pat" \
+				| sed -E 's/^([0-9]+) (.*)$/\1\t\2/' \
+				| jq -R -s 'split("\n") | map(select(length > 0) | split("\t"))
+				            | map({key: .[0], value: .[1]}) | from_entries' 2>/dev/null || echo '{}')"
+			[[ -z "$asnames" ]] && asnames="{}"
+		fi
+	fi
+
 	jq -n "${args[@]}" \
+		--argjson asnames "$asnames" \
 		--slurpfile shop "$SHOP" \
 		-f "$NQ_SHARE/normalize.jq" > "$PAGE.tmp" || die "building the page failed"
 
