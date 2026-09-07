@@ -146,6 +146,57 @@ fetch() {
 	curl -fsSL --retry 3 --retry-delay 2 -o "$2" "$1" || die "could not fetch $1"
 }
 
+# The one edit made to a fetched check, and the reason it is worth making.
+#
+# Net.sh measures the domestic latency grid — 31 provinces across three
+# carriers, the table a Chinese buyer reads first — with
+#
+#   mtr -4 --tcp -P 80 -c 1 -f 100 -C -G 1 -s 1400 <target>
+#
+# `-f 100` is how it says "one probe at the far end, do not trace the path",
+# and it never sets a max TTL. mtr 0.95 probed anyway. **0.96 refuses**:
+#
+#   mtr: firstTTL(100) cannot be larger than maxTTL(30).
+#
+# on stderr, with nothing on stdout and an exit status ping_test never looks
+# at. It reads field 24 of an empty line, finds nothing, and writes 0.00. All
+# 93 probes come back 0.00, normalize.jq sees a grid of zeros and drops the
+# section rather than print a machine with no latency at all — so the table
+# disappears without one thing anywhere exiting non-zero. Alpine carries 0.96;
+# the Debian base this image used to have carried 0.95, which is why the
+# pages made on Debian had the table and the first five Alpine pages did not.
+#
+# Raising maxTTL to match firstTTL is the whole fix, and it restores exactly
+# what the script asked for on the older mtr.
+patch_net_sh() {
+	local f="$1" n
+	n="$(grep -c -- '-f 100 -C' "$f" || true)"
+	if [[ "$n" -eq 0 ]]; then
+		warn "net.sh has no '-f 100 -C' mtr call — upstream changed; the"
+		warn "domestic latency grid may come back empty. See patch_net_sh."
+		return 0
+	fi
+	sed -i 's/-f 100 -C/-f 100 -m 100 -C/g' "$f"
+	grep -q -- '-f 100 -m 100 -C' "$f" || die "could not patch net.sh's mtr call"
+}
+
+# Three of the page's tables come out of one net.json, and each has gone
+# missing at least once with the check still exiting zero: Ookla aborting on a
+# null HOME emptied the speedtest table, mtr 0.96 emptied the province latency
+# grid. Both were found from the *page*, days later. jq is in this image — so
+# count what arrived and say it here, where the run can still be seen.
+net_sanity() {
+	local f="$1" st tr de
+	st="$(jq -s '(.[0].Speedtest // []) | length' "$f" 2>/dev/null || echo 0)"
+	tr="$(jq -s '(.[0].Transfer  // []) | length' "$f" 2>/dev/null || echo 0)"
+	de="$(jq -s '[ (.[0].Delay // [])[] | (.CT.Average, .CU.Average, .CM.Average) ]
+	              | map(tonumber? // 0) | map(select(. > 0)) | length' "$f" 2>/dev/null || echo 0)"
+	say "net: $st domestic speedtest, $tr international, $de of 93 province latency cells"
+	[[ "${st:-0}" -eq 0 ]] && warn "no domestic speedtest row — that section will not render"
+	[[ "${de:-0}" -eq 0 ]] && warn "every province latency cell is zero — that grid will not render"
+	return 0
+}
+
 cmd_collect() {
 	mkdir -p "$RAW"
 	local lang=(); [[ "$NQ_LANG" == "en" ]] && lang=(-E)
@@ -154,6 +205,7 @@ cmd_collect() {
 	fetch "$IP_URL" "$RAW/ip.sh"
 	fetch "$HW_URL" "$RAW/hw.sh"
 	fetch "$NET_URL" "$RAW/net.sh"
+	patch_net_sh "$RAW/net.sh"
 	cp "$RAW/net.sh" "$RAW/trace.sh"
 
 	local low=(); [[ $LOW_DATA -eq 1 ]] && low=(-L)
@@ -161,6 +213,7 @@ cmd_collect() {
 	run_check ip    "$RAW/ip.json"    "${lang[@]}" -p -y             || true
 	run_check hw    "$RAW/hw.json"    "${lang[@]}" -p -y             || true
 	run_check net   "$RAW/net.json"   "${lang[@]}" -p -y "${low[@]}" || true
+	[[ -s "$RAW/net.json" ]] && net_sanity "$RAW/net.json"
 	cmd_bench
 	cmd_route
 
