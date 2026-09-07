@@ -174,10 +174,18 @@ def route_tone($n):
 #
 # A hop with no AS number at all is the CN2 backbone: 59.43.0.0/16 is not
 # announced, and the netname is the only identity it has.
+# `fb` is the fallback the renderer falls back *to* when the table has no
+# entry for that AS. There are eighty thousand of them and the table is the
+# few dozen a China backhaul route actually walks through, so every other hop
+# would otherwise print a bare key — which is how a missing AS4134 was found,
+# and is not what a buyer should be shown. LeoMoeAPI already returns an owner
+# and an ISP per hop; either is a worse name than a curated one and a much
+# better one than `as.4134`.
 def as_label: (.asn // "") as $a | (.whois // "") as $w
-  | if $a == "" and ($w | test("^CN2-")) then "@as.4809"
-    elif $a == "" then ""
-    else "@as." + ($a | ltrimstr("AS"))
+  | if $a == "" and ($w | test("^CN2-")) then { k: "@as.4809", fb: "CN2" }
+    elif $a == "" then null
+    else { k: ("@as." + ($a | ltrimstr("AS"))),
+           fb: (((.isp // "") | clean) // ((.owner // "") | clean) // "") }
     end;
 
 # Where the traffic leaves the world and enters China. Everything before the
