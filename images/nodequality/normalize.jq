@@ -181,6 +181,21 @@ def route_tone($n):
 # and is not what a buyer should be shown. LeoMoeAPI already returns an owner
 # and an ISP per hop; either is a worse name than a curated one and a much
 # better one than `as.4134`.
+# The backbones an operator pays extra to be on, as against the one the
+# carrier routes you over by default. Three, and only three, because these are
+# the ones with no argument attached:
+#
+#   AS4809   China Telecom CN2 — the 59.43 hops, which carry no AS number of
+#            their own and are recognised by their netname instead
+#   AS9929   China Unicom's premium backbone, the one people mean by "9929"
+#   AS23764  CTGNet, China Telecom's international premium network
+#
+# CMI (AS58453 / AS58807) is deliberately absent. It is China Mobile's
+# ordinary international path, and which AS carries the premium CMIN2 product
+# is not something this file should guess at.
+def is_prime: (asn_eff) as $e
+  | $e == "AS4809" or $e == "AS9929" or $e == "AS23764";
+
 def as_label: (.asn // "") as $a | (.whois // "") as $w
   | if $a == "" and ($w | test("^CN2-")) then { k: "@as.4809", fb: "CN2" }
     elif $a == "" then null
@@ -197,6 +212,7 @@ def leg_mark($h; $i):
     | $h[$k] + { leg: (if $i == null then "intl"
                        elif $k < $i then "intl" else "cn" end),
                  border: ($i != null and $k == $i),
+                 prime: ($h[$k] | is_prime),
                  net: ($h[$k] | as_label) } ];
 
 # The verdict, which is the line most readers will stop at. Three tiers, and
@@ -542,6 +558,7 @@ $ip[0] as $ip | $hw[0] as $hw | $net[0] as $net | $shop[0] as $shop
                               net: .net,
                               leg: .leg,
                               border: .border,
+                              prime: .prime,
                               # Place then netname — "北京 CHINANET-BB" — which
                               # is the pairing the design's hop table shows.
                               org: ([ (.prov | clean), ((.whois | clean) // (.owner | clean)) ]
