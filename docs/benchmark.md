@@ -105,25 +105,26 @@ never repeated — restarting the container does not re-benchmark it.
 SSH into the container and you do not get a shell. You get this:
 
 ```
-  节点体检报告
+  Node report
 
-  页面   https://shop.hqno.de/r/NcwHgTrkNz
-  语言   ?lang=en · fr · de
-  状态   已发布
+  page     https://shop.hqno.de/r/7Qn4kR2vXb
+  langs    ?lang=zh · en · fr · de
+  state    published
 
-  可以改的
-   1  节点名称   洛杉矶 CN2 GIA
-   2  页面标签   AS25820 · 洛杉矶 · 三网直连
-   3  套餐价格   入门 · 1C / 1 GB ¥49 · 标准 · 2C / 2 GB ¥89
-   4  联系方式   @yourname · sales@example.com
-   5  售前交付   每日 10:00-22:00 CST · 下单后 5 分钟
-   6  页面备注   页面自带的默认文案
+  What you can change
+   1  Node name   Tokyo · direct routes
+   2  Tags        AS64512 · Tokyo · direct
+   3  Plans       Starter · 1C / 1 GB $6 · Standard · 2C / 2 GB $11
+   4  Contacts    @yourname · sales@example.com
+   5  Hours       Daily 10:00-22:00 UTC · 5 minutes after payment
+   6  Notes       the wording the page ships with
+   7  Language    en
 
-  做点什么
-   p  保存并发布（后台跑，关掉 SSH 也不影响）
-   b  重新跑一遍测试
-   s  开个 shell
-   q  退出
+  What to do
+   p  save and publish  (in the background; closing SSH is fine)
+   b  run the benchmark again  (20-50 minutes, a few GB)
+   s  a shell
+   q  quit
 ```
 
 Type a number and it asks you one question at a time, showing what is there

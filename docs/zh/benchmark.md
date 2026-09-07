@@ -93,21 +93,22 @@ SSH 进这个容器，你拿到的不是 shell，是这个：
 ```
   节点体检报告
 
-  页面   https://shop.hqno.de/r/NcwHgTrkNz
-  语言   ?lang=en · fr · de
+  页面   https://shop.hqno.de/r/7Qn4kR2vXb
+  语言   ?lang=zh · en · fr · de
   状态   已发布
 
   可以改的
-   1  节点名称   洛杉矶 CN2 GIA
-   2  页面标签   AS25820 · 洛杉矶 · 三网直连
+   1  节点名称   东京 · 直连
+   2  页面标签   AS64512 · 东京 · 直连
    3  套餐价格   入门 · 1C / 1 GB ¥49 · 标准 · 2C / 2 GB ¥89
    4  联系方式   @yourname · sales@example.com
    5  售前交付   每日 10:00-22:00 CST · 下单后 5 分钟
    6  页面备注   页面自带的默认文案
+   7  页面语言   zh
 
   做点什么
    p  保存并发布（后台跑，关掉 SSH 也不影响）
-   b  重新跑一遍测试
+   b  重新跑一遍测试（二十到五十分钟，几个 GB 流量）
    s  开个 shell
    q  退出
 ```

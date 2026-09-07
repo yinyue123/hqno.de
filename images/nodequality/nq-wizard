@@ -26,6 +26,11 @@
 # Every edit is written to shop.json the moment it is made — there is no
 # "save" step to forget, and closing the terminal at any point loses nothing
 # but the publish that was not started.
+#
+# It speaks the language the page speaks. `shop.json`'s `lang` is what the
+# page opens in for a reader who states no preference, and it is menu item 7
+# here — so one answer sets both, and a seller who runs their shop in English
+# is not made to read a Chinese menu in order to say so.
 
 set -uo pipefail
 
@@ -42,12 +47,160 @@ export HOME="${HOME:-/root}"
 B=$'\033[1m'; D=$'\033[0m'; DIM=$'\033[2m'; ACC=$'\033[38;5;173m'
 OK=$'\033[38;5;71m'; WARN=$'\033[38;5;179m'; BAD=$'\033[38;5;167m'
 
-say()  { printf '%s\n' "$*"; }
+# ── the two languages ────────────────────────────────────────────────────
+#
+# One case statement rather than two files: every string sits on one line
+# with its translation beside it, so a change that touches only one of them
+# shows up as exactly that in a diff. The page renders in four languages;
+# this menu is *typed at*, and two is what its typists have.
+
+L=zh
+lang_load() {
+	L="${NQ_LANG_FORCE:-}"
+	[ -n "$L" ] && return 0
+	L="$(jq -r '.lang // "zh"' "$SHOP" 2>/dev/null)"
+	case "$L" in en) ;; *) L=zh ;; esac
+}
+
+m() {
+	local z e
+	case "$1" in
+	hdr)        z="节点体检报告";                         e="Node report" ;;
+	hdr_bench)  z="节点体检报告 · 正在测试";              e="Node report · benchmarking" ;;
+	hdr_pub)    z="节点体检报告 · 正在发布";              e="Node report · publishing" ;;
+	f_page)     z="页面";                                 e="page  " ;;
+	f_lang)     z="语言";                                 e="langs " ;;
+	f_state)    z="状态";                                 e="state " ;;
+	unpub)      z="还没发布 — 编辑完按 p";                e="not published yet — press p when you are done" ;;
+	editable)   z="可以改的";                             e="What you can change" ;;
+	i_title)    z="节点名称";                             e="Node name" ;;
+	i_tags)     z="页面标签";                             e="Tags     " ;;
+	i_plans)    z="套餐价格";                             e="Plans    " ;;
+	i_contact)  z="联系方式";                             e="Contacts " ;;
+	i_hours)    z="售前交付";                             e="Hours    " ;;
+	i_notes)    z="页面备注";                             e="Notes    " ;;
+	i_lang)     z="页面语言";                             e="Language " ;;
+	actions)    z="做点什么";                             e="What to do" ;;
+	a_pub)      z="保存并发布";                           e="save and publish" ;;
+	a_pub_n)    z="（后台跑，关掉 SSH 也不影响）";        e="  (in the background; closing SSH is fine)" ;;
+	a_bench)    z="重新跑一遍测试";                       e="run the benchmark again" ;;
+	a_bench_n)  z="（二十到五十分钟，几个 GB 流量）";     e="  (20-50 minutes, a few GB)" ;;
+	a_shell)    z="开个 shell";                           e="a shell" ;;
+	a_quit)     z="退出";                                 e="quit" ;;
+	tip1)       z="提示：改完发布完就可以把这个容器停掉，不占资源；要改再开机，"
+	            e="Tip: once it is published you can stop this container — a stopped one" ;;
+	tip2)       z="      /data 里的东西和这个页面的钥匙都还在。"
+	            e="     costs nothing, and /data keeps your answers and the page's key." ;;
+	dflt_text)  z="页面自带的默认文案";                   e="the wording the page ships with" ;;
+	keep_rule)  z="直接回车 = 不改。这条规则整个向导都一样。"
+	            e="Enter keeps what is there. That is the rule at every prompt." ;;
+	now)        z="现在: ";                               e="now: " ;;
+	saved)      z="已保存";                               e="saved" ;;
+	nosave)     z="没写进去 — shop.json 没有改动";        e="not written — shop.json is unchanged" ;;
+	cont)       z="回车继续";                             e="Enter to continue" ;;
+	bench1)     z="这台机器正在跑测试。整个过程二十到五十分钟，跑完会自己把页面发布出去，"
+	            e="This machine is benchmarking itself: 20 to 50 minutes, and it publishes" ;;
+	bench2)     z="地址就出现在这个界面上。中途不用守着，关掉 SSH 也不影响。"
+	            e="the page on its own. The address turns up here. You can log out." ;;
+	bench_at)   z="现在跑到哪了";                         e="Where it is now" ;;
+	k_refresh)  z="r 刷新";                               e="r refresh" ;;
+	k_log)      z="l 看完整日志";                         e="l the whole log" ;;
+	k_shell)    z="s 开个 shell";                         e="s a shell" ;;
+	k_quit)     z="q 退出";                               e="q quit" ;;
+	k_quit_pub) z="q 退出（发布继续跑）";                 e="q quit (the publish keeps running)" ;;
+	pub1)       z="发布要先付一笔计算工作量，这是这个服务不要账号的代价。它在后台跑，"
+	            e="Publishing costs proof of work — what this service charges instead of an" ;;
+	pub2)       z="关掉 SSH 也会继续，回来再登录就能看到结果。"
+	            e="account. It runs in the background; log back in for the result." ;;
+	s_getting)  z="发布中 · 正在取任务";                  e="publishing · getting a challenge" ;;
+	s_posting)  z="发布中 · 正在上传";                    e="publishing · uploading" ;;
+	s_pow)      z="发布中 · 算工作量";                    e="publishing · proof of work" ;;
+	s_tried)    z="已试";                                 e="tried" ;;
+	s_tries)    z="次";                                   e="" ;;
+	s_ago)      z="秒前开始";                             e="s ago" ;;
+	s_done)     z="已发布";                               e="published" ;;
+	s_failed)   z="发布失败";                             e="publish failed" ;;
+	e_title)    z="节点名称";                             e="Node name" ;;
+	q_zh)       z="中文名（例：东京 · 直连）";            e="Chinese name (e.g. 东京 · 直连)" ;;
+	q_en)       z="英文名（例：Tokyo · direct routes）";  e="English name (e.g. Tokyo · direct routes)" ;;
+	e_tags)     z="页面标签";                             e="Tags" ;;
+	tags_note)  z="页面标题下面那一行小字。空格分开，例：AS64512 东京 直连"
+	            e="The small line under the title. Space separated, e.g. AS64512 Tokyo direct" ;;
+	e_plans)    z="套餐与价格";                           e="Plans and prices" ;;
+	no_plans)   z="一个套餐都没有";                       e="no plans yet" ;;
+	list_keys)  z="输入序号改它    a 加一个    d<序号> 删掉    回车返回"
+	            e="a number edits it    a adds one    d<n> deletes    Enter goes back" ;;
+	plan_n)     z="套餐";                                 e="Plan" ;;
+	plan_note)  z="直接回车 = 不改。价格填数字就行，年付省多少页面自己算。"
+	            e="Enter keeps it. Prices are plain numbers; the yearly saving is worked out." ;;
+	q_pzh)      z="套餐中文名";                           e="Plan name, Chinese" ;;
+	q_pen)      z="套餐英文名";                           e="Plan name, English" ;;
+	q_cur)      z="货币符号（¥ \$ €）";                   e="Currency sign (¥ \$ €)" ;;
+	q_mo)       z="月付价格";                             e="Monthly price" ;;
+	q_yr)       z="年付价格";                             e="Yearly price" ;;
+	rows_ask)   z="配置行要改吗？";                       e="Edit the spec rows?" ;;
+	rows_hint)  z="（y 改，回车跳过）";                   e=" (y to edit, Enter to skip)" ;;
+	e_rows)     z="的配置行";                             e="· spec rows" ;;
+	rows_keys)  z="常用的键：CPU  @k_ram 内存  @k_disk 硬盘  @k_bw 带宽  @k_traffic 流量  @k_ipaddr IP"
+	            e="Common keys: CPU  @k_ram  @k_disk  @k_bw  @k_traffic  @k_ipaddr" ;;
+	q_rowk)     z="这一行的名字（可用 @k_ 开头的键）";    e="Row name (an @k_ key works too)" ;;
+	q_rowv)     z="值";                                   e="Value" ;;
+	q_name)     z="名字";                                 e="Name" ;;
+	e_contact)  z="联系方式";                             e="Contacts" ;;
+	con_keys)   z="常用的键：@k_tg 电报  @k_email 邮箱  @k_qq QQ  @k_wechat 微信  @k_site 网站"
+	            e="Common keys: @k_tg  @k_email  @k_qq  @k_wechat  @k_site" ;;
+	q_conk)     z="哪一种（例 @k_tg）";                   e="Which kind (e.g. @k_tg)" ;;
+	q_conv)     z="内容";                                 e="Value" ;;
+	q_conk2)    z="哪一种";                               e="Which kind" ;;
+	e_hours)    z="售前与交付";                           e="Hours and delivery" ;;
+	q_hours)    z="售前时间（例：每日 10:00-22:00 CST）"; e="Sales hours (e.g. Daily 10:00-22:00 UTC)" ;;
+	q_deliv)    z="交付时间（例：下单后 5 分钟）";        e="Delivery (e.g. 5 minutes after payment)" ;;
+	e_notes)    z="备注";                                 e="Notes" ;;
+	notes_note) z="页面最下面那几行小字。用 / 分开多条。"
+	            e="The small print at the foot of the page. Separate lines with / ." ;;
+	e_lang)     z="页面语言";                             e="Page language" ;;
+	lang_note)  z="页面对没有表态的读者用哪种语言打开，也是这个向导说的语言。"
+	            e="What the page opens in for a reader with no preference — and this menu." ;;
+	q_lang)     z="zh 或 en";                             e="zh or en" ;;
+	e_pub)      z="发布";                                 e="Publish" ;;
+	pub_busy)   z="已经有一个发布在跑了";                 e="a publish is already running" ;;
+	pub_what)   z="把页面重新拼一遍，然后在后台发布。测试不会重跑，网址也不变。"
+	            e="Rebuild the page and publish in the background. Nothing is re-measured; the URL does not change." ;;
+	pub_fail)   z="页面没拼成";                           e="the page would not build" ;;
+	pub_bg)     z="发布已经在后台跑了";                   e="publishing in the background" ;;
+	pub_bg2)    z="— 现在关掉 SSH 也没关系，回来再登录就能看到结果。"
+	            e="— close the terminal if you like; log back in for the result." ;;
+	e_bench)    z="重新跑测试";                           e="Benchmark again" ;;
+	bench_w1)   z="这会花二十到五十分钟，走掉几个 GB 流量，算在这个容器的额度里。"
+	            e="20 to 50 minutes and a few GB, out of this container's allowance." ;;
+	bench_w2)   z="测出来的数会被覆盖，你填的名字和价格不动，网址也不变。"
+	            e="The measurements are replaced; your names and prices are not, and the URL stays." ;;
+	bench_conf) z="确定就输入";                           e="Type" ;;
+	bench_go)   z="开始了";                               e="started" ;;
+	bench_go2)  z="— 跑完回来按 p 发布。";                e="— come back and press p when it is done." ;;
+	sh_note)    z="这是一个普通 shell。";                 e="An ordinary shell." ;;
+	sh_note2)   z="exit 回到向导，nq-wizard 也能再打开它。"
+	            e="exit comes back here; nq-wizard opens it again." ;;
+	nothing)    z="还没有可以编辑的东西";                 e="Nothing to edit yet" ;;
+	nothing1)   z="这个容器上还没有跑过测试。";           e="This container has not been benchmarked." ;;
+	nothing2)   z="会开始跑。";                           e="starts it." ;;
+	deleted)    z="删掉了";                               e="deleted" ;;
+	*)          z="$1"; e="$1" ;;
+	esac
+	[ "$L" = en ] && printf '%s' "$e" || printf '%s' "$z"
+}
+
+say()   { printf '%s\n' "$*"; }
 head2() { printf '\n%s%s%s\n' "$B" "$*" "$D"; }
-dim()  { printf '%s%s%s\n' "$DIM" "$*" "$D"; }
+dim()   { printf '%s%s%s\n' "$DIM" "$*" "$D"; }
 
 # jq -r with a default, so a missing key never prints "null" at somebody.
 q() { jq -r "$1 // \"\"" "$SHOP" 2>/dev/null; }
+
+# The menu's own language decides which side of a {zh, en} pair is shown back.
+# An English menu listing a plan as 入门 · 1C / 1 GB is telling a reader who
+# asked for English that this is what their page says, which it is not.
+first() { [ "$L" = en ] && printf 'en zh' || printf 'zh en'; }
 
 # Read one line with the current value shown, and keep the current value when
 # the answer is empty. That rule is the whole editing model and it is stated
@@ -59,7 +212,7 @@ ask() {
 	# and gets written to shop.json, which is exactly what happened the first
 	# time this was run.
 	printf '%s\n' "  $prompt" >&2
-	[ -n "$current" ] && printf '%s\n' "    ${DIM}现在: ${D}${current}" >&2
+	[ -n "$current" ] && printf '%s\n' "    ${DIM}$(m now)${D}${current}" >&2
 	printf '%s' "    > " >&2
 	IFS= read -r reply || reply=""
 	[ -z "$reply" ] && { printf '%s' "$current"; return 0; }
@@ -77,11 +230,11 @@ edit() {
 		return 0
 	fi
 	rm -f "$tmp"
-	printf '%s\n' "  ${BAD}没写进去 — shop.json 没有改动${D}"
+	printf '%s\n' "  ${BAD}$(m nosave)${D}"
 	return 1
 }
 
-pause() { printf '\n%s' "  ${DIM}回车继续${D}"; IFS= read -r _ || true; }
+pause() { printf '\n%s' "  ${DIM}$(m cont)${D}"; IFS= read -r _ || true; }
 
 # A value that is nothing but @-keys is the wording the page ships with, in
 # four languages. Printing `@v_hours` at a seller invites them to "fix" it
@@ -93,7 +246,7 @@ dflt() {
 		# distinction is the file's, and getting it backwards here would tell
 		# a seller their own contact details were "the default wording".
 		@@*) printf '%s' "$1" ;;
-		@*)  printf '%s' "${DIM}页面自带的默认文案${D}" ;;
+		@*)  printf '%s' "${DIM}$(m dflt_text)${D}" ;;
 		*)   printf '%s' "$1" ;;
 	esac
 }
@@ -112,9 +265,9 @@ publish_running() {
 	grep -q '^status=running$' "$STATE"
 }
 
-# `nq-shop status` says the same thing in English, for a person at a command
-# line. This screen is the one a seller in Shenzhen lands on without asking
-# for it, so it reads the same file and says it in the page's own language.
+# `nq-shop status` says the same thing in English for a person at a command
+# line. This is the screen a seller lands on without asking for it, so it
+# reads the same file and says it in the page's own language.
 #
 # The percentage is of the *expected* work. A search for 22 leading zero bits
 # has no progress — only 2^22 tries' worth of expectation — so it is capped at
@@ -129,12 +282,12 @@ pub_line() {
 			started) started="$v" ;; url) url="$v" ;; why) why="$v" ;;
 		esac
 	done < "$STATE"
-	[ "$started" -gt 0 ] 2>/dev/null && age=" · $(( $(date +%s) - started )) 秒前开始"
+	[ "$started" -gt 0 ] 2>/dev/null && age=" · $(( $(date +%s) - started )) $(m s_ago)"
 	case "$status" in
 	running)
 		case "$phase" in
-			challenge) printf '%s发布中%s · 正在取任务%s' "$WARN" "$D" "$age" ;;
-			posting)   printf '%s发布中%s · 正在上传%s' "$WARN" "$D" "$age" ;;
+			challenge) printf '%s%s%s%s' "$WARN" "$(m s_getting)" "$D" "$age" ;;
+			posting)   printf '%s%s%s%s' "$WARN" "$(m s_posting)" "$D" "$age" ;;
 			pow)
 				if [ -s "$POWLOG" ]; then
 					tries="$(sed -n 's/^tries \([0-9]*\)$/\1/p' "$POWLOG" | tail -1)"
@@ -142,11 +295,12 @@ pub_line() {
 					pct=$(( 100 * tries / (1 << bits) ))
 					[ "$pct" -gt 99 ] && pct=99
 				fi
-				printf '%s发布中%s · 算工作量 %s%%（已试 %s 次）%s' "$WARN" "$D" "$pct" "$tries" "$age" ;;
-			*) printf '%s发布中%s%s' "$WARN" "$D" "$age" ;;
+				printf '%s%s %s%%%s (%s %s %s)%s' "$WARN" "$(m s_pow)" "$pct" "$D" \
+					"$(m s_tried)" "$tries" "$(m s_tries)" "$age" ;;
+			*) printf '%s%s%s%s' "$WARN" "$(m s_pow)" "$D" "$age" ;;
 		esac ;;
-	done)   printf '%s已发布%s' "$OK" "$D" ;;
-	failed) printf '%s发布失败%s · %s' "$BAD" "$D" "$why" ;;
+	done)   printf '%s%s%s' "$OK" "$(m s_done)" "$D" ;;
+	failed) printf '%s%s%s · %s' "$BAD" "$(m s_failed)" "$D" "$why" ;;
 	*)      return 1 ;;
 	esac
 }
@@ -155,17 +309,17 @@ pub_line() {
 
 screen_benchmarking() {
 	clear
-	head2 "节点体检报告 · 正在测试"
+	head2 "$(m hdr_bench)"
 	say ""
-	say "  这台机器正在跑测试。整个过程 ${B}二十到五十分钟${D}，跑完会自己把页面发布出去，"
-	say "  地址就出现在这个界面上。中途不用守着，关掉 SSH 也不影响。"
+	say "  $(m bench1)"
+	say "  $(m bench2)"
 	say ""
 	if [ -s "$BOOTLOG" ]; then
-		head2 "现在跑到哪了"
+		head2 "$(m bench_at)"
 		sed 's/\x1b\[[0-9;]*m//g' "$BOOTLOG" | grep -v '^$' | tail -4 | sed 's/^/    /'
 	fi
 	say ""
-	dim "  r 刷新    l 看完整日志    s 开个 shell    q 退出"
+	dim "  $(m k_refresh)    $(m k_log)    $(m k_shell)    $(m k_quit)"
 	printf '%s' "  > "
 	local k; IFS= read -r k || k=q
 	case "$k" in
@@ -177,14 +331,14 @@ screen_benchmarking() {
 
 screen_publishing() {
 	clear
-	head2 "节点体检报告 · 正在发布"
+	head2 "$(m hdr_pub)"
 	say ""
-	say "  发布要先付一笔计算工作量，这是这个服务不要账号的代价。它在后台跑，"
-	say "  ${B}关掉 SSH 也会继续${D}，回来再登录就能看到结果。"
+	say "  $(m pub1)"
+	say "  $(m pub2)"
 	say ""
 	printf '    %s\n' "$(pub_line)"
 	say ""
-	dim "  r 刷新    s 开个 shell    q 退出（发布继续跑）"
+	dim "  $(m k_refresh)    $(m k_shell)    $(m k_quit_pub)"
 	printf '%s' "  > "
 	local k; IFS= read -r k || k=q
 	case "$k" in
@@ -196,36 +350,38 @@ screen_publishing() {
 overview() {
 	local url; url="$(published_url)"
 	clear
-	head2 "节点体检报告"
+	head2 "$(m hdr)"
 	say ""
 	if [ -n "$url" ]; then
-		printf '  %s页面%s   %s%s%s\n' "$DIM" "$D" "$ACC" "$url" "$D"
-		printf '  %s语言%s   %s?lang=en · fr · de%s\n' "$DIM" "$D" "$DIM" "$D"
+		printf '  %s%s%s   %s%s%s\n' "$DIM" "$(m f_page)" "$D" "$ACC" "$url" "$D"
+		printf '  %s%s%s   %s?lang=zh · en · fr · de%s\n' "$DIM" "$(m f_lang)" "$D" "$DIM" "$D"
 	else
-		printf '  %s页面%s   %s还没发布 — 编辑完按 p%s\n' "$DIM" "$D" "$WARN" "$D"
+		printf '  %s%s%s   %s%s%s\n' "$DIM" "$(m f_page)" "$D" "$WARN" "$(m unpub)" "$D"
 	fi
 	local st; st="$(pub_line || true)"
-	[ -n "$st" ] && printf '  %s状态%s   %s\n' "$DIM" "$D" "$st"
+	[ -n "$st" ] && printf '  %s%s%s   %s\n' "$DIM" "$(m f_state)" "$D" "$st"
 
-	# Every label is four characters wide on purpose. printf's %-14s pads by
-	# bytes and a CJK character is three of them, so a column built that way
-	# comes out ragged on exactly the screen this is written for.
-	head2 "可以改的"
-	printf '   1  节点名称   %s\n' "$(dflt "$(q '.shop.title.zh // .shop.title')")"
-	printf '   2  页面标签   %s\n' "$(dflt "$(jq -r '[.shop.tags[]?] | join(" · ")' "$SHOP" 2>/dev/null)")"
-	printf '   3  套餐价格   %s\n' "$(jq -r '[.shop.plans[]? | ((.name.zh // .name)|tostring) + " " + (.currency // "") + ((.monthly // "?")|tostring)] | join(" · ")' "$SHOP" 2>/dev/null)"
-	printf '   4  联系方式   %s\n' "$(dflt "$(jq -r '[.shop.contacts[]? | .v] | join(" · ")' "$SHOP" 2>/dev/null)" | sed 's/@@/@/g')"
-	printf '   5  售前交付   %s\n' "$(dflt "$(jq -r '[.shop.hours[]? | .v] | join(" · ")' "$SHOP" 2>/dev/null)")"
-	printf '   6  页面备注   %s\n' "$(dflt "$(jq -r '[.shop.notes[]?] | join(" / ")' "$SHOP" 2>/dev/null)")"
+	# Every label is padded to one width by hand, in both languages. printf's
+	# %-14s pads by bytes and a CJK character is three of them, so a column
+	# built that way comes out ragged on exactly the screen this is for.
+	head2 "$(m editable)"
+	local a b; read -r a b <<<"$(first)"
+	printf '   1  %s   %s\n' "$(m i_title)"   "$(dflt "$(q ".shop.title.$a // .shop.title.$b // .shop.title")")"
+	printf '   2  %s   %s\n' "$(m i_tags)"    "$(dflt "$(jq -r '[.shop.tags[]?] | join(" · ")' "$SHOP" 2>/dev/null)")"
+	printf '   3  %s   %s\n' "$(m i_plans)"   "$(jq -r "[.shop.plans[]? | ((.name.$a // .name.$b // .name)|tostring) + \" \" + (.currency // \"\") + ((.monthly // \"?\")|tostring)] | join(\" · \")" "$SHOP" 2>/dev/null)"
+	printf '   4  %s   %s\n' "$(m i_contact)" "$(dflt "$(jq -r '[.shop.contacts[]? | .v] | join(" · ")' "$SHOP" 2>/dev/null)" | sed 's/@@/@/g')"
+	printf '   5  %s   %s\n' "$(m i_hours)"   "$(dflt "$(jq -r '[.shop.hours[]? | .v] | join(" · ")' "$SHOP" 2>/dev/null)")"
+	printf '   6  %s   %s\n' "$(m i_notes)"   "$(dflt "$(jq -r '[.shop.notes[]?] | join(" / ")' "$SHOP" 2>/dev/null)")"
+	printf '   7  %s   %s\n' "$(m i_lang)"    "$L"
 
-	head2 "做点什么"
-	say "   p  保存并发布${DIM}（后台跑，关掉 SSH 也不影响）${D}"
-	say "   b  重新跑一遍测试${DIM}（二十到五十分钟，几个 GB 流量）${D}"
-	say "   s  开个 shell"
-	say "   q  退出"
+	head2 "$(m actions)"
+	say "   p  $(m a_pub)${DIM}$(m a_pub_n)${D}"
+	say "   b  $(m a_bench)${DIM}$(m a_bench_n)${D}"
+	say "   s  $(m a_shell)"
+	say "   q  $(m a_quit)"
 	say ""
-	dim "  提示：改完发布完就可以把这个容器停掉，不占资源；要改再开机，"
-	dim "        /data 里的东西和这个页面的钥匙都还在。"
+	dim "  $(m tip1)"
+	dim "  $(m tip2)"
 	say ""
 	printf '%s' "  > "
 }
@@ -237,51 +393,52 @@ overview() {
 # write German is how a page ends up with the key printed on it instead.
 
 edit_title() {
-	clear; head2 "节点名称"
+	clear; head2 "$(m e_title)"
 	say ""
-	dim "  直接回车 = 不改。这条规则整个向导都一样。"
+	dim "  $(m keep_rule)"
 	say ""
 	local zh en
-	zh="$(ask "中文名（例：洛杉矶 CN2 GIA）" "$(q '.shop.title.zh')")"
-	en="$(ask "英文名（例：Los Angeles CN2 GIA）" "$(q '.shop.title.en')")"
+	zh="$(ask "$(m q_zh)" "$(q '.shop.title.zh')")"
+	en="$(ask "$(m q_en)" "$(q '.shop.title.en')")"
 	edit '.shop.title = {zh: $zh, en: $en, fr: $en, de: $en}' --arg zh "$zh" --arg en "$en" \
-		&& say "" && say "  ${OK}已保存${D}"
+		&& say "" && say "  ${OK}$(m saved)${D}"
 	pause
 }
 
 edit_tags() {
-	clear; head2 "标签"
+	clear; head2 "$(m e_tags)"
 	say ""
-	dim "  页面标题下面那一行小字。空格分开，例：AS4837 联通 家宽 三网直连"
+	dim "  $(m tags_note)"
 	say ""
 	local cur new
 	cur="$(jq -r '[.shop.tags[]?] | join(" ")' "$SHOP")"
-	new="$(ask "标签" "$cur")"
+	new="$(ask "$(m e_tags)" "$cur")"
 	edit '.shop.tags = ($t | split(" ") | map(select(. != "")))' --arg t "$new" \
-		&& say "" && say "  ${OK}已保存${D}"
+		&& say "" && say "  ${OK}$(m saved)${D}"
 	pause
 }
 
 edit_plans() {
 	while :; do
-		clear; head2 "套餐与价格"
+		clear; head2 "$(m e_plans)"
 		say ""
 		local n; n="$(jq '[.shop.plans[]?] | length' "$SHOP")"
 		if [ "$n" -eq 0 ]; then
-			say "  ${DIM}一个套餐都没有${D}"
+			say "  ${DIM}$(m no_plans)${D}"
 		else
-			jq -r '.shop.plans | to_entries[] |
-				"   \(.key+1)  \((.value.name.zh // .value.name)|tostring)
-        \(.value.currency // "")\(.value.monthly // "?") / 月   \(.value.currency // "")\(.value.yearly // "?") / 年   \([.value.rows[]? | "\(.k) \(.v)"] | join("  ·  "))"' "$SHOP"
+			local a b; read -r a b <<<"$(first)"
+			jq -r ".shop.plans | to_entries[] |
+				\"   \(.key+1)  \((.value.name.$a // .value.name.$b // .value.name)|tostring)
+        \(.value.currency // \"\")\(.value.monthly // \"?\") / mo   \(.value.currency // \"\")\(.value.yearly // \"?\") / yr   \([.value.rows[]? | \"\(.k) \(.v)\"] | join(\"  ·  \"))\"" "$SHOP"
 		fi
 		say ""
-		dim "  输入序号改它    a 加一个    d<序号> 删掉    回车返回"
+		dim "  $(m list_keys)"
 		printf '%s' "  > "
 		local k; IFS= read -r k || return
 		case "$k" in
 			"") return ;;
 			a) plan_add ;;
-			d*) local i="${k#d}"; [ -n "$i" ] && edit "del(.shop.plans[$((i-1))])" && say "  ${OK}删掉了${D}" && sleep 1 ;;
+			d*) local i="${k#d}"; [ -n "$i" ] && edit "del(.shop.plans[$((i-1))])" && say "  ${OK}$(m deleted)${D}" && sleep 1 ;;
 			*[!0-9]*) ;;
 			*) plan_edit "$((k-1))" ;;
 		esac
@@ -297,16 +454,16 @@ plan_add() {
 plan_edit() {
 	local i="$1"
 	[ "$(jq "[.shop.plans[]?] | length" "$SHOP")" -gt "$i" ] || return 0
-	clear; head2 "套餐 $((i+1))"
+	clear; head2 "$(m plan_n) $((i+1))"
 	say ""
-	dim "  直接回车 = 不改。价格填数字就行，年付省多少页面自己算。"
+	dim "  $(m plan_note)"
 	say ""
 	local zh en cur mo yr
-	zh="$(ask  "套餐中文名" "$(q ".shop.plans[$i].name.zh // .shop.plans[$i].name")")"
-	en="$(ask  "套餐英文名" "$(q ".shop.plans[$i].name.en")")"
-	cur="$(ask "货币符号（¥ \$ €）" "$(q ".shop.plans[$i].currency")")"
-	mo="$(ask  "月付价格" "$(q ".shop.plans[$i].monthly")")"
-	yr="$(ask  "年付价格" "$(q ".shop.plans[$i].yearly")")"
+	zh="$(ask  "$(m q_pzh)" "$(q ".shop.plans[$i].name.zh // .shop.plans[$i].name")")"
+	en="$(ask  "$(m q_pen)" "$(q ".shop.plans[$i].name.en")")"
+	cur="$(ask "$(m q_cur)" "$(q ".shop.plans[$i].currency")")"
+	mo="$(ask  "$(m q_mo)"  "$(q ".shop.plans[$i].monthly")")"
+	yr="$(ask  "$(m q_yr)"  "$(q ".shop.plans[$i].yearly")")"
 
 	# tonumber? rather than tonumber: a price typed with a currency sign in
 	# it must not take the whole file down, and 0 is a legible wrong answer.
@@ -318,37 +475,37 @@ plan_edit() {
 		|| { pause; return; }
 
 	say ""
-	say "  ${OK}已保存${D}"
-	printf '\n  配置行要改吗？%s（y 改，回车跳过）%s ' "$DIM" "$D"
+	say "  ${OK}$(m saved)${D}"
+	printf '\n  %s%s%s%s ' "$(m rows_ask)" "$DIM" "$(m rows_hint)" "$D"
 	local k; IFS= read -r k || k=""
 	[ "$k" = "y" ] && plan_rows "$i"
 }
 
-# The rows under a plan: CPU / 内存 / 流量 and so on. `k` may be a key like
-# @k_ram, which the page turns into 内存 · Memory · Mémoire · Speicher on its
-# own, so the common ones are offered by name and anything else is literal.
+# The rows under a plan: CPU / memory / traffic and so on. `k` may be a key
+# like @k_ram, which the page turns into 内存 · Memory · Mémoire · Speicher on
+# its own, so the common ones are offered by name and anything else is literal.
 plan_rows() {
 	local i="$1"
 	while :; do
-		clear; head2 "套餐 $((i+1)) 的配置行"
+		clear; head2 "$(m plan_n) $((i+1)) $(m e_rows)"
 		say ""
 		jq -r ".shop.plans[$i].rows // [] | to_entries[] | \"   \(.key+1)  \(.value.k)  →  \(.value.v)\"" "$SHOP"
 		say ""
-		dim "  常用的 k：CPU  @k_ram 内存  @k_disk 硬盘  @k_bw 带宽  @k_traffic 流量  @k_ipaddr IP"
-		dim "  输入序号改它    a 加一行    d<序号> 删掉    回车返回"
+		dim "  $(m rows_keys)"
+		dim "  $(m list_keys)"
 		printf '%s' "  > "
 		local k; IFS= read -r k || return
 		case "$k" in
 			"") return ;;
 			a)  local nk nv
-			    nk="$(ask "这一行的名字（可用 @k_ 开头的键）" "")"
-			    nv="$(ask "值" "")"
+			    nk="$(ask "$(m q_rowk)" "")"
+			    nv="$(ask "$(m q_rowv)" "")"
 			    edit ".shop.plans[$i].rows += [{k: \$k, v: \$v}]" --arg k "$nk" --arg v "$nv" ;;
 			d*) local j="${k#d}"; [ -n "$j" ] && edit ".shop.plans[$i].rows |= del(.[$((j-1))])" ;;
 			*[!0-9]*) ;;
 			*)  local j=$((k-1)) nk nv
-			    nk="$(ask "名字" "$(q ".shop.plans[$i].rows[$j].k")")"
-			    nv="$(ask "值"   "$(q ".shop.plans[$i].rows[$j].v")")"
+			    nk="$(ask "$(m q_name)" "$(q ".shop.plans[$i].rows[$j].k")")"
+			    nv="$(ask "$(m q_rowv)" "$(q ".shop.plans[$i].rows[$j].v")")"
 			    edit ".shop.plans[$i].rows[$j] = {k: \$k, v: \$v}" --arg k "$nk" --arg v "$nv" ;;
 		esac
 	done
@@ -359,27 +516,27 @@ plan_rows() {
 # that — so it is done here, and undone before the value is shown back.
 edit_contacts() {
 	while :; do
-		clear; head2 "联系方式"
+		clear; head2 "$(m e_contact)"
 		say ""
 		jq -r '.shop.contacts // [] | to_entries[] | "   \(.key+1)  \(.value.k)  →  \(.value.v)"' "$SHOP" \
 			| sed 's/@@/@/g'
 		say ""
-		dim "  常用的 k：@k_tg 电报  @k_email 邮箱  @k_qq QQ  @k_wechat 微信  @k_site 网站"
-		dim "  输入序号改它    a 加一个    d<序号> 删掉    回车返回"
+		dim "  $(m con_keys)"
+		dim "  $(m list_keys)"
 		printf '%s' "  > "
 		local k; IFS= read -r k || return
 		case "$k" in
 			"") return ;;
 			a)  local nk nv
-			    nk="$(ask "哪一种（例 @k_tg）" "@k_tg")"
-			    nv="$(ask "内容" "")"
+			    nk="$(ask "$(m q_conk)" "@k_tg")"
+			    nv="$(ask "$(m q_conv)" "")"
 			    edit '.shop.contacts += [{k: $k, v: $v}]' --arg k "$nk" \
 			         --arg v "$(printf '%s' "$nv" | sed 's/^@\([^@]\)/@@\1/')" ;;
 			d*) local j="${k#d}"; [ -n "$j" ] && edit ".shop.contacts |= del(.[$((j-1))])" ;;
 			*[!0-9]*) ;;
 			*)  local j=$((k-1)) nk nv
-			    nk="$(ask "哪一种" "$(q ".shop.contacts[$j].k")")"
-			    nv="$(ask "内容" "$(q ".shop.contacts[$j].v" | sed 's/@@/@/g')")"
+			    nk="$(ask "$(m q_conk2)" "$(q ".shop.contacts[$j].k")")"
+			    nv="$(ask "$(m q_conv)" "$(q ".shop.contacts[$j].v" | sed 's/@@/@/g')")"
 			    edit ".shop.contacts[$j] = {k: \$k, v: \$v}" --arg k "$nk" \
 			         --arg v "$(printf '%s' "$nv" | sed 's/^@\([^@]\)/@@\1/')" ;;
 		esac
@@ -387,41 +544,57 @@ edit_contacts() {
 }
 
 edit_hours() {
-	clear; head2 "售前与交付"
+	clear; head2 "$(m e_hours)"
 	say ""
 	local a b
-	a="$(ask "售前时间（例：每日 10:00-22:00 CST）" "$(q '.shop.hours[0].v')")"
-	b="$(ask "交付时间（例：下单后 5 分钟）"        "$(q '.shop.hours[1].v')")"
+	a="$(ask "$(m q_hours)" "$(q '.shop.hours[0].v')")"
+	b="$(ask "$(m q_deliv)" "$(q '.shop.hours[1].v')")"
 	edit '.shop.hours = [{k: "@k_hours", v: $a}, {k: "@k_deliver", v: $b}]' \
-		--arg a "$a" --arg b "$b" && say "" && say "  ${OK}已保存${D}"
+		--arg a "$a" --arg b "$b" && say "" && say "  ${OK}$(m saved)${D}"
 	pause
 }
 
 edit_notes() {
-	clear; head2 "备注"
+	clear; head2 "$(m e_notes)"
 	say ""
-	dim "  页面最下面那几行小字。用 / 分开多条。"
+	dim "  $(m notes_note)"
 	say ""
 	local cur new
 	cur="$(jq -r '[.shop.notes[]?] | join(" / ")' "$SHOP")"
-	new="$(ask "备注" "$cur")"
+	new="$(ask "$(m e_notes)" "$cur")"
 	edit '.shop.notes = ($n | split(" / ") | map(select(. != "")))' --arg n "$new" \
-		&& say "" && say "  ${OK}已保存${D}"
+		&& say "" && say "  ${OK}$(m saved)${D}"
+	pause
+}
+
+# One answer, two effects: the language the page opens in for a reader who
+# states no preference, and the language of this menu. They are the same
+# choice and there is no reason to ask twice.
+edit_lang() {
+	clear; head2 "$(m e_lang)"
+	say ""
+	dim "  $(m lang_note)"
+	say ""
+	local new
+	new="$(ask "$(m q_lang)" "$L")"
+	case "$new" in
+		en|zh) edit '.lang = $l' --arg l "$new" && L="$new" && say "" && say "  ${OK}$(m saved)${D}" ;;
+	esac
 	pause
 }
 
 # ── publish, and re-benchmark ────────────────────────────────────────────
 
 do_publish() {
-	clear; head2 "发布"
+	clear; head2 "$(m e_pub)"
 	say ""
 	if publish_running; then
-		say "  ${WARN}已经有一个发布在跑了${D}"; pause; return
+		say "  ${WARN}$(m pub_busy)${D}"; pause; return
 	fi
-	say "  把页面重新拼一遍，然后在后台发布。测试${B}不会${D}重跑，网址也不变。"
+	say "  $(m pub_what)"
 	say ""
 	if ! nq-shop build 2>&1 | sed 's/^/  /'; then
-		say "  ${BAD}页面没拼成${D}"; pause; return
+		say "  ${BAD}$(m pub_fail)${D}"; pause; return
 	fi
 	# setsid, so the publish is not in this session's process group and does
 	# not die with the terminal. That is the whole point of it: 22 bits of
@@ -431,29 +604,29 @@ do_publish() {
 		nq-shop publish >"$PUBLOG" 2>&1 </dev/null &
 	sleep 2
 	say ""
-	say "  ${OK}发布已经在后台跑了${D} — 现在关掉 SSH 也没关系，回来再登录就能看到结果。"
+	say "  ${OK}$(m pub_bg)${D} $(m pub_bg2)"
 	pause
 }
 
 do_rebench() {
-	clear; head2 "重新跑测试"
+	clear; head2 "$(m e_bench)"
 	say ""
-	say "  ${WARN}这会花二十到五十分钟，走掉几个 GB 流量${D}，算在这个容器的额度里。"
-	say "  测出来的数会被覆盖，你填的名字和价格不动，网址也不变。"
+	say "  ${WARN}$(m bench_w1)${D}"
+	say "  $(m bench_w2)"
 	say ""
-	printf '  确定就输入 %syes%s：' "$B" "$D"
+	printf '  %s %syes%s: ' "$(m bench_conf)" "$B" "$D"
 	local k; IFS= read -r k || k=""
 	[ "$k" = "yes" ] || return
 	setsid nohup env HOME=/root NQ_ENDPOINT="$NQ_ENDPOINT" \
 		nq-shop collect >>"$BOOTLOG" 2>&1 </dev/null &
 	say ""
-	say "  ${OK}开始了${D} — 跑完回来按 p 发布。"
+	say "  ${OK}$(m bench_go)${D} $(m bench_go2)"
 	pause
 }
 
 drop_to_shell() {
 	clear
-	say "  这是一个普通 shell。${DIM}exit 回到向导，nq-wizard 也能再打开它。${D}"
+	say "  $(m sh_note) ${DIM}$(m sh_note2)${D}"
 	say ""
 	NQ_NO_WIZARD=1 "${SHELL:-/bin/bash}" -i || true
 }
@@ -464,15 +637,16 @@ drop_to_shell() {
 # up before it exists — a container reinstalled onto this image with the
 # benchmark not yet at that line — writes it rather than showing an empty menu.
 [ -s "$SHOP" ] || nq-shop init >/dev/null 2>&1 || true
+lang_load
 
 while :; do
 	if benchmark_running; then screen_benchmarking; continue; fi
 	if publish_running;   then screen_publishing;  continue; fi
 	if [ ! -s "$SHOP" ];  then
-		clear; head2 "还没有可以编辑的东西"
+		clear; head2 "$(m nothing)"
 		say ""
-		say "  这个容器上还没有跑过测试。"
-		say "  ${DIM}nq-shop run --endpoint $NQ_ENDPOINT${D} 会开始跑。"
+		say "  $(m nothing1)"
+		say "  ${DIM}nq-shop run --endpoint $NQ_ENDPOINT${D} $(m nothing2)"
 		pause; exit 0
 	fi
 
@@ -485,6 +659,7 @@ while :; do
 		4) edit_contacts ;;
 		5) edit_hours ;;
 		6) edit_notes ;;
+		7) edit_lang ;;
 		p|P) do_publish ;;
 		b|B) do_rebench ;;
 		s|S) drop_to_shell ;;
