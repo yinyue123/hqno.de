@@ -182,19 +182,29 @@ def route_tone($n):
 # and an ISP per hop; either is a worse name than a curated one and a much
 # better one than `as.4134`.
 # The backbones an operator pays extra to be on, as against the one the
-# carrier routes you over by default. Three, and only three, because these are
-# the ones with no argument attached:
+# carrier routes you over by default:
 #
 #   AS4809   China Telecom CN2 — the 59.43 hops, which carry no AS number of
 #            their own and are recognised by their netname instead
 #   AS9929   China Unicom's premium backbone, the one people mean by "9929"
 #   AS23764  CTGNet, China Telecom's international premium network
+#   AS58807  China Mobile CMIN2, whose hops also carry the CMIN2-NET netname
 #
-# CMI (AS58453 / AS58807) is deliberately absent. It is China Mobile's
-# ordinary international path, and which AS carries the premium CMIN2 product
-# is not something this file should guess at.
-def is_prime: (asn_eff) as $e
-  | $e == "AS4809" or $e == "AS9929" or $e == "AS23764";
+# AS58807 was left out of this list once, on the grounds that guessing which
+# AS carries the premium CMIN2 product was not this file's business. That was
+# not a position the file actually held: `route_name` two hundred lines up
+# maps AS58807 to CMIN2 and AS58453 to plain CMI, and `route_tier` calls
+# CMIN2 精品. So the card said 精品线路 at the top and then drew every hop of
+# that premium stretch in the plain colour — the one place a reader can check
+# the claim, disagreeing with the claim. AS58453 stays out: that one is CMI,
+# China Mobile's ordinary international path, and route_name says so too.
+#
+# The netname is tested as well as the AS number, for the same reason CN2 is:
+# a hop on the backbone may answer without an AS number, and CMIN2-NET is
+# then the only identity it has.
+def is_prime: (asn_eff) as $e | (.whois // "") as $w
+  | $e == "AS4809" or $e == "AS9929" or $e == "AS23764" or $e == "AS58807"
+    or ($w | test("^CMIN2"));
 
 def as_label: (.asn // "") as $a | (.whois // "") as $w
   | if $a == "" and ($w | test("^CN2-")) then { k: "@as.4809", fb: "CN2" }
