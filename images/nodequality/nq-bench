@@ -52,21 +52,35 @@ fi
 
 say() { printf '\033[1;36m%s\033[0m\n' "$*" >&2; }
 
-# nproc counts the host's CPUs, not the container's share. cpu.max is the
-# number the cgroup will actually let through, and on a sold container that is
-# the number the buyer is paying for — a multi-thread score against nproc on a
-# 32-core host with 1 core sold is a score for work that never ran.
+# How many threads the multi-thread runs get. Neither available number is the
+# answer on its own:
+#
+#   nproc      counts the host's CPUs. On a 32-core host with one core sold it
+#              is a score for work that never ran.
+#   cpu.max    is the cgroup ceiling, but on hqnode that ceiling is the
+#              *burst* limit, not the sold size — a container sold as 1 core
+#              with a burst factor of 2 reads `200000 100000`. Measured on
+#              DMIT: panel says cpu 1, cpu.max says 2, and the host has one
+#              core in total, so two threads were competing for one CPU and
+#              the multi score was the single score with extra scheduling.
+#
+# So: the cgroup ceiling, clamped by the CPUs that physically exist. That is
+# still the burst figure rather than the sustained one, and it is the
+# optimistic reading — worth knowing when comparing two pages.
 cores() {
-	local q p
+	local q p n c
+	n="$(nproc 2>/dev/null || echo 1)"
+	c="$n"
 	if [[ -r /sys/fs/cgroup/cpu.max ]]; then
 		read -r q p < /sys/fs/cgroup/cpu.max
 		if [[ "$q" != "max" ]] && [[ "${p:-0}" -gt 0 ]]; then
-			# Round up: 1.5 cores can still run 2 threads.
-			echo $(( (q + p - 1) / p ))
-			return
+			# Round up: 1.5 cores can still keep 2 threads busy.
+			c=$(( (q + p - 1) / p ))
 		fi
 	fi
-	nproc 2>/dev/null || echo 1
+	(( c > n )) && c="$n"
+	(( c < 1 )) && c=1
+	echo "$c"
 }
 
 # `sysbench cpu` prints "events per second: 380.85". Old sysbench wants
