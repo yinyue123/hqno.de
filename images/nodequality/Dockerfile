@@ -117,11 +117,24 @@ RUN set -eux; \
     ls -l /usr/share/nodequality/asn.txt.gz
 
 COPY --from=solver /nq-pow /usr/local/bin/nq-pow
-COPY nq-shop nq-bench /usr/local/bin/
+COPY nq-shop nq-bench nq-wizard /usr/local/bin/
 COPY normalize.jq page.default.json /usr/share/nodequality/
-RUN chmod +x /usr/local/bin/nq-shop /usr/local/bin/nq-bench \
+
+# What an SSH login lands on. The gateway execs `bash -l`, a login shell reads
+# /etc/profile, and Alpine's /etc/profile sources this directory — so this is
+# where the wizard gets to be the first thing a seller sees. The guards inside
+# it are what keep SFTP, `ssh host command` and `hqnode exec` unaffected.
+COPY profile-wizard.sh /etc/profile.d/nq-wizard.sh
+
+RUN chmod +x /usr/local/bin/nq-shop /usr/local/bin/nq-bench /usr/local/bin/nq-wizard \
  && bash -n /usr/local/bin/nq-shop \
  && bash -n /usr/local/bin/nq-bench \
+ && bash -n /usr/local/bin/nq-wizard \
+ && sh -n /etc/profile.d/nq-wizard.sh \
+ # The wizard is the whole user interface, so the one thing it cannot do is
+ # fail to start. It reads shop.json through jq and nothing else, and a login
+ # that lands on a stack trace is worse than one that lands on a shell.
+ && grep -q 'nq-wizard' /etc/profile.d/nq-wizard.sh \
  # Every --argjson here has to match what normalize.jq binds. This check has
  # now caught three mismatches, in both directions; it is the cheapest test in
  # the image and the only one that runs at build time.

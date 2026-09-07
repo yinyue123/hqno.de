@@ -18,7 +18,7 @@ you is worth exactly as much as your trust in them.
 Everything on this page starts from one image reference:
 
 ```
-ghcr.io/yinyue123/nodequality
+ghcr.io/yinyue123/hqnode:benchmark
 ```
 
 Reinstall a container onto it and the benchmark runs on its own, once, on the
@@ -40,7 +40,7 @@ one that takes an address is *an image of my own*:
 
 <FigScreen :tabs="['An image of my own', 'The market', 'An archive on this host']" :lines="[
   [{ t: 'Wipes /. /data is a separate disk and is kept.', tone: 'mute' }],
-  ['Image reference', { f: 'ghcr.io/yinyue123/nodequality', fw: 300 }],
+  ['Image reference', { f: 'ghcr.io/yinyue123/hqnode:benchmark', fw: 300 }],
   [{ t: 'What it downloads counts against this container’s traffic — 42 MB.', tone: 'mute', face: 'small' }],
   ['Type bench to confirm', { f: 'bench' }],
   { align: 'right', cols: [{ b: 'Cancel' }, { b: 'Reinstall, keep /data' }] },
@@ -61,7 +61,7 @@ change.
 operation typed from whatever the container is right now:
 
 ```
-reinstall ref ghcr.io/yinyue123/nodequality
+reinstall ref ghcr.io/yinyue123/hqnode:benchmark
 ```
 
 Your SSH session drops while the container is rebuilt. That is the reinstall
@@ -100,90 +100,75 @@ The run happens **once**. It is keyed on whether a page has been published, so
 a run that dies halfway is retried at the next boot, and a run that worked is
 never repeated — restarting the container does not re-benchmark it.
 
-## 4. The half of the page that is yours
+## 4. Everything else is one screen
 
-<FigRows :head="['on the page', 'comes from']" :rows="[
-  [{ t: 'CPU, memory, disk, IP standing, speeds, routes', tone: 'mute' }, { t: 'the machine — measured, not editable', tone: 'strong' }],
-  [{ t: 'what the node is called', tone: 'mute' }, { t: 'you', tone: 'accent' }],
-  [{ t: 'the plans, and what each one costs', tone: 'mute' }, { t: 'you', tone: 'accent' }],
-  [{ t: 'how somebody reaches you to buy it', tone: 'mute' }, { t: 'you', tone: 'accent' }],
-]" />
-
-Your half is one file, and it is already there after the first run:
+SSH into the container and you do not get a shell. You get this:
 
 ```
-/data/nodequality/shop.json
+  节点体检报告
+
+  页面   https://shop.hqno.de/r/NcwHgTrkNz
+  语言   ?lang=en · fr · de
+  状态   已发布
+
+  可以改的
+   1  节点名称   洛杉矶 CN2 GIA
+   2  页面标签   AS25820 · 洛杉矶 · 三网直连
+   3  套餐价格   入门 · 1C / 1 GB ¥49 · 标准 · 2C / 2 GB ¥89
+   4  联系方式   @yourname · sales@example.com
+   5  售前交付   每日 10:00-22:00 CST · 下单后 5 分钟
+   6  页面备注   页面自带的默认文案
+
+  做点什么
+   p  保存并发布（后台跑，关掉 SSH 也不影响）
+   b  重新跑一遍测试
+   s  开个 shell
+   q  退出
 ```
 
-Edit it with anything — `vi` in the container, or over SFTP from your own
-machine. It arrives filled in with a worked example, so the shape below is
-already in front of you; the parts worth knowing are these.
+Type a number and it asks you one question at a time, showing what is there
+now. **Type a new value to change it; press Enter to keep what is there.**
+That rule is the whole thing, and it is the same at every prompt.
 
-**A plan, and its prices.** Prices are **numbers**, not strings. Write `45`,
-not `"45"` — the yearly saving is worked out from them, so `450` against
-12×45 prints "save 17%" in every language on its own.
+Three details it handles so you do not have to:
 
-```json
-{
-  "shop": {
-    "title": { "zh": "洛杉矶 CN2 GIA", "en": "Los Angeles CN2 GIA" },
-    "plans": [
-      {
-        "name": { "zh": "标准 · 1C / 1 GB", "en": "Standard · 1C / 1 GB" },
-        "currency": "¥", "monthly": 45, "yearly": 450,
-        "rows": [
-          { "k": "CPU", "v": "1 vCPU" },
-          { "k": "@k_ram", "v": "1 GB" },
-          { "k": "@k_traffic", "v": "100 GB" }
-        ]
-      }
-    ],
-    "contacts": [ { "k": "@k_tg", "v": "@@yourname" } ]
-  }
-}
-```
+| | |
+|---|---|
+| **Prices are numbers** | Type `49`. The yearly saving is worked out from the two numbers and printed in all four languages on its own |
+| **Four languages off one answer** | It asks for Chinese and English. French and German fall back to English, then to Chinese |
+| **`@` is a lookup** | A Telegram handle typed `@yourname` is stored escaped, so it keeps its sign instead of being read as a key |
 
-**Four languages, and you write one.** The page renders in zh · en · fr · de
-and the reader picks. Three kinds of text behave differently, and the
-difference is the whole trick:
+Every answer is written to disk the moment you give it. There is no save step
+to forget, and closing the terminal loses nothing you have already typed.
 
-| In your file | Renders as | Use it for |
-|---|---|---|
-| `"@k_ram"` | 内存 / Memory / Mémoire / Speicher | anything with a standard name |
-| `{"zh": "…", "en": "…"}` | your own wording, per language | the things no table can know |
-| `"1 GB"` | `1 GB`, everywhere | numbers, units, AS names |
+The file behind it is still `/data/nodequality/shop.json`, still yours, and
+still editable by hand over SFTP if you would rather — but nothing on this
+page asks you to.
 
-So a row is written once, and a French reader sees **Mémoire — 1 GB** without
-you writing a word of French. For the parts only you can name — what the
-machine is called, what a plan is called — give the object form; a missing
-language falls back to English, then to Chinese, then to whatever is there.
+## 5. Publishing, which does not need you to wait
 
-Two details that bite:
+`p` rebuilds the page and publishes it **in the background**. The benchmark
+does not re-run, and the URL does not change: the key in `/data` is what
+proves the page is yours to replace, so the second publish lands on the first
+one rather than making a second page.
 
-- **`@` starts a lookup.** A Telegram handle written `"@yourname"` is read as
-  a key and comes out as `yourname`, sign and all gone. Write `"@@yourname"` —
-  a doubled `@` is a literal one.
-- **A key that does not exist** prints as itself without the `@`, which is how
-  you spot a typo: if the page says `k_rma`, you meant `@k_ram`.
-
-## 5. Publishing your edits, on the same URL
-
-Two commands, both quick, **neither of which re-runs the benchmark**:
+Publishing costs a few seconds to a minute of one core — the endpoint charges
+proof of work instead of asking you for an account. It runs detached from your
+SSH session, so **you can close the terminal**. Log back in and the screen
+says where it got to:
 
 ```
-nq-shop build      # fold your file back into the page
-nq-shop publish    # replace the published page
+  状态   发布中 · 算工作量 75%（已试 3145728 次）· 12 秒前开始
 ```
 
-The URL does not change. The key in `/data` is what proves the page is yours
-to replace, so the second publish lands on the first one rather than making a
-second page.
+and when it is done, the URL is at the top of the screen again.
 
-<FigRows :head="['what you did', 'what it costs', 'the URL']" :rows="[
-  [{ t: 'changed a price or a name', tone: 'mute' }, { t: 'seconds — build, publish', tone: 'ok' }, { t: 'the same', tone: 'ok' }],
-  [{ t: 'want the machine measured again', tone: 'mute' }, { t: 'nq-shop run, 20–50 min and a few GB', tone: 'mute' }, { t: 'the same', tone: 'ok' }],
-  [{ t: 'lost /data/nodequality/credentials.json', tone: 'mute' }, { t: 'nothing can replace that page', tone: 'bad' }, { t: 'a new one, next time', tone: 'bad' }],
-]" />
+::: tip Then turn the container off
+Nothing needs to keep running once the page is published — the page lives on
+the endpoint, not on your machine. Stop the container and it costs you no CPU
+and no memory. Start it again whenever you want to change a price: `/data`
+still holds your answers, your measurements and the key to the page.
+:::
 
 ::: warning The key is the page
 `/data/nodequality/credentials.json` is the only thing that can ever replace
@@ -192,22 +177,17 @@ touch it. It survives reinstalls because it is in `/data`; it does not survive
 deleting the container. Back it up if the page matters.
 :::
 
-Send the language you want with a query, or leave it and let the browser
-decide:
+## 6. If you would rather type commands
 
-```
-https://shop.hqno.de/r/xxxxxxxxxx?lang=en
-```
-
-## 6. Running one part again
-
-Every step is a command of its own, and `--skip` takes a comma list of `ip`,
-`hw`, `net`, `bench`, `route`:
+The wizard is a front end to one program, and every step of it is a command
+of its own. `s` from the menu gives you a shell, and so does
+`hqnode exec <name> sh`:
 
 | | |
 |---|---|
-| `nq-shop bench` | the CPU numbers, about two minutes |
-| `nq-shop route` | the nine backhaul routes |
+| `nq-shop status` | what a publish started earlier is doing |
+| `nq-shop bench` | the CPU numbers again, about two minutes |
+| `nq-shop route` | the nine backhaul routes again |
 | `nq-shop collect --skip net` | everything except the gigabytes |
 | `nq-shop build` | rebuild the page from what is on disk |
 | `nq-shop publish` | push it, same URL |
@@ -216,8 +196,8 @@ Every step is a command of its own, and `--skip` takes a comma list of `ip`,
 If you are driving this from the **host** rather than from a shell inside the
 container, `hqnode exec` returns `context deadline exceeded` after a minute
 and blames the agent. The command keeps running inside the container; you just
-lose its output. Start long ones detached, or run them from a shell in the
-container, where there is no such limit.
+lose its output. Start long ones detached, or use the wizard, which starts
+everything long in the background on purpose.
 :::
 
 ## 7. What the page will not tell you

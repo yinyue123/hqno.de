@@ -8,9 +8,9 @@ name: nodequality image
 # twenty minutes of QEMU for a change to a price list. Run it from the Actions
 # tab when the recipe, the runner or the solver actually changed.
 #
-# The package is created private on the first push. Make it public once, by
-# hand, at Settings → Packages → nodequality → Change visibility, or every
-# `podman pull` of it asks for a login.
+# It publishes to ghcr.io/<owner>/hqnode:benchmark — a tag on the same package
+# the system images use, not a package of its own. That package is already
+# public, so there is no visibility switch to remember here any more.
 
 on:
   workflow_dispatch:
@@ -28,7 +28,7 @@ on:
         required: false
       tag:
         description: 'Tag to publish alongside the run number'
-        default: 'latest'
+        default: 'benchmark'
         required: false
 
 jobs:
@@ -72,9 +72,17 @@ jobs:
           push: true
           provenance: false
           sbom: false
+          # A tag on the hqnode package rather than a package of its own.
+          # `nodequality` was a second thing in the registry for people to
+          # find, with its own visibility switch to forget to flip, for one
+          # image that belongs to the same product as every other image this
+          # repository publishes. The seller pastes one address either way,
+          # and this is the address that is already theirs:
+          #
+          #   ghcr.io/<owner>/hqnode:benchmark
           tags: |
-            ghcr.io/${{ github.repository_owner }}/nodequality:${{ inputs.tag }}
-            ghcr.io/${{ github.repository_owner }}/nodequality:${{ github.run_number }}
+            ghcr.io/${{ github.repository_owner }}/hqnode:${{ inputs.tag }}
+            ghcr.io/${{ github.repository_owner }}/hqnode:benchmark-${{ github.run_number }}
 
       - name: say what was published
         run: |
@@ -87,9 +95,10 @@ jobs:
             echo "| platforms | \`${{ inputs.platforms }}\` |"
             echo "| digest | \`${{ steps.build.outputs.digest }}\` |"
             echo
+            echo "Reinstall a container onto it — the panel's Reinstall dialog,"
+            echo "or from a shell inside the container:"
+            echo
             echo '```'
-            echo 'podman run --rm -it -v nq:/data \'
-            echo "  ghcr.io/${{ github.repository_owner }}/nodequality:${{ inputs.tag }} \\"
-            echo '  run --endpoint https://your-worker.example.workers.dev'
+            echo "reinstall ref ghcr.io/${{ github.repository_owner }}/hqnode:${{ inputs.tag }}"
             echo '```'
           } >> $GITHUB_STEP_SUMMARY

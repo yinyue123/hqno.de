@@ -9,6 +9,7 @@
 #   nq-shop build        fold raw/ and shop.json into page.json
 #   nq-shop publish      pay the proof of work and post page.json
 #   nq-shop show         print the path of every file it keeps
+#   nq-shop status       what a publish started earlier is doing
 #
 # Everything it keeps lives under $NQ_HOME (default /data/nodequality), which
 # on an hqnode container is the directory a reinstall does not erase:
@@ -79,7 +80,7 @@ skipping() { [[ ",$SKIP," == *",$1,"* ]]; }
 CMD=""
 while [[ $# -gt 0 ]]; do
 	case "$1" in
-	run|init|collect|bench|route|build|publish|show) CMD="$1"; shift ;;
+	run|init|collect|bench|route|build|publish|show|status) CMD="$1"; shift ;;
 	--endpoint)   NQ_ENDPOINT="$2"; shift 2 ;;
 	--home)       NQ_HOME="$2"; shift 2 ;;
 	--lang)       NQ_LANG="$2"; shift 2 ;;
@@ -97,6 +98,13 @@ RAW="$NQ_HOME/raw"
 SHOP="$NQ_HOME/shop.json"
 PAGE="$NQ_HOME/page.json"
 CREDS="$NQ_HOME/credentials.json"
+# What a publish is doing, written as it does it. A publish is started from
+# the wizard and then outlives the SSH session that started it — the seller
+# closes the terminal and comes back an hour later — so the run has to leave
+# a record of itself somewhere that survives, and $NQ_HOME is the directory
+# that does. `nq-shop status` reads these two and nothing else.
+STATE="$NQ_HOME/publish.state"
+POWLOG="$NQ_HOME/pow.progress"
 
 # ---------------------------------------------------------------------- init
 
@@ -419,6 +427,13 @@ cmd_publish() {
 	[[ -s "$PAGE" ]] || die "no $PAGE — run 'nq-shop build' first"
 	NQ_ENDPOINT="${NQ_ENDPOINT%/}"
 
+	# Every exit from here on is recorded, including the ones `die` takes:
+	# a publish nobody is watching that fails silently is a page that never
+	# appears and a wizard that says "running" for ever.
+	local began; began=$(date +%s)
+	state_set "status=running" "phase=challenge" "started=$began"
+	trap 'state_set "status=failed" "why=${NQ_WHY:-interrupted}" "started=$began"' ERR INT TERM
+
 	local body hash
 	body="$(canonical "$PAGE")"
 	hash="$(printf '%s' "$body" | sha256sum | cut -d' ' -f1)"
@@ -436,8 +451,13 @@ cmd_publish() {
 	say "solving $d bits of proof of work"
 	local nonce start
 	start=$(date +%s)
-	nonce="$(nq-pow "$c" "$d" "$POW_LIMIT")" \
-		|| die "could not solve $d bits within ${POW_LIMIT}s"
+	state_set "status=running" "phase=pow" "bits=$d" "started=$began"
+	# nq-pow counts on stderr, one line per million tries. It goes to a file
+	# rather than through a pipe because the reader is `nq-shop status` in
+	# another process, minutes later, and possibly never.
+	: > "$POWLOG"
+	nonce="$(nq-pow "$c" "$d" "$POW_LIMIT" 2>"$POWLOG")" \
+		|| { NQ_WHY="could not solve $d bits within ${POW_LIMIT}s"; die "$NQ_WHY"; }
 	say "solved in $(( $(date +%s) - start ))s (nonce $nonce)"
 
 	local id="" token=""
@@ -463,6 +483,7 @@ cmd_publish() {
 	fi
 
 	say "publishing"
+	state_set "status=running" "phase=posting" "bits=$d" "started=$began"
 	local answer code
 	answer="$(curl -sS --max-time 60 -w '\n%{http_code}' -X POST \
 		-H 'Content-Type: application/json' \
@@ -473,7 +494,8 @@ cmd_publish() {
 	answer="$(sed '$d' <<<"$answer")"
 
 	if [[ "$code" != "200" && "$code" != "201" ]]; then
-		die "the endpoint refused it ($code): $(jq -r '.error // .' <<<"$answer" 2>/dev/null || echo "$answer")"
+		NQ_WHY="the endpoint refused it ($code): $(jq -r '.error // .' <<<"$answer" 2>/dev/null || echo "$answer")"
+		die "$NQ_WHY"
 	fi
 
 	# The token comes back exactly once, on the run that created the page.
@@ -484,11 +506,66 @@ cmd_publish() {
 		say "saved the id and token to $CREDS — back that file up"
 	fi
 
+	trap - ERR INT TERM
+	state_set "status=done" "url=$(jq -r .url <<<"$answer")" "started=$began" \
+	          "finished=$(date +%s)"
 	printf '\n\033[1;32m%s\033[0m\n' "$(jq -r .url <<<"$answer")"
 	printf '%s\n' "$(jq -r '"edit it as " + .json_url' <<<"$answer")" >&2
 }
 
 # ---------------------------------------------------------------------- show
+
+# ------------------------------------------------------------------ state
+
+# One `key=value` per line, rewritten whole. Small enough that a reader never
+# sees half of it, which a growing file would not be.
+state_set() {
+	local tmp="$STATE.tmp"
+	printf '%s\n' "$@" > "$tmp" && mv "$tmp" "$STATE"
+}
+
+# The percentage is of the *expected* work, not of the answer: a search for
+# 22 leading zero bits has no progress, only an expectation of 2^22 tries, and
+# a run can pass 100% of that and still be looking. It is capped at 99 so it
+# never claims to be finished, and it is the only honest number available.
+cmd_status() {
+	if [[ ! -s "$STATE" ]]; then
+		if [[ -s "$CREDS" ]]; then
+			printf 'published  %s\n' "$(jq -r '.url // .id' "$CREDS")"
+		else
+			printf 'idle\n'
+		fi
+		return 0
+	fi
+	local status='' phase='' bits='' started='' url='' why='' tries=0
+	# shellcheck disable=SC1090
+	while IFS='=' read -r k v; do
+		case "$k" in
+			status) status="$v" ;; phase) phase="$v" ;; bits) bits="$v" ;;
+			started) started="$v" ;; url) url="$v" ;; why) why="$v" ;;
+		esac
+	done < "$STATE"
+
+	case "$status" in
+	running)
+		local pct='' expected=0
+		if [[ "$phase" == "pow" && -s "$POWLOG" ]]; then
+			tries="$(sed -n 's/^tries \([0-9]*\)$/\1/p' "$POWLOG" | tail -1)"
+			tries="${tries:-0}"
+			expected=$(( 1 << ${bits:-22} ))
+			pct=$(( 100 * tries / expected ))
+			(( pct > 99 )) && pct=99
+		fi
+		printf 'running    %s%s\n' "$phase" \
+			"$([[ -n "$pct" ]] && printf ' · %s%% of the expected work (%s tries)' "$pct" "$tries")"
+		[[ -n "$started" ]] && printf 'since      %ss ago\n' "$(( $(date +%s) - started ))"
+		;;
+	done)   printf 'published  %s\n' "$url" ;;
+	failed) printf 'failed     %s\n' "$why" ;;
+	*)      printf '%s\n' "$status" ;;
+	esac
+	return 0
+}
 
 cmd_show() {
 	printf 'home        %s\n' "$NQ_HOME"
@@ -530,6 +607,7 @@ route)   cmd_route ;;
 build)   cmd_build ;;
 publish) cmd_publish ;;
 show)    cmd_show ;;
+status)  cmd_status ;;
 run)
 	[[ -n "$NQ_ENDPOINT" ]] || die "no endpoint — pass --endpoint https://… or set NQ_ENDPOINT"
 	cmd_init

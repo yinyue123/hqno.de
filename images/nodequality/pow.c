@@ -14,6 +14,12 @@
  *   nq-pow <challenge> <bits> [max-seconds]
  *
  * prints the nonce on stdout, or exits 1 having found nothing in time.
+ *
+ * Every million tries it also prints `tries <n>` on stderr. A publish runs in
+ * the background now — the wizard starts it and the seller closes the SSH
+ * session — so something has to be able to say how far along it is, and the
+ * only honest measure of a search with no progress is how much of the
+ * expected work has been spent. stdout stays the nonce and nothing else.
  */
 
 #include <stdio.h>
@@ -129,10 +135,17 @@ int main(int argc, char **argv)
 
 		/* Checking the clock every hash would cost more than hashing.
 		 * A million tries is a tenth of a second. */
-		if ((nonce & 0xFFFFF) == 0xFFFFF && time(NULL) - start > limit) {
-			fprintf(stderr, "nq-pow: gave up after %lds at %llu tries\n",
-				(long)(time(NULL) - start), (unsigned long long)nonce);
-			return 1;
+		if ((nonce & 0xFFFFF) == 0xFFFFF) {
+			/* Unbuffered on purpose: whoever is watching this is
+			 * watching a file the shell redirected it into, and a
+			 * 4 KB buffer would hold ten seconds of progress. */
+			fprintf(stderr, "tries %llu\n", (unsigned long long)nonce + 1);
+			fflush(stderr);
+			if (time(NULL) - start > limit) {
+				fprintf(stderr, "nq-pow: gave up after %lds at %llu tries\n",
+					(long)(time(NULL) - start), (unsigned long long)nonce);
+				return 1;
+			}
 		}
 	}
 }
