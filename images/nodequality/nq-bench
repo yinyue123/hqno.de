@@ -1,0 +1,165 @@
+#!/bin/bash
+# nq-bench — the CPU numbers, since Geekbench is gone.
+#
+#   nq-bench [--out FILE] [--quick]
+#
+# Writes one JSON object to --out (default stdout). Everything it runs is in
+# Alpine's repositories and links against musl, which is the whole reason this
+# file exists: Geekbench 5 is a 129 MB glibc binary and it was the only thing
+# keeping the image on Debian.
+#
+# What is lost with it is worth stating plainly, because no tool here replaces
+# it. A Geekbench run publishes to browser.geekbench.com and the page linked
+# that URL, so a buyer could check the number against the machine. Nothing
+# below has a public result page: these are scores the seller's own container
+# produced and nobody else can verify. They are comparable between two pages
+# made by this image and to nothing else in the world.
+#
+# Four tools, four different things, so that one bad number is visible against
+# the others rather than being the whole picture:
+#
+#   sysbench     integer/prime work, one thread and then all of them. The
+#                single/multi pair is what says whether the cores are real.
+#   7-Zip        LZMA compress and decompress, which leans on memory latency
+#                and branch prediction rather than raw ALU throughput.
+#   openssl      AES-256-GCM at 16 KB blocks. On anything since Westmere this
+#                measures AES-NI, so it is near-useless as a CPU comparison
+#                and very useful for "will TLS on this box be cheap".
+#   stress-ng    matrixprod bogo-ops, floating point and cache.
+
+set -uo pipefail
+
+OUT=""
+QUICK=0
+SEVENZIP_PASSES=3
+SYSBENCH_TIME=8
+STRESSNG_TIME=8
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--out)   OUT="$2"; shift 2 ;;
+	--quick) QUICK=1; shift ;;
+	-h|--help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+	*) echo "nq-bench: unknown argument: $1" >&2; exit 2 ;;
+	esac
+done
+
+if [[ $QUICK -eq 1 ]]; then
+	SEVENZIP_PASSES=1
+	SYSBENCH_TIME=3
+	STRESSNG_TIME=3
+fi
+
+say() { printf '\033[1;36m%s\033[0m\n' "$*" >&2; }
+
+# nproc counts the host's CPUs, not the container's share. cpu.max is the
+# number the cgroup will actually let through, and on a sold container that is
+# the number the buyer is paying for — a multi-thread score against nproc on a
+# 32-core host with 1 core sold is a score for work that never ran.
+cores() {
+	local q p
+	if [[ -r /sys/fs/cgroup/cpu.max ]]; then
+		read -r q p < /sys/fs/cgroup/cpu.max
+		if [[ "$q" != "max" ]] && [[ "${p:-0}" -gt 0 ]]; then
+			# Round up: 1.5 cores can still run 2 threads.
+			echo $(( (q + p - 1) / p ))
+			return
+		fi
+	fi
+	nproc 2>/dev/null || echo 1
+}
+
+# `sysbench cpu` prints "events per second: 380.85". Old sysbench wants
+# --num-threads and --max-time instead; both spellings are tried because the
+# 1.0 and 0.4 command lines are not compatible and Alpine has shipped both.
+sysbench_eps() {
+	local threads="$1" out
+	out="$(sysbench cpu --threads="$threads" --time="$SYSBENCH_TIME" --cpu-max-prime=10000 run 2>/dev/null)" \
+		|| out=""
+	[[ -z "$out" ]] && out="$(sysbench --test=cpu --num-threads="$threads" --max-time="$SYSBENCH_TIME" --cpu-max-prime=10000 run 2>/dev/null)"
+	awk -F: '/events per second/ { gsub(/ /, "", $2); print $2; exit }' <<<"$out"
+}
+
+# 7-Zip's table ends with
+#   Avr:   1334  96  1461  1397  |  19925  96  1808  1737
+#   Tot:         96  1634  1567
+#
+# Each half is speed, CPU usage, R/U, Rating — so the number wanted is the
+# *fourth* of each group, not the third. Compression is $5 and decompression
+# is $10, which is $NF; taking $9 gets R/U, which is a rating per unit of CPU
+# and reads plausibly while being the wrong quantity. The `Tot:` line has no
+# speed column, so its rating is $NF of four fields — that one is what gets
+# quoted as "7-Zip MIPS".
+#
+# -mmt is set explicitly so the run matches the core count above rather than
+# the host's.
+sevenzip() {
+	local threads="$1" out
+	out="$(7z b "$SEVENZIP_PASSES" -mmt"$threads" 2>/dev/null)" || return 1
+	awk '
+		/^Avr:/ { comp = $5; deco = $NF }
+		/^Tot:/ { tot = $NF }
+		END { if (tot != "") printf "%s %s %s\n", comp, deco, tot }
+	' <<<"$out"
+}
+
+# "AES-256-GCM  6166.00k  ...  106801.83k" — the last column is the 16 KB
+# block, in 1000s of bytes per second, so the k is dropped and the figure
+# multiplied by 1000 to get bytes.
+openssl_aes() {
+	local out
+	out="$(openssl speed -elapsed -evp aes-256-gcm 2>/dev/null)" || return 1
+	awk '/^AES-256-GCM/ { v = $NF; sub(/k$/, "", v); printf "%.0f\n", v * 1000; exit }' <<<"$out"
+}
+
+# "stress-ng: metrc: [5] cpu  1693  5.01  4.67  0.05  337.99  358.79"
+# The second-to-last field is bogo ops/s measured against wall clock, which is
+# the honest one on a container sharing a core.
+stressng_bogo() {
+	local threads="$1" out
+	out="$(stress-ng --cpu "$threads" --cpu-method matrixprod \
+		--timeout "${STRESSNG_TIME}s" --metrics-brief 2>&1)" || return 1
+	awk '/metrc.*\] cpu / { print $(NF-1); exit }' <<<"$out"
+}
+
+num() { [[ -n "${1:-}" ]] && [[ "$1" =~ ^[0-9.]+$ ]] && echo "$1" || echo "null"; }
+
+C="$(cores)"
+say "nq-bench: $C core(s) to measure"
+
+say "  sysbench, one thread"
+S1="$(sysbench_eps 1)"
+if [[ "$C" -gt 1 ]]; then
+	say "  sysbench, $C threads"
+	SN="$(sysbench_eps "$C")"
+else
+	SN="$S1"
+fi
+
+say "  7-Zip"
+read -r Z_COMP Z_DECO Z_TOT <<<"$(sevenzip "$C")"
+
+say "  openssl AES-256-GCM"
+AES="$(openssl_aes)"
+
+say "  stress-ng matrixprod"
+BOGO="$(stressng_bogo "$C")"
+
+jq -n \
+	--argjson cores "$C" \
+	--argjson single "$(num "$S1")" \
+	--argjson multi "$(num "$SN")" \
+	--argjson zcomp "$(num "${Z_COMP:-}")" \
+	--argjson zdeco "$(num "${Z_DECO:-}")" \
+	--argjson ztot "$(num "${Z_TOT:-}")" \
+	--argjson aes "$(num "$AES")" \
+	--argjson bogo "$(num "$BOGO")" \
+	'{ cores: $cores,
+	   sysbench: { single: $single, multi: $multi },
+	   sevenzip: { compress: $zcomp, decompress: $zdeco, total: $ztot },
+	   openssl:  { aes256gcm_bps: $aes },
+	   stressng: { method: "matrixprod", bogo_ops_per_sec: $bogo } }' \
+	> "${OUT:-/dev/stdout}"
+
+[[ -n "$OUT" ]] && say "wrote $OUT"
+exit 0

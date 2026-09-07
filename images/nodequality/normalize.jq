@@ -171,7 +171,7 @@ $ip[0] as $ip | $hw[0] as $hw | $net[0] as $net | $shop[0] as $shop
 
 | ($ip.Info // {}) as $info
 | ($hw.CPU // {}) as $cpu
-| (($hw.CPU // {}).benchmarks.geekbench5 // {}) as $gb
+| ($bench[0] // {}) as $bench
 | ($hw.Memory // {}) as $mem
 | ($hw.Disk // {}) as $disk
 | (($disk.benchmarks // {}).fio // {}) as $fio
@@ -227,22 +227,36 @@ $ip[0] as $ip | $hw[0] as $hw | $net[0] as $net | $shop[0] as $shop
     # translated label. The memory numbers are the hardware check's own
     # measurement, not sysbench's, and the sub-line says so rather than
     # crediting the wrong tool.
-    # Four tiles, and the design's are Geekbench's when there are any. The
-    # image ships geekbench5 now, so the sysbench pair is the fallback for a
-    # machine where it did not run — an arm64 box, or --no-geekbench — rather
-    # than the only thing on offer.
+    # Six tiles, from nq-bench rather than from Hardware.sh. Hardware.sh
+    # knows two CPU benchmarks and one of them was Geekbench, which is no
+    # longer in the image; its sysbench pair is kept as the fallback for a
+    # page built from a run that predates nq-bench, or one where it was
+    # skipped.
+    #
+    # Four different tools rather than one number, so that a machine which is
+    # fast at exactly one thing cannot look fast at everything. AES is the
+    # one to read sceptically: on any CPU since Westmere it measures AES-NI
+    # and says almost nothing about the core.
     cpu: [
-      (if ($gb.single // null) != null then
-        { label: "@l_gb_s", value: ($gb.single | tostring), sub: "Geekbench 5" } else empty end),
-      (if ($gb.multi // null) != null then
-        { label: "@l_gb_m", value: ($gb.multi | tostring),
-          sub: (if ($cpu.topology.threads // 1) <= 1 then "@v_singlecore"
-                else "\($cpu.topology.threads) threads" end) } else empty end),
-      (if ($gb.single // null) == null and ($cpu.benchmarks.sysbench.single // null) != null then
-        { label: "SYSBENCH 1-THREAD", value: ($cpu.benchmarks.sysbench.single | round | tostring), sub: "events/s" } else empty end),
-      (if ($gb.multi // null) == null and ($cpu.benchmarks.sysbench.multi // null) != null then
-        { label: "SYSBENCH \($cpu.topology.threads // 1)-THREAD", value: ($cpu.benchmarks.sysbench.multi | round | tostring),
-          sub: "events/s" } else empty end),
+      (if ($bench.sysbench.single // null) != null then
+        { label: "@l_cpu_s", value: ($bench.sysbench.single | round | tostring), sub: "SysBench events/s" } else empty end),
+      (if ($bench.sysbench.multi // null) != null then
+        { label: "@l_cpu_m", value: ($bench.sysbench.multi | round | tostring),
+          sub: (if ($bench.cores // 1) <= 1 then "@v_singlecore"
+                else "\($bench.cores) @{v_threads}" end) } else empty end),
+      (if ($bench.sevenzip.total // null) != null then
+        { label: "@l_7z", value: ($bench.sevenzip.total | round | tostring),
+          sub: (if ($bench.sevenzip.compress // null) == null then "7-Zip MIPS"
+                else "7-Zip \($bench.sevenzip.compress | round) / \($bench.sevenzip.decompress | round)" end) } else empty end),
+      (if ($bench.openssl.aes256gcm_bps // null) != null then
+        { label: "@l_aes", value: "\(($bench.openssl.aes256gcm_bps / 1000000) | round) MB/s",
+          sub: "AES-256-GCM 16K" } else empty end),
+      (if ($bench.stressng.bogo_ops_per_sec // null) != null then
+        { label: "@l_bogo", value: ($bench.stressng.bogo_ops_per_sec | round | tostring),
+          sub: "stress-ng matrixprod" } else empty end),
+      # Fallbacks, only when nq-bench produced nothing at all.
+      (if ($bench.sysbench.single // null) == null and ($cpu.benchmarks.sysbench.single // null) != null then
+        { label: "@l_cpu_s", value: ($cpu.benchmarks.sysbench.single | round | tostring), sub: "SysBench events/s" } else empty end),
       (if ($mem.benchmarks.read_MBps // null) != null then
         { label: "@l_mem_r", value: "\($mem.benchmarks.read_MBps | round) MB/s",
           sub: (if ($mem.benchmarks.latency_ns // null) == null then "HardwareQuality" else "\($mem.benchmarks.latency_ns) ns" end) } else empty end),
@@ -250,13 +264,15 @@ $ip[0] as $ip | $hw[0] as $hw | $net[0] as $net | $shop[0] as $shop
         { label: "@l_mem_w", value: "\($mem.benchmarks.write_MBps | round) MB/s", sub: "HardwareQuality" } else empty end)
     ],
 
-    # The link the design calls 原始结果 ↗. Geekbench uploads its own run to
-    # get a score at all, and this is the URL it hands back.
-    geekbench_url: (($gb.url // "") | clean),
-
-    # The sub-heading names the tools the tiles actually came from.
-    perf_note: (if ($gb.single // null) != null
-                then "Geekbench 5 · SysBench · fio" else "SysBench · fio" end),
+    # The sub-heading names the tools the tiles actually came from. There is
+    # no result URL any more: Geekbench published every run to
+    # browser.geekbench.com and the page linked it, which was the only number
+    # on the whole page a buyer could check against the machine. Nothing in
+    # nq-bench has an equivalent, and pretending otherwise would be worse than
+    # the gap.
+    perf_note: (if ($bench.sysbench.single // null) != null
+                then "SysBench · 7-Zip · OpenSSL · stress-ng · fio"
+                else "SysBench · fio" end),
 
     # One line per block size and queue depth the check actually measured,
     # read against write, the way the design reads it.
@@ -363,12 +379,13 @@ $ip[0] as $ip | $hw[0] as $hw | $net[0] as $net | $shop[0] as $shop
                            else "\($bgp.NeighborActive) / \($bgp.NeighborinTotal) · \($bgp.IPActive) / \($bgp.IPinTotal)" end))
     ],
 
-    # Symmetric NAT is the one line here a buyer might care about, so it is the
-    # one that gets a tone rather than being another grey row.
+    # No NAT row. `stun` is not in the image any more, and the row it filled
+    # was measured through pasta — the STUN request left from the machine's
+    # public address, so "Open Without NAT" was true of the host and printed
+    # as a fact about the container, whose reachability is decided entirely by
+    # which ports the host published. A buyer reading it would conclude they
+    # could bind any port and receive inbound traffic. They cannot.
     local: [
-      row("@k_nat";   ([($local.NATDescribe | clean), ($local.Mapping | clean)]
-                       | map(select(. != null)) | join(" · ") | clean);
-                      (if ($local.NATDescribe // "") == "Symmetric" then "bad" else "ok" end)),
       row("@k_cc";    $local.TCPCongestionControl),
       row("@k_qdisc"; $local.QueueDiscipline),
       row("@k_rmem";  $local.TCPReceiveBuffer; "sub"),

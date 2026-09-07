@@ -40,7 +40,7 @@ to poke at `raw/` after a run.
 Built by hand from the Actions tab — **nodequality image** — not on every
 push. See [`../../shop/`](../../shop) for the endpoint it publishes to.
 
-## Why Debian, and no chroot
+## Why Alpine, and no chroot
 
 NodeQuality's whole shape is a sandbox: it fetches a Debian rootfs, chroots
 into it, runs the checks inside and deletes it, so a benchmark leaves nothing
@@ -50,40 +50,74 @@ production box.
 A container already is that sandbox. There is no host to keep clean, the
 container is deleted when it exits, and the chroot NodeQuality performs needs
 `mount -t proc`, which wants `CAP_SYS_ADMIN` — a capability an app container
-does not get. So the rootfs is dropped, but the *distribution* is kept, and
-that second half was where an earlier Alpine base went wrong.
+does not get. So the rootfs is dropped and the distribution is ours to choose.
 
-The checks reach for four prebuilt binaries, and a check that cannot find one
-does not fail — it fills the section with `NoData` and carries on. Two of the
-four are glibc:
+It was Debian for a while, for one reason. The checks reach for four prebuilt
+binaries, and a check that cannot find one does not fail — it fills the
+section with `NoData` and carries on:
 
-| tool | what it is | what its absence cost |
-|---|---|---|
-| `geekbench5` | glibc, x86_64 | the CPU tiles. Segfaults under musl even with `gcompat` |
-| `speedtest` | Ookla's CLI | the domestic speedtest table |
-| `nexttrace` | static Go | the route matrix and every traceroute |
-| `stun` | `stun-client` | the NAT type row |
+| tool | what happened to it |
+|---|---|
+| `nexttrace` | static Go, and always worked on musl. What did not was Net.sh's auto-installer, which serves a glibc build. Baked in from the release asset, so the installer never runs. |
+| `speedtest` | Ookla ship an `x86_64-linux-musl` static build. Baked in. |
+| `stun` | **cut.** One row, the NAT type, and it measured the wrong machine — see below. |
+| `geekbench5` | **cut.** 129 MB, glibc-only, and the only real reason for Debian. |
 
-All four are in the image now. Baking them in is also what keeps a check from
-running `apt-get` in the middle of a benchmark, which would both skew the disk
-numbers and fail on a box with no package mirror.
+So the base is Alpine again, the image is roughly half the size, and the two
+that were cut are worth being explicit about.
 
-Privacy mode (`-p`) is worth being precise about, because it does two
-unrelated things and shipping Geekbench does not settle it. `-p` stops the
-script posting a copy of its report to a paste site, *and* it skips Geekbench
-— the gate is `mode_privacy -eq 0 && test_cpu_gb5` at the call site, not
-whether the binary is installed.
+### The NAT row, and why it went
 
-So `-p` is kept on three checks and dropped on the hardware one. The trade,
-stated plainly: a hardware report goes to Report.Check.Place, and it says what
-the page is about to publish anyway — CPU, memory, disk. The IP report, which
-carries the address, the risk scores and the blacklist standing, keeps `-p`
-and is never posted anywhere but your own endpoint. `--no-geekbench` puts `-p`
-back on all four and costs you the CPU tiles.
+`stun` filled one row. Alpine has no package for it and xykt's own fallback
+binary is glibc, so keeping it meant writing a replacement — the interface is
+small enough that this would have been easy: Net.sh runs `stun <host>` and
+greps one `0x…` bitfield out of stdout.
 
-Geekbench uploads its own result to `browser.geekbench.com` regardless — that
-is how it returns a score at all, and the link it gives back is the one the
-page shows as **原始结果 ↗**.
+It was not worth writing, because the row was misleading. The STUN request
+leaves a container through pasta and comes back from the *machine's* public
+address, so "Open Without NAT" was a fact about the host. What decides whether
+a buyer can receive inbound traffic is which ports the host published, and on
+a container with three published ports the answer is: those three. Measured on
+DMIT — a listener on port 9999 inside the container answers from inside and is
+unreachable from the internet.
+
+### The CPU tiles, and what was lost with Geekbench
+
+`nq-bench` runs four benchmarks that are all in Alpine's repositories and all
+link against musl:
+
+| | what it leans on |
+|---|---|
+| `sysbench` | integer and prime work, one thread and then all of them |
+| `7z b` | LZMA, which is memory latency and branch prediction more than ALU |
+| `openssl speed` | AES-256-GCM at 16 KB. On anything since Westmere this is AES-NI, so read it as "is TLS cheap here", not as a CPU score |
+| `stress-ng` | `matrixprod` bogo-ops, floating point and cache |
+
+Four numbers rather than one, so a machine that is fast at exactly one thing
+cannot look fast at everything.
+
+**What none of them replace is the URL.** Geekbench uploads every run to
+`browser.geekbench.com` — that is how it returns a score at all — and the page
+linked it as **原始结果 ↗**. It was the only figure on the whole page a buyer
+could check against the machine rather than take on trust. Nothing here has an
+equivalent, and the page no longer claims one. Scores from `nq-bench` are
+comparable between two pages made by this image and to nothing else.
+
+The thread count comes from `cpu.max`, not `nproc`: on a sold container the
+cgroup limit is what the buyer is paying for, and a multi-thread score against
+the host's core count would be a score for work that never ran.
+
+### Privacy mode is now on for all four checks
+
+`-p` does two unrelated things: it stops the script posting a copy of its
+report to a paste site, *and* it skips Geekbench — the gate is
+`mode_privacy -eq 0 && test_cpu_gb5` at the call site, not whether the binary
+is installed.
+
+The hardware check used to have `-p` dropped, which bought the Geekbench
+scores in exchange for sending a hardware report to Report.Check.Place. There
+is nothing left to buy with it, so `-p` is on everywhere and no report leaves
+the machine for anywhere but your own endpoint.
 
 `-F` (fast mode) is *not* used, and it is the obvious wrong turn here: it
 skips sysbench, the memory test and fio as well, which leaves the performance

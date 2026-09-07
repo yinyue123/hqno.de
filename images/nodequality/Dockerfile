@@ -4,29 +4,35 @@
 # price list into one document, pays the endpoint's proof of work and posts it.
 # What comes back is a URL.
 #
-# Debian, and for the same reason NodeQuality chroots into a Debian rootfs:
-# two of the four tools these checks reach for are prebuilt glibc binaries.
-# The earlier Alpine base cost the page four sections, because a check that
-# cannot find its tool does not fail — it prints NoData and carries on:
+# Alpine, after a spell on Debian. The four tools that drove that move were
+# each dealt with rather than worked around, because a check that cannot find
+# its tool does not fail — it prints NoData and the page arrives short:
 #
-#   nexttrace   the nine backhaul routes; without it every line reads
-#               "Unknown -> NoData" and the route sections are empty
-#   speedtest   Ookla's CLI, which is the domestic speedtest table
-#   stun        NAT type, in the local-policy card
-#   geekbench5  the CPU scores. This is the one that forces the base: it is
-#               glibc and segfaults under musl even with gcompat installed
+#   nexttrace   static Go. It always worked on musl; what did not was Net.sh's
+#               auto-installer, which serves a glibc build. Baked in below from
+#               the release asset instead, so the installer never runs.
+#   speedtest   Ookla ship an `x86_64-linux-musl` static build. Baked in.
+#   stun        cut. It filled one row, the NAT type, and that row measured the
+#               host rather than the container — see ../../../shop/dmit.test.md.
+#   geekbench5  cut. 129 MB, glibc-only, and the single reason for Debian. The
+#               CPU tiles come from nq-bench now: sysbench, 7-Zip, openssl and
+#               stress-ng, all in Alpine's repositories and all musl.
 #
-# All four are baked in below, along with everything the scripts would
-# otherwise `apt-get` mid-benchmark — which would both skew the disk numbers
-# and fail on a box with no package mirror. A run downloads test payloads and
+# What that costs is one thing and it is not small: Geekbench published to
+# browser.geekbench.com and the page linked the result, so a buyer could check
+# the score against the machine. Nothing in nq-bench has a public result page.
+# The numbers are comparable between two pages made by this image and to
 # nothing else.
+#
+# Everything the scripts would otherwise install mid-benchmark is baked in —
+# it would both skew the disk numbers and fail on a box with no package
+# mirror. A run downloads test payloads and nothing else.
 
-ARG BASE=debian:trixie-slim
+# 3.24 rather than 3.22: `7zip` is not packaged before it.
+ARG BASE=alpine:3.24
 
 FROM ${BASE} AS solver
-RUN apt-get update \
- && apt-get install -y --no-install-recommends gcc libc6-dev \
- && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache gcc musl-dev
 COPY pow.c /tmp/pow.c
 # Static, so the runtime stage carries one file and no toolchain.
 RUN gcc -O3 -static -o /nq-pow /tmp/pow.c && strip /nq-pow
@@ -34,19 +40,32 @@ RUN gcc -O3 -static -o /nq-pow /tmp/pow.c && strip /nq-pow
 FROM ${BASE}
 ARG TARGETARCH
 
-# Taken from what IP.sh, Net.sh and Hardware.sh each install when they find
-# themselves on Debian — including `stun`, which only Net.sh's Debian branch
-# asks for, and which is why the NAT row was blank.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-      bash coreutils util-linux procps grep sed gawk findutils \
-      tar unzip zip xz-utils \
+# What IP.sh, Net.sh and Hardware.sh each look for, by their Alpine names.
+# Two things they ask for are deliberately absent:
+#
+#   stun        the NAT row, and it was cut. It measured the *host* — the
+#               STUN request leaves through pasta and comes back from the
+#               machine's public address — while the page printed it as a
+#               fact about the container, whose reachability is decided by
+#               which ports the host published and nothing else. Alpine has
+#               no stun package and xykt's own fallback binary is glibc, so
+#               keeping it would have meant writing one to print a number
+#               that was misleading anyway.
+#   geekbench5  glibc-only, 129 MB, and the reason this image was Debian.
+#               The CPU tiles come from nq-bench now.
+#
+# Everything else here is what a check would otherwise `apk add` in the
+# middle of a benchmark, which would both skew the disk numbers and fail on
+# a box with no package mirror.
+RUN apk add --no-cache \
+      bash coreutils util-linux procps-ng grep sed gawk findutils \
+      tar unzip zip xz \
       curl wget ca-certificates openssl jq bc \
-      dnsutils iproute2 netcat-openbsd mtr-tiny iperf3 stun-client \
+      bind-tools iproute2 netcat-openbsd mtr iperf3 \
       dmidecode lm-sensors pciutils smartmontools fio sysbench \
+      7zip stress-ng \
       imagemagick tzdata \
  && update-ca-certificates \
- && rm -rf /var/lib/apt/lists/* \
  # Net.sh looks for `convert`; ImageMagick 7 ships it as `magick` and would
  # try to install the package it already has if it cannot find one.
  && { command -v convert >/dev/null || ln -s "$(command -v magick)" /usr/bin/convert; }
@@ -80,39 +99,26 @@ RUN set -eux; \
     rm /tmp/speedtest.tgz; \
     speedtest --version
 
-# Geekbench 5 is x86_64-only on Linux. Shipping it is necessary but not
-# sufficient: Hardware.sh gates the whole test on privacy mode at the call
-# site — `mode_privacy -eq 0 && test_cpu_gb5` — not on whether the binary is
-# there. nq-shop is what drops -p for the hardware check; this only makes
-# sure that when it does, nothing is downloaded mid-benchmark.
-ARG GEEKBENCH_VERSION=5.5.1
-RUN set -eux; \
-    if [ "$TARGETARCH" = "amd64" ]; then \
-      curl -fsSL -o /tmp/geekbench.tgz \
-        "https://cdn.geekbench.com/Geekbench-${GEEKBENCH_VERSION}-Linux.tar.gz"; \
-      tar xzf /tmp/geekbench.tgz -C /usr/local/bin; \
-      rm /tmp/geekbench.tgz; \
-      ln -s "/usr/local/bin/Geekbench-${GEEKBENCH_VERSION}-Linux/geekbench5" /usr/local/bin/geekbench5; \
-      geekbench5 --version; \
-    else \
-      echo "Geekbench 5 has no $TARGETARCH build for Linux; the CPU tiles will be sysbench's"; \
-    fi
-
 COPY --from=solver /nq-pow /usr/local/bin/nq-pow
-COPY nq-shop /usr/local/bin/nq-shop
+COPY nq-shop nq-bench /usr/local/bin/
 COPY normalize.jq page.default.json /usr/share/nodequality/
-RUN chmod +x /usr/local/bin/nq-shop \
+RUN chmod +x /usr/local/bin/nq-shop /usr/local/bin/nq-bench \
  && bash -n /usr/local/bin/nq-shop \
+ && bash -n /usr/local/bin/nq-bench \
  && jq -n --argjson ip '[]' --argjson hw '[]' --argjson net '[]' --argjson route '[]' \
+      --argjson bench '[]' \
       --slurpfile shop /usr/share/nodequality/page.default.json \
       -f /usr/share/nodequality/normalize.jq > /dev/null
 
-# hqnode execs /sbin/init and ignores ENTRYPOINT, and a slim Debian has no
-# init at all, so without this the container ENOENTs in a restart loop and
-# the `hqnode exec` recipe in ../../../shop/README.md cannot be typed. Under
-# podman the ENTRYPOINT below still wins and this file is never reached.
+# hqnode execs /sbin/init and ignores ENTRYPOINT, so a container needs one to
+# boot at all. Alpine has a /sbin/init — busybox — but its inittab hands off
+# to OpenRC, which is not installed here and is not wanted: this image runs
+# benchmarks, it is not a general-purpose box. So busybox's symlink is
+# replaced by something that does the three things PID 1 must do here and
+# nothing else. Under podman the ENTRYPOINT below still wins and this file is
+# never reached.
 COPY init /sbin/init
-RUN chmod +x /sbin/init && sh -n /sbin/init
+RUN chmod +x /sbin/init && sh -n /sbin/init && [ ! -L /sbin/init ]
 
 # /data is the path an hqnode container keeps across a reinstall, so the
 # edited page and the token that lets it be edited again live there.
