@@ -185,6 +185,9 @@ m() {
 	nothing1)   z="这个容器上还没有跑过测试。";           e="This container has not been benchmarked." ;;
 	nothing2)   z="会开始跑。";                           e="starts it." ;;
 	deleted)    z="删掉了";                               e="deleted" ;;
+	del_q)      z="删掉这条？";                           e="Delete this?" ;;
+	del_yn)     z="回车或 y 删掉    n 不删";              e="Enter or y deletes    n keeps it" ;;
+	kept)       z="没删";                                 e="kept" ;;
 	*)          z="$1"; e="$1" ;;
 	esac
 	[ "$L" = en ] && printf '%s' "$e" || printf '%s' "$z"
@@ -194,13 +197,54 @@ say()   { printf '%s\n' "$*"; }
 head2() { printf '\n%s%s%s\n' "$B" "$*" "$D"; }
 dim()   { printf '%s%s%s\n' "$DIM" "$*" "$D"; }
 
+# The "name  →  value" line a spec row and a contact are both listed as, and
+# both asked about before being deleted. Nothing for an index off the end.
+pair() { jq -r "$1 // empty | \"\(.k)  →  \(.v)\"" "$SHOP" 2>/dev/null; }
+
 # jq -r with a default, so a missing key never prints "null" at somebody.
 q() { jq -r "$1 // \"\"" "$SHOP" 2>/dev/null; }
+
+# A number typed at one of the lists, against the length of that list, into
+# an index into the array — or nothing, for an answer that is not a line on
+# the screen. Two used to get through and neither did what it looked like:
+# `0` became the index -1, which in jq is the *last* item, so d0 deleted the
+# plan at the far end of the list; and a number past the end wrote through
+# `.rows[8] = …` on a list of two, which is jq for "pad it with six nulls"
+# and the page will not render at all after that.
+idx() {
+	case "$1" in ""|*[!0-9]*) return 1 ;; esac
+	[ "$1" -ge 1 ] && [ "$1" -le "$2" ] || return 1
+	printf '%s' "$(($1 - 1))"
+}
 
 # The menu's own language decides which side of a {zh, en} pair is shown back.
 # An English menu listing a plan as 入门 · 1C / 1 GB is telling a reader who
 # asked for English that this is what their page says, which it is not.
 first() { [ "$L" = en ] && printf 'en zh' || printf 'zh en'; }
+
+# One line in, with a line editor behind it.
+#
+# `read` on its own has none: the terminal sends ^[[D for a left arrow and
+# read puts those three characters in the variable, which is how a price
+# being corrected became ¥49^[[D^[[D. -e hands the line to readline instead,
+# and the arrows, home and end, backspace and delete, ^W for the last word
+# and ^U for the line all arrive with it. readline counts characters rather
+# than bytes, so the cursor lands where it looks like it will in a name
+# written in Chinese.
+#
+# The prompt has to go through -p. Printed with printf first it is text
+# readline never saw, so it counts the line from column 0 and the first
+# backspace walks over the "> ". Colour inside a prompt has to be wrapped in
+# \001 … \002 for the same reason — RDIM and RD below — or readline counts
+# the escape sequence as the columns it does not take.
+#
+# readline writes to stderr, and that is the one thing that lets `ask` go on
+# working inside x="$(ask …)": the prompt and the line being edited go to the
+# terminal, and only the answer comes back down the pipe. With stdin not a
+# terminal — `hqnode exec`, a pipe — bash ignores -e and this is the plain
+# read it always was.
+RDIM=$'\001\033[2m\002'; RD=$'\001\033[0m\002'
+rl() { local __p="$1"; shift; IFS= read -e -r -p "$__p" "$@"; }
 
 # Read one line with the current value shown, and keep the current value when
 # the answer is empty. That rule is the whole editing model and it is stated
@@ -213,8 +257,7 @@ ask() {
 	# time this was run.
 	printf '%s\n' "  $prompt" >&2
 	[ -n "$current" ] && printf '%s\n' "    ${DIM}$(m now)${D}${current}" >&2
-	printf '%s' "    > " >&2
-	IFS= read -r reply || reply=""
+	rl "    > " reply || reply=""
 	[ -z "$reply" ] && { printf '%s' "$current"; return 0; }
 	printf '%s' "$reply"
 }
@@ -234,7 +277,28 @@ edit() {
 	return 1
 }
 
-pause() { printf '\n%s' "  ${DIM}$(m cont)${D}"; IFS= read -r _ || true; }
+pause() { local _k; rl $'\n'"  ${RDIM}$(m cont)${RD}" _k || true; }
+
+# The one thing in here that cannot be typed over again. Every other edit is
+# a value you can come back and change; a delete leaves nothing to change.
+# And what gets typed is `d2`, not the plan — a digit off is a different plan
+# gone. So this prints the line d2 stands for and then asks about that line,
+# which is the question the seller actually has. Enter is yes: by the time it
+# is asked the answer is on screen, directly above the cursor.
+confirm() {
+	local k
+	# Nothing to show is nothing to delete.
+	[ -n "$1" ] || return 1
+	say ""
+	printf '  %s%s%s\n' "$WARN" "$(m del_q)" "$D"
+	printf '    %s\n' "$1"
+	say ""
+	dim "  $(m del_yn)"
+	rl "  > " k || return 1
+	case "$k" in ""|y|Y|yes|YES) return 0 ;; esac
+	say "  ${DIM}$(m kept)${D}"; sleep 1
+	return 1
+}
 
 # A value that is nothing but @-keys is the wording the page ships with, in
 # four languages. Printing `@v_hours` at a seller invites them to "fix" it
@@ -320,8 +384,7 @@ screen_benchmarking() {
 	fi
 	say ""
 	dim "  $(m k_refresh)    $(m k_log)    $(m k_shell)    $(m k_quit)"
-	printf '%s' "  > "
-	local k; IFS= read -r k || k=q
+	local k; rl "  > " k || k=q
 	case "$k" in
 		l) clear; sed 's/\x1b\[[0-9;]*m//g' "$BOOTLOG" | tail -60; pause ;;
 		s) drop_to_shell ;;
@@ -339,8 +402,7 @@ screen_publishing() {
 	printf '    %s\n' "$(pub_line)"
 	say ""
 	dim "  $(m k_refresh)    $(m k_shell)    $(m k_quit_pub)"
-	printf '%s' "  > "
-	local k; IFS= read -r k || k=q
+	local k; rl "  > " k || k=q
 	case "$k" in
 		s) drop_to_shell ;;
 		q) exit 0 ;;
@@ -383,7 +445,6 @@ overview() {
 	dim "  $(m tip1)"
 	dim "  $(m tip2)"
 	say ""
-	printf '%s' "  > "
 }
 
 # ── the editors ──────────────────────────────────────────────────────────
@@ -418,6 +479,17 @@ edit_tags() {
 	pause
 }
 
+# One plan on two lines: the name, then the prices and the spec rows under
+# it. The list draws it and so does the delete confirm, which is the point —
+# what you are asked about is the line you were looking at.
+plan_line() {
+	local a b; read -r a b <<<"$(first)"
+	jq -r ".shop.plans[$1] // empty |
+		\"\((.name.$a // .name.$b // .name)|tostring)
+        \(.currency // \"\")\(.monthly // \"?\") / mo   \(.currency // \"\")\(.yearly // \"?\") / yr   \([.rows[]? | \"\(.k) \(.v)\"] | join(\"  ·  \"))\"" \
+		"$SHOP" 2>/dev/null
+}
+
 edit_plans() {
 	while :; do
 		clear; head2 "$(m e_plans)"
@@ -426,21 +498,23 @@ edit_plans() {
 		if [ "$n" -eq 0 ]; then
 			say "  ${DIM}$(m no_plans)${D}"
 		else
-			local a b; read -r a b <<<"$(first)"
-			jq -r ".shop.plans | to_entries[] |
-				\"   \(.key+1)  \((.value.name.$a // .value.name.$b // .value.name)|tostring)
-        \(.value.currency // \"\")\(.value.monthly // \"?\") / mo   \(.value.currency // \"\")\(.value.yearly // \"?\") / yr   \([.value.rows[]? | \"\(.k) \(.v)\"] | join(\"  ·  \"))\"" "$SHOP"
+			local j=0
+			while [ "$j" -lt "$n" ]; do
+				printf '   %s  %s\n' "$((j+1))" "$(plan_line "$j")"
+				j=$((j+1))
+			done
 		fi
 		say ""
 		dim "  $(m list_keys)"
-		printf '%s' "  > "
-		local k; IFS= read -r k || return
+		local k i; rl "  > " k || return
 		case "$k" in
 			"") return ;;
 			a) plan_add ;;
-			d*) local i="${k#d}"; [ -n "$i" ] && edit "del(.shop.plans[$((i-1))])" && say "  ${OK}$(m deleted)${D}" && sleep 1 ;;
-			*[!0-9]*) ;;
-			*) plan_edit "$((k-1))" ;;
+			d*) i="$(idx "${k#d}" "$n")" || continue
+			    confirm "$(plan_line "$i")" || continue
+			    edit "del(.shop.plans[$i])" && say "  ${OK}$(m deleted)${D}" && sleep 1 ;;
+			*)  i="$(idx "$k" "$n")" || continue
+			    plan_edit "$i" ;;
 		esac
 	done
 }
@@ -476,8 +550,7 @@ plan_edit() {
 
 	say ""
 	say "  ${OK}$(m saved)${D}"
-	printf '\n  %s%s%s%s ' "$(m rows_ask)" "$DIM" "$(m rows_hint)" "$D"
-	local k; IFS= read -r k || k=""
+	local k; rl $'\n'"  $(m rows_ask)${RDIM}$(m rows_hint)${RD} " k || k=""
 	[ "$k" = "y" ] && plan_rows "$i"
 }
 
@@ -489,21 +562,21 @@ plan_rows() {
 	while :; do
 		clear; head2 "$(m plan_n) $((i+1)) $(m e_rows)"
 		say ""
+		local n; n="$(jq "[.shop.plans[$i].rows[]?] | length" "$SHOP")"
 		jq -r ".shop.plans[$i].rows // [] | to_entries[] | \"   \(.key+1)  \(.value.k)  →  \(.value.v)\"" "$SHOP"
 		say ""
 		dim "  $(m rows_keys)"
 		dim "  $(m list_keys)"
-		printf '%s' "  > "
-		local k; IFS= read -r k || return
+		local k j nk nv; rl "  > " k || return
 		case "$k" in
 			"") return ;;
-			a)  local nk nv
-			    nk="$(ask "$(m q_rowk)" "")"
+			a)  nk="$(ask "$(m q_rowk)" "")"
 			    nv="$(ask "$(m q_rowv)" "")"
 			    edit ".shop.plans[$i].rows += [{k: \$k, v: \$v}]" --arg k "$nk" --arg v "$nv" ;;
-			d*) local j="${k#d}"; [ -n "$j" ] && edit ".shop.plans[$i].rows |= del(.[$((j-1))])" ;;
-			*[!0-9]*) ;;
-			*)  local j=$((k-1)) nk nv
+			d*) j="$(idx "${k#d}" "$n")" || continue
+			    confirm "$(pair ".shop.plans[$i].rows[$j]")" || continue
+			    edit ".shop.plans[$i].rows |= del(.[$j])" ;;
+			*)  j="$(idx "$k" "$n")" || continue
 			    nk="$(ask "$(m q_name)" "$(q ".shop.plans[$i].rows[$j].k")")"
 			    nv="$(ask "$(m q_rowv)" "$(q ".shop.plans[$i].rows[$j].v")")"
 			    edit ".shop.plans[$i].rows[$j] = {k: \$k, v: \$v}" --arg k "$nk" --arg v "$nv" ;;
@@ -518,23 +591,23 @@ edit_contacts() {
 	while :; do
 		clear; head2 "$(m e_contact)"
 		say ""
+		local n; n="$(jq '[.shop.contacts[]?] | length' "$SHOP")"
 		jq -r '.shop.contacts // [] | to_entries[] | "   \(.key+1)  \(.value.k)  →  \(.value.v)"' "$SHOP" \
 			| sed 's/@@/@/g'
 		say ""
 		dim "  $(m con_keys)"
 		dim "  $(m list_keys)"
-		printf '%s' "  > "
-		local k; IFS= read -r k || return
+		local k j nk nv; rl "  > " k || return
 		case "$k" in
 			"") return ;;
-			a)  local nk nv
-			    nk="$(ask "$(m q_conk)" "@k_tg")"
+			a)  nk="$(ask "$(m q_conk)" "@k_tg")"
 			    nv="$(ask "$(m q_conv)" "")"
 			    edit '.shop.contacts += [{k: $k, v: $v}]' --arg k "$nk" \
 			         --arg v "$(printf '%s' "$nv" | sed 's/^@\([^@]\)/@@\1/')" ;;
-			d*) local j="${k#d}"; [ -n "$j" ] && edit ".shop.contacts |= del(.[$((j-1))])" ;;
-			*[!0-9]*) ;;
-			*)  local j=$((k-1)) nk nv
+			d*) j="$(idx "${k#d}" "$n")" || continue
+			    confirm "$(pair ".shop.contacts[$j]" | sed 's/@@/@/g')" || continue
+			    edit ".shop.contacts |= del(.[$j])" ;;
+			*)  j="$(idx "$k" "$n")" || continue
 			    nk="$(ask "$(m q_conk2)" "$(q ".shop.contacts[$j].k")")"
 			    nv="$(ask "$(m q_conv)" "$(q ".shop.contacts[$j].v" | sed 's/@@/@/g')")"
 			    edit ".shop.contacts[$j] = {k: \$k, v: \$v}" --arg k "$nk" \
@@ -614,8 +687,9 @@ do_rebench() {
 	say "  ${WARN}$(m bench_w1)${D}"
 	say "  $(m bench_w2)"
 	say ""
-	printf '  %s %syes%s: ' "$(m bench_conf)" "$B" "$D"
-	local k; IFS= read -r k || k=""
+	printf '  %s %syes%s\n' "$(m bench_conf)" "$B" "$D"
+	say ""
+	local k; rl "  > " k || k=""
 	[ "$k" = "yes" ] || return
 	setsid nohup env HOME=/root NQ_ENDPOINT="$NQ_ENDPOINT" \
 		nq-shop collect >>"$BOOTLOG" 2>&1 </dev/null &
@@ -651,7 +725,7 @@ while :; do
 	fi
 
 	overview
-	IFS= read -r choice || exit 0
+	rl "  > " choice || exit 0
 	case "$choice" in
 		1) edit_title ;;
 		2) edit_tags ;;
