@@ -1141,7 +1141,7 @@ GET /api/v1/machines/{mid}
 {"machine":{ … as above … },
  "host_live":{"hostname":"hk-1","arch":"amd64","kernel":"6.12.0",
               "agent_version":"0.1.0.g6a739b2b0867","ip":"203.0.113.10",
-              "cpu_cores":8,"cpu_pct":18.2,
+              "cpu_cores":8,"cpu_pct":18.2,"cpu_steal_pct":0.9,
               "mem_bytes":34359738368,"mem_used_bytes":12884901888,
               "zram_bytes":8589934592,"zram_used_bytes":1073741824,
               "disk_bytes":1099511627776,"disk_used_bytes":329853488332,
@@ -1153,6 +1153,12 @@ GET /api/v1/machines/{mid}
 `psi_cpu_avg60` is the oversell dial: sustained above about 25% means tenants
 are queueing for cores, and the machine starts refusing new containers of its
 own accord.
+
+`cpu_steal_pct` is the same question from the other side: how much of `cpu_pct`
+the machine was charged for and never got, because the hypervisor it rents from
+was running another guest. It is `top`'s `%st`, it is zero on bare metal, and it
+is absent from a machine whose agent is too old to read it. A rented box at 90%
+with a third of it stolen does not need fewer containers — its neighbour does.
 
 `host_live` is read from the machine as you ask. An unreachable machine fills
 `host_error` and still answers `200` — that is a fact about the machine, not a
