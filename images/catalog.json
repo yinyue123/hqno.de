@@ -6,13 +6,13 @@
       "id": "img_alpine324",
       "name": "Alpine 3.24",
       "ref": "ghcr.io/yinyue123/hqnode:alpine-3.24",
-      "digest": "sha256:fbf8c953a03aa15a39c981ebe098555e54fe81a75ccab0048067d6ab7c3fa202",
+      "digest": "sha256:9b894f2b47573e177ad78267ec16f587bfda09c2549be9dcce471ac1f188a239",
       "arch": [
         "amd64",
         "arm64"
       ],
-      "size_bytes": 13016119,
-      "built_at": "2026-10-12T11:31:43Z",
+      "size_bytes": 13016308,
+      "built_at": "2026-10-19T09:37:03Z",
       "blurb": "The default: OpenRC instead of systemd, a few MB of RAM at idle. Not glibc — some prebuilt binaries will not run.",
       "kind": "builtin",
       "status": "ready",
@@ -22,13 +22,13 @@
       "id": "img_alpine323",
       "name": "Alpine 3.23",
       "ref": "ghcr.io/yinyue123/hqnode:alpine-3.23",
-      "digest": "sha256:5058df0d666b2b15c474705ca05070fb363997c8342f164429dee9432f09377b",
+      "digest": "sha256:4ffc5690138f9cbdc48bc9796f4be81cf12a670f633057a5193883c415b8627a",
       "arch": [
         "amd64",
         "arm64"
       ],
-      "size_bytes": 13120827,
-      "built_at": "2026-10-12T11:31:44Z",
+      "size_bytes": 13120855,
+      "built_at": "2026-10-19T09:37:04Z",
       "blurb": "The previous Alpine, supported into 2027.",
       "kind": "builtin",
       "status": "ready"
@@ -37,13 +37,13 @@
       "id": "img_debian13",
       "name": "Debian 13",
       "ref": "ghcr.io/yinyue123/hqnode:debian-13",
-      "digest": "sha256:1f09650f5404d5583687e7d9f1a01c7b357deb0d735728a68f6551454ca9cf3f",
+      "digest": "sha256:4fd09b489c1c2c69f30c6d67bf7cd09a5a7132eaf7277ff275abf94fa4dafd7f",
       "arch": [
         "amd64",
         "arm64"
       ],
-      "size_bytes": 49438775,
-      "built_at": "2026-10-12T11:31:45Z",
+      "size_bytes": 49442168,
+      "built_at": "2026-10-19T09:37:05Z",
       "blurb": "Trixie. glibc and systemd — the least surprising thing to run when Alpine's musl breaks something.",
       "kind": "builtin",
       "status": "ready"
@@ -52,13 +52,13 @@
       "id": "img_debian12",
       "name": "Debian 12",
       "ref": "ghcr.io/yinyue123/hqnode:debian-12",
-      "digest": "sha256:bd61df9e8650cf1d529eee300b563cb4d57108eb3d083c5ca674bb04337083d3",
+      "digest": "sha256:e25701eb13e6923d4742b660c15bc8cb42b82a410ab963091b7c20aebdd228c4",
       "arch": [
         "amd64",
         "arm64"
       ],
-      "size_bytes": 47371653,
-      "built_at": "2026-10-12T11:31:46Z",
+      "size_bytes": 47371761,
+      "built_at": "2026-10-19T09:37:06Z",
       "blurb": "Bookworm. The safe choice for anything that expects an older toolchain.",
       "kind": "builtin",
       "status": "ready"
@@ -73,7 +73,7 @@
         "arm64"
       ],
       "size_bytes": 45603881,
-      "built_at": "2026-10-12T11:31:47Z",
+      "built_at": "2026-10-19T09:37:07Z",
       "blurb": "Bullseye. LTS ends in 2026 — pick 12 unless something needs this one.",
       "kind": "builtin",
       "status": "ready"
@@ -82,13 +82,13 @@
       "id": "img_ubuntu2604",
       "name": "Ubuntu 26.04 LTS",
       "ref": "ghcr.io/yinyue123/hqnode:ubuntu-26.04",
-      "digest": "sha256:d109b5238a96c8572f36e46aefd70c6affdc84be4b2460d1bfefa1efbe4a6965",
+      "digest": "sha256:6d169ed42a0d01946c5683a94395cd361d492b3017089eb2eeba0cf4e2fbf29b",
       "arch": [
         "amd64",
         "arm64"
       ],
-      "size_bytes": 64146744,
-      "built_at": "2026-10-12T11:31:48Z",
+      "size_bytes": 61484460,
+      "built_at": "2026-10-19T09:37:08Z",
       "blurb": "The current LTS.",
       "kind": "builtin",
       "status": "ready"
@@ -97,13 +97,13 @@
       "id": "img_ubuntu2404",
       "name": "Ubuntu 24.04 LTS",
       "ref": "ghcr.io/yinyue123/hqnode:ubuntu-24.04",
-      "digest": "sha256:7648fb079d8f82908ded3c434402e12c823bb4aeb76b6d33e7f2cae237530b35",
+      "digest": "sha256:56c80c6b144d4a88d1c2335cbeffa896ef85629106ff1895f65dd151361fa845",
       "arch": [
         "amd64",
         "arm64"
       ],
-      "size_bytes": 48910986,
-      "built_at": "2026-10-12T11:31:50Z",
+      "size_bytes": 47176463,
+      "built_at": "2026-10-19T09:37:09Z",
       "blurb": "Noble. Still the most widely documented Ubuntu.",
       "kind": "builtin",
       "status": "ready"
@@ -112,13 +112,13 @@
       "id": "img_ubuntu2204",
       "name": "Ubuntu 22.04 LTS",
       "ref": "ghcr.io/yinyue123/hqnode:ubuntu-22.04",
-      "digest": "sha256:2093b36636737715a49b33fb75038ab484a0f51f14e7155569982041b3ffb82e",
+      "digest": "sha256:a1af7e9996adc619bed27cf3e8e7f0228fc28f70d653531f43e653ad7487d943",
       "arch": [
         "amd64",
         "arm64"
       ],
-      "size_bytes": 44769369,
-      "built_at": "2026-10-12T11:31:51Z",
+      "size_bytes": 45135305,
+      "built_at": "2026-10-19T09:37:09Z",
       "blurb": "Jammy.",
       "kind": "builtin",
       "status": "ready"
@@ -127,13 +127,13 @@
       "id": "img_ubuntu2004",
       "name": "Ubuntu 20.04 LTS",
       "ref": "ghcr.io/yinyue123/hqnode:ubuntu-20.04",
-      "digest": "sha256:d298af85a00846131f613bc60f261671aeb52ef8fceb7e966a1f8c93a9f7e90e",
+      "digest": "sha256:4a0f745c04432029eefd0f3cfc9668e5e9f1ea5262464e79dd7588735f5a52c6",
       "arch": [
         "amd64",
         "arm64"
       ],
-      "size_bytes": 46200142,
-      "built_at": "2026-10-12T11:31:52Z",
+      "size_bytes": 46200113,
+      "built_at": "2026-10-19T09:37:10Z",
       "blurb": "Focal. In extended maintenance.",
       "kind": "builtin",
       "status": "ready"
@@ -142,12 +142,12 @@
       "id": "img_ubuntu1804",
       "name": "Ubuntu 18.04",
       "ref": "ghcr.io/yinyue123/hqnode:ubuntu-18.04",
-      "digest": "sha256:26657c0d23c6d3a7b32a11b56c67abdf2d526f4b1d84383d9f4169c18a088a6f",
+      "digest": "sha256:5ed38cccc298ec50ba1e605f6707bded6e864afdc180809672c8acd29c7dbc34",
       "arch": [
         "amd64"
       ],
-      "size_bytes": 42806807,
-      "built_at": "2026-10-12T11:31:52Z",
+      "size_bytes": 42806859,
+      "built_at": "2026-10-19T09:37:11Z",
       "blurb": "Bionic. End of life — no security updates. For old software that will not move.",
       "kind": "builtin",
       "status": "ready"
@@ -156,12 +156,12 @@
       "id": "img_ubuntu1604",
       "name": "Ubuntu 16.04",
       "ref": "ghcr.io/yinyue123/hqnode:ubuntu-16.04",
-      "digest": "sha256:e0e7293a4f7a6922dbde5b55ed43df3eac7769edfb6ba340faed4323dd83b42b",
+      "digest": "sha256:a179a8b4f0e265853705a5f305df44320ede7497e9d547a1495ee2824d9bb6eb",
       "arch": [
         "amd64"
       ],
-      "size_bytes": 58999148,
-      "built_at": "2026-10-12T11:31:53Z",
+      "size_bytes": 58998962,
+      "built_at": "2026-10-19T09:37:12Z",
       "blurb": "Xenial. End of life — no security updates. For old software that will not move.",
       "kind": "builtin",
       "status": "ready"
@@ -170,13 +170,13 @@
       "id": "img_alma10",
       "name": "AlmaLinux 10",
       "ref": "ghcr.io/yinyue123/hqnode:almalinux-10",
-      "digest": "sha256:6b56a1597e03c633126ef2b6c62a7c05e0adfb075b76c84fef53a0bb6820786d",
+      "digest": "sha256:6653e710bd0b72b87c15735cfb0ed3ad0d9ab728a03bac9283401b5a589aa0c4",
       "arch": [
         "amd64",
         "arm64"
       ],
-      "size_bytes": 88389720,
-      "built_at": "2026-10-12T11:31:54Z",
+      "size_bytes": 88389772,
+      "built_at": "2026-10-19T09:37:13Z",
       "blurb": "RHEL 10 rebuild. Needs a host CPU from about 2015 or later (x86-64-v3).",
       "kind": "builtin",
       "status": "ready"
@@ -185,13 +185,13 @@
       "id": "img_alma9",
       "name": "AlmaLinux 9",
       "ref": "ghcr.io/yinyue123/hqnode:almalinux-9",
-      "digest": "sha256:1772dbe3dc8d7b625f4457bcf45b82186a4faaa3803bc3014c14bf793213691f",
+      "digest": "sha256:b29a47084afe7e47d31dcd9642a933d435a1e567ff93beb0ba507f5e97ff586d",
       "arch": [
         "amd64",
         "arm64"
       ],
-      "size_bytes": 83156948,
-      "built_at": "2026-10-12T11:31:55Z",
+      "size_bytes": 83157049,
+      "built_at": "2026-10-19T09:37:13Z",
       "blurb": "RHEL 9 rebuild. The usual choice for anything that expects RHEL.",
       "kind": "builtin",
       "status": "ready"
@@ -200,13 +200,13 @@
       "id": "img_alma8",
       "name": "AlmaLinux 8",
       "ref": "ghcr.io/yinyue123/hqnode:almalinux-8",
-      "digest": "sha256:0d11d48959339d732d9a830d3012abacd4efe212706ae6b4861a53cd158bb9c0",
+      "digest": "sha256:c794dd6645c58b6908d43e187cf971af9b4edf1d9aeb4ec7a639a5ec91dd5e7e",
       "arch": [
         "amd64",
         "arm64"
       ],
-      "size_bytes": 84471140,
-      "built_at": "2026-10-12T11:31:56Z",
+      "size_bytes": 84473308,
+      "built_at": "2026-10-19T09:37:14Z",
       "blurb": "RHEL 8 rebuild.",
       "kind": "builtin",
       "status": "ready"
@@ -215,13 +215,13 @@
       "id": "img_rocky9",
       "name": "Rocky Linux 9",
       "ref": "ghcr.io/yinyue123/hqnode:rocky-9",
-      "digest": "sha256:2fbd099433ed106b5bf497b874e639abf432b20c2d9a1c7b4c8e95196cd4d974",
+      "digest": "sha256:8fc780fbe333e4a6d7e5be92188957768a0c63c00433faa92cbfa9ea0ad3352e",
       "arch": [
         "amd64",
         "arm64"
       ],
-      "size_bytes": 102327169,
-      "built_at": "2026-10-12T11:31:57Z",
+      "size_bytes": 102326743,
+      "built_at": "2026-10-19T09:37:15Z",
       "blurb": "The other RHEL 9 rebuild. Same packages, different governance.",
       "kind": "builtin",
       "status": "ready"
@@ -230,13 +230,13 @@
       "id": "img_rocky8",
       "name": "Rocky Linux 8",
       "ref": "ghcr.io/yinyue123/hqnode:rocky-8",
-      "digest": "sha256:a59ed5a9090e3308f69d967dd0e313dd6912b7a00ae6fa466520a82aa2e968dc",
+      "digest": "sha256:82c47def319f0a737d8bd79deac5199ca864c5775aa1d82f2961354a52a76397",
       "arch": [
         "amd64",
         "arm64"
       ],
-      "size_bytes": 99186919,
-      "built_at": "2026-10-12T11:31:58Z",
+      "size_bytes": 99173885,
+      "built_at": "2026-10-19T09:37:16Z",
       "blurb": "RHEL 8 rebuild.",
       "kind": "builtin",
       "status": "ready"
@@ -245,13 +245,13 @@
       "id": "img_centos10",
       "name": "CentOS Stream 10",
       "ref": "ghcr.io/yinyue123/hqnode:centos-10",
-      "digest": "sha256:f323fa87913f803c9623aa1288952850ff49a7671de82f26fda66517687a2a9a",
+      "digest": "sha256:f822deba49308f4388b956e092fec1f396aa3d46e6b5c8c3521de6988c39ff8d",
       "arch": [
         "amd64",
         "arm64"
       ],
-      "size_bytes": 88541974,
-      "built_at": "2026-10-12T11:31:59Z",
+      "size_bytes": 88615874,
+      "built_at": "2026-10-19T09:37:17Z",
       "blurb": "Upstream of RHEL 10, not a rebuild of it. Needs an x86-64-v3 CPU.",
       "kind": "builtin",
       "status": "ready"
@@ -260,13 +260,13 @@
       "id": "img_centos9",
       "name": "CentOS Stream 9",
       "ref": "ghcr.io/yinyue123/hqnode:centos-9",
-      "digest": "sha256:5f8134cd51323c6b967fff836c11755527ce0e75796de9bb1fb35662e1fe5917",
+      "digest": "sha256:d52e6f52506a9ae4f660a3da65f6fe1b43baa94f497bcd5b0eca505dc90bd0f6",
       "arch": [
         "amd64",
         "arm64"
       ],
-      "size_bytes": 83651125,
-      "built_at": "2026-10-12T11:32:01Z",
+      "size_bytes": 83628642,
+      "built_at": "2026-10-19T09:37:18Z",
       "blurb": "Upstream of RHEL 9 — newer packages, and they move.",
       "kind": "builtin",
       "status": "ready"
@@ -275,12 +275,12 @@
       "id": "img_centos7",
       "name": "CentOS 7",
       "ref": "ghcr.io/yinyue123/hqnode:centos-7",
-      "digest": "sha256:64d7ac05aa4aefd3224a355b15b2129b9b3af6ffd956c08927fb961958b70b5c",
+      "digest": "sha256:ad4ddbb9b0e06b3a134ab04be2e29d0522b982688a05dc132655c73081638adb",
       "arch": [
         "amd64"
       ],
-      "size_bytes": 103020793,
-      "built_at": "2026-10-12T11:32:01Z",
+      "size_bytes": 103020753,
+      "built_at": "2026-10-19T09:37:19Z",
       "blurb": "Retired. Its mirrors are gone and nothing in it is patched again; the image builds from vault.",
       "kind": "builtin",
       "status": "ready"
@@ -289,13 +289,13 @@
       "id": "img_fedora43",
       "name": "Fedora 43",
       "ref": "ghcr.io/yinyue123/hqnode:fedora-43",
-      "digest": "sha256:56d9a67e59c6a301087adec64904a85ba104e0e6e835f3d3cbac0725966ff0ed",
+      "digest": "sha256:16941402abf971e25de082c62c0014e94604ae193717d36351f384677750bd01",
       "arch": [
         "amd64",
         "arm64"
       ],
-      "size_bytes": 116309845,
-      "built_at": "2026-10-12T11:32:02Z",
+      "size_bytes": 116383104,
+      "built_at": "2026-10-19T09:37:20Z",
       "blurb": "Current packages, short life. Good for building, poor for leaving alone.",
       "kind": "builtin",
       "status": "ready"
